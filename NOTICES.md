@@ -1,4 +1,3 @@
-[NOTICES.md](https://github.com/user-attachments/files/25801809/NOTICES.md)
 # NOTICES
 
 ## GhostPort OS — Third Party Notices & Legal Disclosures
@@ -150,12 +149,12 @@ representations regarding the export compliance of this software.
 
 ## Contact
 
-For licensing inquiries: licensing@ghostport.io
-For legal notices: legal@ghostport.io
-For general support: support@ghostport.io
+For licensing inquiries: licensing@ghostporttechnologies.com
+For legal notices: legal@ghostporttechnologies.com
+For general support: support@ghostporttechnologies.com
 
 GhostPort Technologies
-https://ghostport.io
+https://ghostporttechnologies.com
 
 ---
 
