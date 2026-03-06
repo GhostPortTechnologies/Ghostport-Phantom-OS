@@ -1,102 +1,93 @@
-GhostPort Business Source License 1.0
+Elastic License 2.0
 
-Copyright (c) 2026 GhostPort OS Contributors
-https://ghostport.io
+URL: https://www.elastic.co/licensing/elastic-license
 
---------------------------------------------------------------------------------
+## Acceptance
 
-TERMS AND CONDITIONS
+By using the software, you agree to all of the terms and conditions below.
 
-1. DEFINITIONS
+## Copyright License
 
-   "Software" means the GhostPort OS source code, scripts, configuration files,
-   documentation, and all associated files in this repository.
+The licensor grants you a non-exclusive, royalty-free, worldwide,
+non-sublicensable, non-transferable license to use, copy, distribute, make
+available, and prepare derivative works of the software, in each case subject
+to the limitations and conditions below.
 
-   "Personal Use" means use by an individual for their own private, non-commercial
-   purposes on hardware they personally own.
+## Limitations
 
-   "Commercial Use" means any use intended for or directed toward commercial
-   advantage or monetary compensation.
+You may not provide the software to third parties as a hosted or managed
+service, where the service provides users with access to any substantial set
+of the features or functionality of the software.
 
-   "Licensor" means the GhostPort OS project and its contributors.
+You may not move, change, disable, or circumvent the license key functionality
+in the software, and you may not remove or obscure any functionality in the
+software that is protected by the license key.
 
-2. GRANT OF RIGHTS — PERSONAL USE
+You may not alter, remove, or obscure any licensing, copyright, or other
+notices of the licensor in the software. Any use of the licensor's trademarks
+is subject to applicable law.
 
-   Subject to the terms of this License, you are granted a worldwide,
-   royalty-free, non-exclusive license to:
+## Patents
 
-   a) View, read, and study the Software source code.
+The licensor grants you a license, under any patent claims the licensor can
+license, or becomes able to license, to make, have made, use, sell, offer for
+sale, import and have imported the software, in each case subject to the
+limitations and conditions in this license. This license does not cover any
+patent claims that you cause to be infringed by modifications or additions to
+the software. If you or your company make any written claim that the software
+infringes or contributes to infringement of any patent, your patent license
+for the software granted under these terms ends immediately.
 
-   b) Clone, download, and run the Software for Personal Use on your own
-      hardware.
+## Notices
 
-   c) Modify the Software for Personal Use.
+You must ensure that anyone who gets a copy of any part of the software from
+you also gets a copy of these terms.
 
-   d) Submit contributions (pull requests) to this repository under the
-      terms of the Contributor License Agreement.
+If you modify the software, you must include in any modified copies of the
+software prominent notices stating that you have modified the software.
 
-3. RESTRICTIONS
+## No Other Rights
 
-   You may NOT, without prior written permission from the Licensor:
+These terms do not imply any licenses other than those expressly granted in
+these terms.
 
-   a) Sell, resell, license, sublicense, or commercially distribute the
-      Software or any derivative works.
+## Termination
 
-   b) Offer the Software or derivatives as a product, service, or component
-      of a product or service to third parties for compensation.
+If you use the software in violation of these terms, such use is not licensed,
+and your licenses will automatically terminate. If the licensor provides you
+with a notice of your violation, and you cease all violation of this license
+no later than 30 days after you receive that notice, your licenses will be
+reinstated retroactively. However, if you violate these terms after such
+reinstatement, any additional violation of these terms will cause your licenses
+to terminate automatically and permanently.
 
-   c) Offer a hosted, managed, or cloud-based version of the Software.
+## No Liability
 
-   d) Use the GhostPort name, logo, skull mark, or brand assets in any
-      product or service without written permission.
+As far as the law allows, the software comes as is, without any warranty or
+condition, and the licensor will not be liable to you for any damages arising
+out of these terms or the use or nature of the software, under any kind of
+legal claim.
 
-   e) Remove, alter, or obscure any copyright notices, license headers,
-      or attribution in the Software.
+## Definitions
 
-   f) Bundle the Software with hardware products for sale without a
-      commercial license from the Licensor.
+The "licensor" is GhostPort Technologies, the entity offering these terms.
 
-4. COMMERCIAL LICENSING
+The "software" is the GhostPort OS software the licensor makes available under
+these terms, including the source code, object code, and all associated
+scripts, configuration files, and documentation hosted at:
+https://github.com/GhostPortTechnologies/Ghostport-OS
 
-   If you wish to use GhostPort OS in a commercial product or service,
-   contact us at licensing@ghostport.io to obtain a commercial license.
+"You" refers to the individual or entity agreeing to these terms.
 
-5. CHANGE DATE & OPEN SOURCE CONVERSION
+"Your company" is any legal entity, sole proprietorship, or other kind of
+organization that you work for, plus all organizations that have control over,
+are under the control of, or are under common control with that organization.
 
-   Four (4) years after each version's release date, that specific version
-   of the Software will automatically convert to the MIT License, granting
-   full open source rights for that version.
+"Control" means ownership of substantially all the assets of an entity, or the
+power to direct its management and policies by vote, contract, or otherwise.
 
-   Release dates and their corresponding conversion dates are tracked in
-   RELEASES.md in this repository.
+"Your licenses" are all the licenses granted to you for the software under
+these terms.
 
-6. CONTRIBUTIONS
+"Use" means anything you do with the software requiring one of your licenses.
 
-   By submitting a pull request or contribution to this repository, you agree
-   that your contribution is made under the terms of this License and you grant
-   the Licensor a perpetual, worldwide, royalty-free license to use, modify,
-   and distribute your contribution as part of the Software.
-
-7. DISCLAIMER OF WARRANTIES
-
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
-   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
-   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
-   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-   DEALINGS IN THE SOFTWARE.
-
-8. LIMITATION OF LIABILITY
-
-   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
-   LICENSOR BE LIABLE FOR ANY SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL
-   DAMAGES WHATSOEVER ARISING OUT OF THE USE OR INABILITY TO USE THE SOFTWARE.
-
---------------------------------------------------------------------------------
-
-For commercial licensing inquiries: licensing@ghostport.io
-For general support: support@ghostport.io
-Website: https://ghostport.io
-
-☠  GhostPort OS — Your data never leaves your hands.  ☠
