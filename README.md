@@ -53,7 +53,7 @@ sudo gp-mode zhop
 | PCIe Ethernet HAT | Pi 5 compatible | Recommended |
 | Case with cooling | Active cooling | Recommended |
 
-> Want a pre-built kit? Buy everything you need in one box at [ghostport.io](https://ghostport.io)
+> Want a pre-built kit? Buy everything you need in one box at [ghostporttechnologies.com](https://ghostporttechnologies.com)
 
 ---
 
@@ -162,16 +162,16 @@ GhostPort OS is licensed under the **Elastic License 2.0 (ELv2)**.
 
 This is **source available** software, not open source. The distinction matters — see [elastic.co/licensing/elastic-license](https://www.elastic.co/licensing/elastic-license) for full terms.
 
-For commercial licensing inquiries contact: licensing@ghostport.io
+For commercial licensing inquiries contact: licensing@ghostporttechnologies.com
 
 ---
 
 ## Support
 
-- Docs — [ghostport.io/docs](https://ghostport.io/docs)
+- Docs — [ghostporttechnologies.com/docs](https://ghostporttechnologies.com/docs)
 - Discord — [discord.gg/ghostport](https://discord.gg/ghostport)
-- Buy a Kit — [ghostport.io](https://ghostport.io)
-- Email — support@ghostport.io
+- Buy a Kit — [ghostporttechnologies.com](https://ghostporttechnologies.com)
+- Email — support@ghostporttechnologies.com
 
 ---
 
