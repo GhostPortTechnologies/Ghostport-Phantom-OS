@@ -1,0 +1,102 @@
+GhostPort Business Source License 1.0
+
+Copyright (c) 2026 GhostPort OS Contributors
+https://ghostport.io
+
+--------------------------------------------------------------------------------
+
+TERMS AND CONDITIONS
+
+1. DEFINITIONS
+
+   "Software" means the GhostPort OS source code, scripts, configuration files,
+   documentation, and all associated files in this repository.
+
+   "Personal Use" means use by an individual for their own private, non-commercial
+   purposes on hardware they personally own.
+
+   "Commercial Use" means any use intended for or directed toward commercial
+   advantage or monetary compensation.
+
+   "Licensor" means the GhostPort OS project and its contributors.
+
+2. GRANT OF RIGHTS — PERSONAL USE
+
+   Subject to the terms of this License, you are granted a worldwide,
+   royalty-free, non-exclusive license to:
+
+   a) View, read, and study the Software source code.
+
+   b) Clone, download, and run the Software for Personal Use on your own
+      hardware.
+
+   c) Modify the Software for Personal Use.
+
+   d) Submit contributions (pull requests) to this repository under the
+      terms of the Contributor License Agreement.
+
+3. RESTRICTIONS
+
+   You may NOT, without prior written permission from the Licensor:
+
+   a) Sell, resell, license, sublicense, or commercially distribute the
+      Software or any derivative works.
+
+   b) Offer the Software or derivatives as a product, service, or component
+      of a product or service to third parties for compensation.
+
+   c) Offer a hosted, managed, or cloud-based version of the Software.
+
+   d) Use the GhostPort name, logo, skull mark, or brand assets in any
+      product or service without written permission.
+
+   e) Remove, alter, or obscure any copyright notices, license headers,
+      or attribution in the Software.
+
+   f) Bundle the Software with hardware products for sale without a
+      commercial license from the Licensor.
+
+4. COMMERCIAL LICENSING
+
+   If you wish to use GhostPort OS in a commercial product or service,
+   contact us at licensing@ghostport.io to obtain a commercial license.
+
+5. CHANGE DATE & OPEN SOURCE CONVERSION
+
+   Four (4) years after each version's release date, that specific version
+   of the Software will automatically convert to the MIT License, granting
+   full open source rights for that version.
+
+   Release dates and their corresponding conversion dates are tracked in
+   RELEASES.md in this repository.
+
+6. CONTRIBUTIONS
+
+   By submitting a pull request or contribution to this repository, you agree
+   that your contribution is made under the terms of this License and you grant
+   the Licensor a perpetual, worldwide, royalty-free license to use, modify,
+   and distribute your contribution as part of the Software.
+
+7. DISCLAIMER OF WARRANTIES
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+   FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+   DEALINGS IN THE SOFTWARE.
+
+8. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+   LICENSOR BE LIABLE FOR ANY SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL
+   DAMAGES WHATSOEVER ARISING OUT OF THE USE OR INABILITY TO USE THE SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+For commercial licensing inquiries: licensing@ghostport.io
+For general support: support@ghostport.io
+Website: https://ghostport.io
+
+☠  GhostPort OS — Your data never leaves your hands.  ☠

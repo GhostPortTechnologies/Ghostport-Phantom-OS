@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GhostPort — Command Deck</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green: #39ff8f;
+      --green-dim: #1a6a3a;
+      --green-glow: #39ff8f44;
+      --bg: #060a06;
+      --bg2: #0a140a;
+      --bg3: #0d1f0d;
+      --border: #1a2e1a;
+      --text: #c8f0c8;
+      --text-dim: #4a7a4a;
+      --text-faint: #2a4a2a;
+      --red: #ff4444;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Scanlines */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.97)} }
+    @keyframes flicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.6} 94%{opacity:1} 97%{opacity:0.8} 98%{opacity:1} }
+    @keyframes glow { 0%,100%{box-shadow:0 0 8px var(--green-glow)} 50%{box-shadow:0 0 24px #39ff8f66} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+
+    .brand { display: flex; align-items: center; gap: 16px; }
+
+    .skull {
+      width: 52px; height: 52px;
+      filter: drop-shadow(0 0 10px var(--green));
+    }
+
+    .brand-name {
+      font-family: 'Cinzel', serif;
+      font-size: 28px;
+      font-weight: 900;
+      color: var(--green);
+      letter-spacing: 4px;
+      text-shadow: 0 0 20px #39ff8f66;
+      animation: flicker 8s infinite;
+    }
+
+    .brand-sub { font-size: 10px; color: var(--text-dim); letter-spacing: 3px; margin-top: 2px; }
+
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+      animation: pulse 1.5s infinite;
+      display: inline-block;
+      margin-right: 8px;
+    }
+    .status-dot.warn { background: #ffaa00; box-shadow: 0 0 10px #ffaa00; }
+
+    .header-right { text-align: right; }
+    .header-status { font-size: 11px; color: var(--green); display: flex; align-items: center; justify-content: flex-end; }
+    .header-uptime { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
+
+    /* Active mode banner */
+    .banner {
+      background: linear-gradient(90deg, var(--bg3), var(--bg2));
+      border: 1px solid #39ff8f33;
+      border-left: 3px solid var(--green);
+      border-radius: 4px;
+      padding: 14px 20px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .banner-icon { font-size: 24px; }
+    .banner-label { font-size: 10px; color: var(--text-dim); letter-spacing: 2px; }
+    .banner-mode { font-family: 'Cinzel', serif; font-size: 16px; color: var(--green); }
+    .banner-ip { margin-left: auto; text-align: right; }
+    .banner-ip-label { font-size: 10px; color: var(--text-dim); }
+    .banner-ip-val { font-size: 13px; color: var(--green); font-weight: bold; }
+
+    /* Grid */
+    .grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
+    @media(max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+    .section-label {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 3px; margin-bottom: 12px;
+    }
+
+    /* Mode cards */
+    .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    @media(max-width: 480px) { .modes { grid-template-columns: 1fr; } }
+
+    .mode-card {
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg2);
+      border-radius: 4px;
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s cubic-bezier(.4,0,.2,1);
+      user-select: none;
+    }
+    .mode-card:hover { border-color: #39ff8f55; background: #0d1a0d; transform: translateY(-2px); }
+    .mode-card.active { border-color: var(--green); background: var(--bg3); animation: glow 2s ease-in-out infinite; }
+    .mode-card.switching { opacity: 0.5; pointer-events: none; }
+
+    .active-badge {
+      position: absolute; top: 8px; right: 8px;
+      font-size: 8px; color: var(--green); letter-spacing: 2px;
+      background: #39ff8f22; padding: 2px 6px; border-radius: 2px;
+    }
+
+    .mode-icon { font-size: 26px; margin-bottom: 8px; }
+    .mode-name { font-family: 'Cinzel', serif; font-size: 14px; color: var(--green); margin-bottom: 2px; letter-spacing: 1px; }
+    .mode-subtitle { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px; }
+    .mode-desc { font-size: 11px; color: #6a9a6a; line-height: 1.5; }
+
+    .privacy-bar-wrap { margin-top: 12px; }
+    .privacy-bar-label { font-size: 9px; color: var(--text-faint); margin-bottom: 4px; letter-spacing: 1px; }
+    .privacy-bar-bg { height: 3px; background: var(--border); border-radius: 2px; }
+    .privacy-bar-fill { height: 100%; border-radius: 2px; background: var(--green); box-shadow: 0 0 6px var(--green); transition: width 0.6s ease; }
+
+    /* Tunnel status */
+    .tunnels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    @media(max-width: 480px) { .tunnels { grid-template-columns: 1fr; } }
+
+    .stat-box {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 14px;
+    }
+
+    .tunnel-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .tunnel-dot { width: 7px; height: 7px; border-radius: 50%; }
+    .tunnel-dot.up { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+    .tunnel-dot.down { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .tunnel-name { font-size: 11px; color: var(--green); }
+    .tunnel-val { font-size: 13px; font-weight: bold; }
+    .tunnel-val.up { color: var(--green); }
+    .tunnel-val.down { color: #ff6666; }
+    .tunnel-detail { font-size: 9px; color: var(--text-faint); margin-top: 2px; }
+
+    /* Right panel */
+    .right-panel { display: flex; flex-direction: column; gap: 16px; }
+
+    .ship-stats { display: flex; flex-direction: column; gap: 8px; }
+    .ship-stat {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 4px; padding: 12px 14px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .ship-stat-label { font-size: 9px; color: var(--text-dim); letter-spacing: 1px; }
+    .ship-stat-val { font-size: 13px; color: var(--green); font-weight: bold; }
+    .ship-stat-unit { font-size: 9px; color: var(--text-faint); text-align: right; max-width: 100px; }
+
+    /* Crew log */
+    .log-box {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 4px; padding: 12px;
+      height: 210px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 3px;
+    }
+    .log-entry { display: flex; gap: 10px; font-size: 11px; animation: fadeIn 0.3s ease; }
+    .log-time { color: var(--text-faint); min-width: 58px; flex-shrink: 0; }
+    .log-msg.info { color: #5a8a5a; }
+    .log-msg.success { color: var(--green); }
+    .log-msg.warn { color: #ffaa44; }
+    .log-msg.error { color: var(--red); }
+
+    .log-box::-webkit-scrollbar { width: 3px; }
+    .log-box::-webkit-scrollbar-track { background: var(--bg); }
+    .log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* Footer */
+    .footer { text-align: center; padding: 12px 0 4px; }
+    .footer-skull { font-size: 9px; color: var(--text-faint); letter-spacing: 3px; }
+    .footer-tag { font-size: 8px; color: var(--text-faint); letter-spacing: 2px; margin-top: 3px; opacity: 0.6; }
+
+    /* Loading spinner */
+    .spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* Tailscale toggle */
+    .ts-toggle-wrap {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .ts-toggle-label { font-size: 9px; color: var(--text-faint); letter-spacing: 1px; }
+
+    .toggle-switch {
+      position: relative; width: 44px; height: 22px;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .toggle-switch input { display: none; }
+    .toggle-track {
+      position: absolute; inset: 0;
+      background: #1a2e1a; border: 1px solid var(--border);
+      border-radius: 11px; transition: all 0.3s;
+    }
+    .toggle-thumb {
+      position: absolute; top: 3px; left: 3px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #3a5a3a; transition: all 0.3s;
+    }
+    .toggle-switch.on .toggle-track {
+      background: #0d2a1a; border-color: var(--green);
+      box-shadow: 0 0 10px var(--green-glow);
+    }
+    .toggle-switch.on .toggle-thumb {
+      left: 25px; background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+    }
+    .toggle-switch.loading .toggle-track { opacity: 0.5; }
+    .toggle-switch.loading { pointer-events: none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <svg class="skull" viewBox="0 0 100 100">
+        <ellipse cx="50" cy="42" rx="32" ry="30" fill="#39ff8f" opacity="0.12" stroke="#39ff8f" stroke-width="2"/>
+        <ellipse cx="50" cy="42" rx="28" ry="26" fill="#060a06"/>
+        <circle cx="38" cy="40" r="9" fill="#39ff8f" opacity="0.9"/>
+        <circle cx="62" cy="40" r="9" fill="#39ff8f" opacity="0.9"/>
+        <circle cx="38" cy="40" r="5" fill="#060a06"/>
+        <circle cx="62" cy="40" r="5" fill="#060a06"/>
+        <rect x="40" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
+        <rect x="48" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
+        <rect x="56" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
+        <rect x="44" y="60" width="13" height="4" rx="2" fill="#39ff8f" opacity="0.3"/>
+        <rect x="25" y="55" width="50" height="12" rx="6" fill="#39ff8f" opacity="0.08" stroke="#39ff8f" stroke-width="1"/>
+      </svg>
+      <div>
+        <div class="brand-name">GHOSTPORT</div>
+        <div class="brand-sub">PRIVACY ROUTER // COMMAND DECK</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="header-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">CONNECTING...</span>
+      </div>
+      <div class="header-uptime">UPTIME: <span id="uptime">--</span></div>
+    </div>
+  </header>
+
+  <!-- Active mode banner -->
+  <div class="banner">
+    <div class="banner-icon" id="banner-icon">👻</div>
+    <div>
+      <div class="banner-label">ACTIVE MODE</div>
+      <div class="banner-mode" id="banner-mode">Loading...</div>
+    </div>
+    <div class="banner-ip">
+      <div class="banner-ip-label" id="banner-ip-label">Current IP</div>
+      <div class="banner-ip-val" id="banner-ip">---.---.---.---</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- Left panel -->
+    <div>
+      <div class="section-label">▸ SELECT OPERATING MODE</div>
+      <div class="modes" id="modes-grid">
+
+        <!-- ISP -->
+        <div class="mode-card" id="card-isp" onclick="switchMode('isp')">
+          <div class="mode-icon">⚓</div>
+          <div class="mode-name">ISP</div>
+          <div class="mode-subtitle">Open Waters</div>
+          <div class="mode-desc">Full passthrough. No filtering. Sail free.</div>
+          <div class="privacy-bar-wrap">
+            <div class="privacy-bar-label">PRIVACY LEVEL</div>
+            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:15%"></div></div>
+          </div>
+        </div>
+
+        <!-- Zero Trust -->
+        <div class="mode-card" id="card-zerotrust" onclick="switchMode('zerotrust')">
+          <div class="mode-icon">👻</div>
+          <div class="mode-name">Zero Trust</div>
+          <div class="mode-subtitle">Ghost Cloak</div>
+          <div class="mode-desc">Tailscale tunnel active. DNS locked to the ship.</div>
+          <div class="privacy-bar-wrap">
+            <div class="privacy-bar-label">PRIVACY LEVEL</div>
+            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:55%"></div></div>
+          </div>
+        </div>
+
+        <!-- Double Hop -->
+        <div class="mode-card" id="card-doublehop" onclick="switchMode('doublehop')">
+          <div class="mode-icon">💀</div>
+          <div class="mode-name">Double Hop</div>
+          <div class="mode-subtitle">Dead Man's Route</div>
+          <div class="mode-desc">All traffic through WireGuard. Two hops, no trace.</div>
+          <div class="privacy-bar-wrap">
+            <div class="privacy-bar-label">PRIVACY LEVEL</div>
+            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:80%"></div></div>
+          </div>
+        </div>
+
+        <!-- ZHop -->
+        <div class="mode-card" id="card-zhop" onclick="switchMode('zhop')">
+          <div class="mode-icon">🏴‍☠️</div>
+          <div class="mode-name">Z-HOP</div>
+          <div class="mode-subtitle">Davy Jones</div>
+          <div class="mode-desc">Maximum stealth. WireGuard + DNS lockdown. Full ghost.</div>
+          <div class="privacy-bar-wrap">
+            <div class="privacy-bar-label">PRIVACY LEVEL</div>
+            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:100%"></div></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Tunnel status -->
+      <div class="section-label">▸ TUNNEL STATUS</div>
+      <div class="tunnels">
+        <div class="stat-box">
+          <div class="tunnel-header">
+            <div class="tunnel-dot" id="dot-wg"></div>
+            <span class="tunnel-name">WireGuard</span>
+          </div>
+          <div class="tunnel-val" id="val-wg">--</div>
+          <div class="tunnel-detail">wg0</div>
+        </div>
+        <div class="stat-box">
+          <div class="tunnel-header">
+            <div class="tunnel-dot" id="dot-ts"></div>
+            <span class="tunnel-name">Tailscale</span>
+          </div>
+          <div class="tunnel-val" id="val-ts">--</div>
+          <div class="tunnel-detail">tailscale0</div>
+          <div class="ts-toggle-wrap">
+            <span class="ts-toggle-label" id="ts-toggle-label">OFF</span>
+            <div class="toggle-switch" id="ts-toggle" onclick="toggleTailscale()">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+          </div>
+        </div>
+        <div class="stat-box">
+          <div class="tunnel-header">
+            <div class="tunnel-dot up"></div>
+            <span class="tunnel-name">Pi-hole</span>
+          </div>
+          <div class="tunnel-val up">UP</div>
+          <div class="tunnel-detail">DNS filter</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <div class="right-panel">
+      <div>
+        <div class="section-label">▸ SHIP STATS</div>
+        <div class="ship-stats">
+          <div class="ship-stat">
+            <div><div class="ship-stat-label">Ads Plundered</div><div class="ship-stat-val" id="stat-ads">---</div></div>
+            <div class="ship-stat-unit">blocked today</div>
+          </div>
+          <div class="ship-stat">
+            <div><div class="ship-stat-label">Current IP</div><div class="ship-stat-val" id="stat-ip">---</div></div>
+            <div class="ship-stat-unit" id="stat-ip-label">---</div>
+          </div>
+          <div class="ship-stat">
+            <div><div class="ship-stat-label">DNS Resolver</div><div class="ship-stat-val">Unbound</div></div>
+            <div class="ship-stat-unit">recursive / local</div>
+          </div>
+          <div class="ship-stat">
+            <div><div class="ship-stat-label">Encryption</div><div class="ship-stat-val" id="stat-enc">---</div></div>
+            <div class="ship-stat-unit" id="stat-enc-detail">---</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-label">▸ CREW LOG</div>
+        <div class="log-box" id="log-box"></div>
+      </div>
+
+      <div class="footer">
+        <div class="footer-skull">☠ &nbsp;GHOSTPORT v1.0&nbsp; ☠</div>
+        <div class="footer-tag">YOUR DATA NEVER LEAVES YOUR HANDS</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const API = ""; // empty = same host, so http://PI_IP:4200/api/...
+
+  const MODES = {
+    isp:       { icon: "⚓", label: "ISP — Open Waters",           enc: "None",     encDetail: "No encryption" },
+    zerotrust: { icon: "👻", label: "Zero Trust — Ghost Cloak",    enc: "AES-256",  encDetail: "Tailscale" },
+    doublehop: { icon: "💀", label: "Double Hop — Dead Man's Route", enc: "AES-256", encDetail: "WireGuard" },
+    zhop:      { icon: "🏴‍☠️", label: "Z-HOP — Davy Jones",         enc: "AES-256",  encDetail: "WG + DNS Lock" },
+  };
+
+  let currentMode = null;
+  let switching = false;
+
+  function log(msg, type = "info") {
+    const box = document.getElementById("log-box");
+    const now = new Date().toTimeString().slice(0, 8);
+    const entry = document.createElement("div");
+    entry.className = "log-entry";
+    entry.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${type}">${msg}</span>`;
+    box.appendChild(entry);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function setTunnel(id, state) {
+    const dot = document.getElementById("dot-" + id);
+    const val = document.getElementById("val-" + id);
+    const isUp = state === "up";
+    dot.className = "tunnel-dot " + (isUp ? "up" : "down");
+    val.className = "tunnel-val " + (isUp ? "up" : "down");
+    val.textContent = isUp ? "UP" : "DOWN";
+
+    // Update Tailscale toggle if applicable
+    if (id === "ts") {
+      const toggle = document.getElementById("ts-toggle");
+      const label = document.getElementById("ts-toggle-label");
+      toggle.classList.toggle("on", isUp);
+      label.textContent = isUp ? "ON" : "OFF";
+      label.style.color = isUp ? "var(--green)" : "var(--text-faint)";
+    }
+  }
+
+  function updateUI(data) {
+    const mode = data.activeMode;
+    const info = MODES[mode] || MODES.isp;
+
+    // Banner
+    document.getElementById("banner-icon").textContent = info.icon;
+    document.getElementById("banner-mode").textContent = info.label;
+    document.getElementById("banner-ip").textContent = data.ip;
+    document.getElementById("banner-ip-label").textContent = mode === "isp" ? "ISP IP (exposed)" : "Masked IP";
+
+    // Header
+    document.getElementById("status-dot").className = "status-dot";
+    document.getElementById("status-text").textContent = "ALL SYSTEMS OPERATIONAL";
+    document.getElementById("uptime").textContent = data.uptime;
+
+    // Cards
+    ["isp", "zerotrust", "doublehop", "zhop"].forEach(m => {
+      const card = document.getElementById("card-" + m);
+      card.classList.toggle("active", m === mode);
+      // Remove old badge
+      const old = card.querySelector(".active-badge");
+      if (old) old.remove();
+      if (m === mode) {
+        const badge = document.createElement("div");
+        badge.className = "active-badge";
+        badge.textContent = "ACTIVE";
+        card.appendChild(badge);
+      }
+    });
+
+    // Tunnels
+    setTunnel("wg", data.tunnels.wg0);
+    setTunnel("ts", data.tunnels.tailscale);
+
+    // Stats
+    document.getElementById("stat-ads").textContent = (data.adsBlocked || 0).toLocaleString();
+    document.getElementById("stat-ip").textContent = data.ip;
+    document.getElementById("stat-ip-label").textContent = mode === "isp" ? "your ISP IP" : "VPN/tunnel IP";
+    document.getElementById("stat-enc").textContent = info.enc;
+    document.getElementById("stat-enc-detail").textContent = info.encDetail;
+
+    currentMode = mode;
+  }
+
+  async function fetchStatus() {
+    try {
+      const res = await fetch(API + "/api/status");
+      const data = await res.json();
+      if (data.ok) updateUI(data);
+    } catch (e) {
+      document.getElementById("status-text").textContent = "CONNECTION LOST";
+      document.getElementById("status-dot").className = "status-dot warn";
+    }
+  }
+
+  async function toggleTailscale() {
+    const toggle = document.getElementById("ts-toggle");
+    const isOn = toggle.classList.contains("on");
+    const action = isOn ? "stop" : "start";
+
+    toggle.classList.add("loading");
+    log(`Tailscale ${action}ing...`, "warn");
+
+    try {
+      const res = await fetch(API + "/api/tailscale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        log(`Tailscale ${action === "start" ? "activated ✓" : "deactivated ✓"}`, "success");
+        await fetchStatus();
+      } else {
+        log(`ERROR: ${data.error}`, "error");
+      }
+    } catch (e) {
+      log(`ERROR: Tailscale toggle failed — ${e.message}`, "error");
+    }
+
+    toggle.classList.remove("loading");
+  }
+
+  async function switchMode(mode) {
+    if (mode === currentMode || switching) return;
+    switching = true;
+
+    // UI feedback
+    document.getElementById("status-dot").className = "status-dot warn";
+    document.getElementById("status-text").innerHTML = `<span class="spinner"></span>SWITCHING TO ${mode.toUpperCase()}...`;
+    document.getElementById("card-" + mode).classList.add("switching");
+    log(`Switching to ${mode.toUpperCase()} mode...`, "warn");
+
+    try {
+      const res = await fetch(API + "/api/mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode })
+      });
+      const data = await res.json();
+
+      if (data.ok) {
+        log(`Mode active: ${mode.toUpperCase()} ✓`, "success");
+        await fetchStatus();
+      } else {
+        log(`ERROR: ${data.error}`, "error");
+        document.getElementById("status-text").textContent = "MODE SWITCH FAILED";
+      }
+    } catch (e) {
+      log(`ERROR: Could not reach API — ${e.message}`, "error");
+    }
+
+    document.getElementById("card-" + mode).classList.remove("switching");
+    switching = false;
+  }
+
+  // Boot sequence
+  log("GhostPort Command Deck initializing...", "info");
+  log("Establishing connection to Pi...", "info");
+  fetchStatus().then(() => {
+    log("All systems nominal. Welcome aboard, Captain.", "success");
+  });
+
+  // Poll status every 10 seconds
+  setInterval(fetchStatus, 10000);
+</script>
+</body>
+</html>
