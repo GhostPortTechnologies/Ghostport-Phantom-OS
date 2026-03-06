@@ -1,23 +1,17 @@
 
-# ☠ GhostPort OS
+# GhostPort OS
 
 > **Your data never leaves your hands.**
 
-GhostPort OS is an open-source privacy router firmware built on Raspberry Pi 5. It gives everyday people military-grade network privacy through a beautiful web dashboard — no technical knowledge required.
-
-**Blow NordVPN out of the water. Own your privacy.**
-
----
-
-## ✦ What is GhostPort?
-
-GhostPort turns a Raspberry Pi 5 into a full privacy router with four switchable modes, Pi-hole ad blocking, WireGuard VPN routing, and forced DNS lockdown — all controllable from a browser or mobile app.
+GhostPort OS turns a Raspberry Pi 5 into a full privacy router with four switchable modes, Pi-hole ad blocking, WireGuard VPN routing, and forced DNS lockdown — all controllable from a browser or mobile app.
 
 Unlike VPN services, **your traffic never passes through a third-party server**. You own the hardware. You own the network. You own the data.
 
+> **License Notice:** GhostPort OS is **source available**, not open source. The source code is publicly viewable and free to use for personal builds. Commercial use, resale, and redistribution as a competing product or service are not permitted under the Elastic License 2.0. See [LICENSE](LICENSE) for full terms.
+
 ---
 
-## ✦ The Four Modes
+## The Four Modes
 
 | Mode | Name | What it does |
 |------|------|-------------|
@@ -34,41 +28,41 @@ sudo gp-mode zhop
 
 ---
 
-## ✦ Features
+## Features
 
-- 🔒 **4 privacy modes** — switch in seconds from any browser
-- 🚫 **Pi-hole integration** — blocks ads, trackers, and malware domains network-wide
-- 🛡 **DoH/DoT blocking** — phones cannot bypass DNS filtering
-- ⚡ **WireGuard VPN** — fastest VPN protocol available
-- 🌐 **Web dashboard** — gorgeous pirate-themed command deck on port 4200
-- 📱 **Mobile app** — iOS & Android (coming soon)
-- 🔁 **Auto-starts on boot** — fully managed by systemd
-- 🧱 **nftables firewall** — modern, fast, battle-tested
-- 🔑 **Always-on remote access** — SSH & VNC never locked out regardless of mode
+- 4 privacy modes — switch in seconds from any browser
+- Pi-hole integration — blocks ads, trackers, and malware domains network-wide
+- DoH/DoT blocking — phones cannot bypass DNS filtering
+- WireGuard VPN — fastest VPN protocol available
+- Web dashboard — pirate-themed command deck on port 4200
+- Mobile app — iOS & Android (coming soon)
+- Auto-starts on boot — fully managed by systemd
+- nftables firewall — modern, fast, battle-tested
+- Always-on remote access — SSH & VNC never locked out regardless of mode
 
 ---
 
-## ✦ Hardware Requirements
+## Hardware Requirements
 
 | Component | Spec | Required |
 |-----------|------|----------|
-| Raspberry Pi 5 | 4GB or 8GB RAM | ✅ Required |
-| MicroSD Card | 32GB+ Class 10 / A2 | ✅ Required |
-| USB-C Power Supply | 27W official Pi 5 adapter | ✅ Required |
-| USB Ethernet Adapter | USB 3.0 gigabit | ✅ Required |
-| PCIe Ethernet HAT | Pi 5 compatible | ⭐ Recommended |
-| Case with cooling | Active cooling | ⭐ Recommended |
+| Raspberry Pi 5 | 4GB or 8GB RAM | Required |
+| MicroSD Card | 32GB+ Class 10 / A2 | Required |
+| USB-C Power Supply | 27W official Pi 5 adapter | Required |
+| USB Ethernet Adapter | USB 3.0 gigabit | Required |
+| PCIe Ethernet HAT | Pi 5 compatible | Recommended |
+| Case with cooling | Active cooling | Recommended |
 
-> 💡 **Want a pre-built kit?** Buy everything you need in one box at [ghostport.io](https://ghostport.io)
+> Want a pre-built kit? Buy everything you need in one box at [ghostport.io](https://ghostport.io)
 
 ---
 
-## ✦ Quick Install
+## Quick Install
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/ghostport-os/ghostport-os.git
-cd ghostport-os
+git clone https://github.com/GhostPortTechnologies/Ghostport-OS.git
+cd Ghostport-OS
 
 # 2. Run the installer
 chmod +x scripts/install.sh
@@ -81,10 +75,10 @@ For a full step-by-step guide see [docs/INSTALL.md](docs/INSTALL.md)
 
 ---
 
-## ✦ Repository Structure
+## Repository Structure
 
 ```
-ghostport-os/
+Ghostport-OS/
 ├── modes/                  # nft firewall profiles
 │   ├── common.nft          # shared variables & management rules
 │   ├── isp.nft             # ISP passthrough mode
@@ -104,13 +98,13 @@ ghostport-os/
 │   ├── MODES.md            # mode documentation
 │   ├── API.md              # API reference
 │   └── TROUBLESHOOTING.md  # common issues
-├── LICENSE                 # GhostPort Business Source License
+├── LICENSE                 # Elastic License 2.0
 └── README.md
 ```
 
 ---
 
-## ✦ API
+## API
 
 The GhostPort API runs on port 4200. Full documentation at [docs/API.md](docs/API.md)
 
@@ -126,48 +120,64 @@ curl -X POST http://YOUR_PI_IP:4200/api/mode \
 
 ---
 
-## ✦ Contributing
+## Built With
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+GhostPort OS is built on top of these outstanding projects:
 
-- 🐛 **Bug reports** — open an issue
-- 💡 **Feature requests** — open an issue with the `enhancement` label
-- 🔧 **Pull requests** — fork, branch, and submit
+| Project | License | What it does |
+|---------|---------|-------------|
+| [Pi-hole](https://pi-hole.net) | EUPL-1.2 | Network-wide DNS ad blocking |
+| [WireGuard](https://wireguard.com) | GPL-2.0 | Fast, modern VPN tunneling |
+| [nftables](https://netfilter.org/projects/nftables/) | GPL-2.0 | Linux firewall and packet filtering |
+| [Node.js](https://nodejs.org) | MIT | Dashboard API server runtime |
+| [Raspberry Pi OS](https://raspberrypi.com/software/) | Various | Underlying operating system |
+
+GhostPort Technologies does not claim ownership of any of the above projects. All trademarks belong to their respective owners.
 
 ---
 
-## ✦ License
+## Contributing
 
-GhostPort OS is licensed under the **GhostPort Business Source License 1.0**.
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a pull request.
+
+- Bug reports — open an issue
+- Feature requests — open an issue with the `enhancement` label
+- Pull requests — fork, branch, and submit
+
+---
+
+## License
+
+GhostPort OS is licensed under the **Elastic License 2.0 (ELv2)**.
 
 **You are free to:**
-- View, study, and learn from the source code
-- Build and run GhostPort OS for personal use
+- View and study the source code
+- Build and run GhostPort OS for personal use on your own hardware
 - Contribute improvements back to this repository
 
 **You are NOT permitted to:**
 - Sell, resell, or commercially distribute GhostPort OS or derivatives
-- Offer GhostPort OS as a hosted or managed service
-- Remove or modify license headers or attribution
+- Offer GhostPort OS as a hosted or managed service to third parties
+- Remove or alter licensing or copyright notices
 
-> After 4 years from each release date, that version's code converts to the MIT License.
+This is **source available** software, not open source. The distinction matters — see [elastic.co/licensing/elastic-license](https://www.elastic.co/licensing/elastic-license) for full terms.
 
-See [LICENSE](LICENSE) for full terms.
+For commercial licensing inquiries contact: licensing@ghostport.io
 
 ---
 
-## ✦ Support
+## Support
 
-- 📖 **Docs** — [ghostport.io/docs](https://ghostport.io/docs)
-- 💬 **Discord** — [discord.gg/ghostport](https://discord.gg/ghostport)
-- 🛒 **Buy a Kit** — [ghostport.io](https://ghostport.io)
-- 📧 **Email** — support@ghostport.io
+- Docs — [ghostport.io/docs](https://ghostport.io/docs)
+- Discord — [discord.gg/ghostport](https://discord.gg/ghostport)
+- Buy a Kit — [ghostport.io](https://ghostport.io)
+- Email — support@ghostport.io
 
 ---
 
 <div align="center">
 
-☠ &nbsp; **GhostPort OS** &nbsp; ☠
+**GhostPort OS**
 
 *Your data never leaves your hands.*
 
