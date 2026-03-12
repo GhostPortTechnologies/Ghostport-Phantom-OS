@@ -1,0 +1,18 @@
+flush ruleset
+include "/etc/gpmodes/common.nft"
+
+table inet filter {
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+        ct state established,related accept
+        iifname $LAN_IF oifname $WAN_IF accept
+        iifname $WAN_IF oifname $LAN_IF ct state established,related accept
+    }
+}
+
+table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname $WAN_IF masquerade
+    }
+}

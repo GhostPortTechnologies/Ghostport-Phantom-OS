@@ -1,0 +1,16 @@
+[Unit]
+Description=GhostPort Discord Support Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+WorkingDirectory=/opt/ghostport/discord-bot
+ExecStart=/opt/ghostport/discord-bot/venv/bin/python3 /opt/ghostport/discord-bot/ghostport-discord-bot.py
+EnvironmentFile=/etc/ghostport/discord-bot.env
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

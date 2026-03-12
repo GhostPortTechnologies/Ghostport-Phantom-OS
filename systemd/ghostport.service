@@ -1,0 +1,15 @@
+[Unit]
+Description=GhostPort Command Deck
+After=network.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+WorkingDirectory=/opt/ghostport
+ExecStart=/usr/bin/node /opt/ghostport/ghostport-server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

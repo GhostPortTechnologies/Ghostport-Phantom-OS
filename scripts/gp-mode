@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+MODE="${1:-}"
+NFT="/usr/sbin/nft"
+RULEDIR="/etc/gpmodes"
+BACKUP="/tmp/nft.ruleset.backup"
+MODEFILE="/etc/ghostport/current-mode"
+ROLLBACK_PID_FILE="/tmp/gp-rollback.pid"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+iface_exists() { ip link show "$1" >/dev/null 2>&1; }
+iface_up() { ip link show "$1" 2>/dev/null | grep -qE "state (UP|UNKNOWN)"; }
+
+save_rules() { sudo $NFT list ruleset > "$BACKUP" 2>/dev/null || true; }
+restore_rules() { [[ -s "$BACKUP" ]] && sudo $NFT -f "$BACKUP" || true; }
+
+get_current_mode() { cat "$MODEFILE" 2>/dev/null || echo "isp"; }
+
+apply_profile() {
+  local f="$1"
+  [[ -f "$f" ]] || die "Missing nft profile: $f"
+  # Validate before applying
+  sudo $NFT -c -f "$f" >/dev/null
+  save_rules
+  sudo $NFT -f "$f"
+  if ! sudo $NFT list ruleset | grep -q "masquerade"; then
+    restore_rules
+    die "No masquerade rule after applying $f; restored previous ruleset."
+  fi
+  # Flush stale conntrack so AP clients reconnect through new path
+  sudo conntrack -F 2>/dev/null || true
+}
+
+ensure_tailscale() {
+  # Tailscale is the management plane — always keep it running
+  if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
+    sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
+    # Give it a moment to establish
+    sleep 2
+  fi
+}
+
+start_wg0() { sudo systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || die "Failed to start wg0"; }
+stop_wg0() { sudo systemctl stop wg-quick@wg0 >/dev/null 2>&1 || true; }
+
+cancel_rollback() {
+  if [[ -f "$ROLLBACK_PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$ROLLBACK_PID_FILE" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+    rm -f "$ROLLBACK_PID_FILE"
+  fi
+}
+
+# Schedule automatic rollback after N seconds
+schedule_rollback() {
+  local prev_mode="$1"
+  local timeout="${2:-60}"
+  cancel_rollback
+  (
+    sleep "$timeout"
+    echo "[gp-mode] Rollback timer expired — reverting to $prev_mode" >&2
+    sudo "$0" "$prev_mode" --no-rollback
+  ) &
+  echo $! | sudo tee "$ROLLBACK_PID_FILE" > /dev/null
+  echo "Rollback scheduled: will revert to $prev_mode in ${timeout}s if not confirmed."
+}
+
+status() {
+  local ts="down" wg="down"
+  iface_up tailscale0 && ts="up" || true
+  iface_up wg0 && wg="up" || true
+  echo "tailscale0=$ts wg0=$wg"
+  echo "mode=$(get_current_mode)"
+  echo "nat_rules:"
+  sudo $NFT list ruleset 2>/dev/null | grep -E 'oifname "(eth0|wg0|tailscale0)".*masquerade' || true
+  if [[ -f "$ROLLBACK_PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$ROLLBACK_PID_FILE" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      echo "rollback=pending"
+    else
+      echo "rollback=none"
+      rm -f "$ROLLBACK_PID_FILE"
+    fi
+  else
+    echo "rollback=none"
+  fi
+}
+
+# Check for --no-rollback flag (used by rollback process itself)
+NO_ROLLBACK=false
+for arg in "$@"; do
+  [[ "$arg" == "--no-rollback" ]] && NO_ROLLBACK=true
+done
+
+case "$MODE" in
+  isp)
+    cancel_rollback
+    stop_wg0
+    ensure_tailscale
+    apply_profile "$RULEDIR/isp.nft"
+    echo "isp" | sudo tee "$MODEFILE" > /dev/null
+    echo "Mode: ISP (LAN -> eth0). Tailscale: management."
+    ;;
+  zerotrust)
+    PREV=$(get_current_mode)
+    ensure_tailscale
+    stop_wg0
+    apply_profile "$RULEDIR/zerotrust.nft"
+    echo "zerotrust" | sudo tee "$MODEFILE" > /dev/null
+    [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
+    echo "Mode: ZeroTrust (LAN -> eth0, DNS locked). Tailscale: management."
+    ;;
+  doublehop)
+    PREV=$(get_current_mode)
+    ensure_tailscale
+    start_wg0
+    iface_exists wg0 || die "wg0 does not exist; refusing to switch."
+    iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
+    apply_profile "$RULEDIR/doublehop.nft"
+    echo "doublehop" | sudo tee "$MODEFILE" > /dev/null
+    [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
+    echo "Mode: DoubleHop (LAN -> wg0). Tailscale: management."
+    ;;
+  zhop)
+    PREV=$(get_current_mode)
+    ensure_tailscale
+    start_wg0
+    iface_exists wg0 || die "wg0 does not exist; refusing to switch."
+    iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
+    apply_profile "$RULEDIR/zhop.nft"
+    echo "zhop" | sudo tee "$MODEFILE" > /dev/null
+    [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
+    echo "Mode: ZHop (LAN -> wg0, DNS locked). Tailscale: management."
+    ;;
+  confirm)
+    cancel_rollback
+    echo "Mode confirmed: $(get_current_mode). Rollback cancelled."
+    ;;
+  rollback)
+    if [[ -f "$ROLLBACK_PID_FILE" ]]; then
+      cancel_rollback
+      PREV="${2:-isp}"
+      echo "Manual rollback to $PREV..."
+      exec sudo "$0" "$PREV" --no-rollback
+    else
+      echo "No rollback pending."
+    fi
+    ;;
+  status)
+    status
+    ;;
+  *)
+    echo "Usage: gp-mode {isp|zerotrust|doublehop|zhop|confirm|rollback|status}" >&2
+    exit 1
+    ;;
+esac

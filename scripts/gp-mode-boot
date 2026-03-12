@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Applied on boot — reads saved mode and applies it (no rollback needed)
+set -euo pipefail
+
+MODEFILE="/etc/ghostport/current-mode"
+MODE=$(cat "$MODEFILE" 2>/dev/null || echo "isp")
+
+# Validate
+case "$MODE" in
+  isp|zerotrust|doublehop|zhop) ;;
+  *) MODE="isp" ;;
+esac
+
+echo "[ghostport-boot] Applying saved mode: $MODE"
+/usr/local/bin/gp-mode "$MODE" --no-rollback
+echo "[ghostport-boot] Mode $MODE applied successfully"

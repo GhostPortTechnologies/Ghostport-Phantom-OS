@@ -1,0 +1,11 @@
+node_modules/
+discord-bot/venv/
+ssl/
+*.env
+support.json
+*.bak
+*.log
+.DS_Store
+*.swp
+*~
+__pycache__/

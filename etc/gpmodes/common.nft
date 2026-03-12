@@ -1,0 +1,21 @@
+define WAN_IF = "eth0"
+define LAN_IF = "wlan0"
+define WG_IF  = "wg0"
+define TS_IF  = "tailscale0"
+define LAN_SUBNET = "192.168.4.0/24"
+
+table inet management {
+    chain input {
+        type filter hook input priority -100; policy accept;
+        iifname "lo" accept
+        ct state established,related accept
+        tcp dport 22 accept
+        tcp dport 5900 accept
+        tcp dport 80 accept
+        tcp dport 443 accept
+        tcp dport 4200 accept
+        udp dport 41641 accept
+        iifname $LAN_IF accept
+        iifname $TS_IF accept
+    }
+}

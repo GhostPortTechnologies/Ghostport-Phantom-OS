@@ -1,0 +1,35 @@
+flush ruleset
+include "/etc/gpmodes/common.nft"
+
+table inet filter {
+    chain input {
+        type filter hook input priority 0; policy accept;
+        ct state established,related accept
+        iifname "lo" accept
+        iifname $LAN_IF accept
+        iifname $WAN_IF ct state established,related accept
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+        ct state established,related accept
+
+        # Block DNS over TLS (DoT)
+        iifname $LAN_IF tcp dport 853 drop
+        iifname $LAN_IF udp dport 853 drop
+
+        # Block known DoH servers by IP
+        iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } tcp dport 443 drop
+
+        # Allow everything else
+        iifname $LAN_IF oifname $WAN_IF accept
+        iifname $WAN_IF oifname $LAN_IF ct state established,related accept
+    }
+}
+
+table ip nat {
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname $WAN_IF masquerade
+    }
+}

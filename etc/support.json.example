@@ -1,0 +1,5 @@
+{
+  "webhookUrl": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN",
+  "webhookType": "discord",
+  "deviceName": "GhostPort-01"
+}

@@ -1,0 +1,47 @@
+flush ruleset
+include "/etc/gpmodes/common.nft"
+
+table inet filter {
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        ct state established,related accept
+        # LAN exits only through WireGuard (Tailscale handles mgmt)
+        iifname $LAN_IF oifname $WG_IF accept
+        iifname $WG_IF oifname $LAN_IF ct state established,related accept
+    }
+
+    chain input {
+        type filter hook input priority 0; policy accept;
+        ct state established,related accept
+        iifname $LAN_IF accept
+        iifname $WG_IF accept
+        iifname $TS_IF accept
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+        # Allow DNS to localhost (Pi-hole)
+        ip daddr 127.0.0.1 udp dport 53 accept
+        ip daddr 127.0.0.1 tcp dport 53 accept
+        # Allow DNS to Tailscale MagicDNS
+        ip daddr 100.100.100.100 udp dport 53 accept
+        ip daddr 100.100.100.100 tcp dport 53 accept
+        # Block all other DNS to prevent leaks from the Pi
+        udp dport 53 drop
+        tcp dport 53 drop
+    }
+}
+
+table inet nat {
+    chain prerouting {
+        type nat hook prerouting priority -100;
+        # Force ALL LAN DNS to Pi-hole, no exceptions
+        iifname $LAN_IF tcp dport 53 redirect to :53
+        iifname $LAN_IF udp dport 53 redirect to :53
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname $WG_IF masquerade
+    }
+}

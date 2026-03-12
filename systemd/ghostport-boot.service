@@ -1,0 +1,13 @@
+[Unit]
+Description=GhostPort — Apply saved mode on boot
+After=network-online.target hostapd.service nftables.service tailscaled.service
+Wants=network-online.target
+Before=ghostport.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/gp-mode-boot
+
+[Install]
+WantedBy=multi-user.target
