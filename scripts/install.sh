@@ -25,7 +25,7 @@ grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null || warn "Not detected
 
 echo ""
 echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
-echo "       GhostPort OS Installer v1.0"
+echo "       GhostPort OS Installer v1.1"
 echo "    Your data never leaves your hands."
 echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
 echo ""
@@ -50,17 +50,22 @@ fi
 # ── Step 3: Install gp-mode ──────────────────────────────────
 section "Step 3/7 — GhostPort Mode Switcher"
 mkdir -p /etc/gpmodes
-cp modes/*.nft /etc/gpmodes/
+cp etc/gpmodes/*.nft /etc/gpmodes/
 cp scripts/gp-mode /usr/local/bin/gp-mode
+cp scripts/gp-mode-boot /usr/local/bin/gp-mode-boot
+chmod +x /usr/local/bin/gp-mode-boot
 chmod +x /usr/local/bin/gp-mode
-echo "isp" > /tmp/gp-current-mode
+mkdir -p /etc/ghostport
+echo "isp" > /etc/ghostport/current-mode
 log "gp-mode installed."
 
 # ── Step 4: Dashboard ────────────────────────────────────────
 section "Step 4/7 — GhostPort Dashboard"
 mkdir -p /opt/ghostport/public
-cp dashboard/server/ghostport-server.js /opt/ghostport/
-cp dashboard/public/index.html /opt/ghostport/public/
+cp ghostport-server.js /opt/ghostport/
+cp public/index.html /opt/ghostport/public/
+cp public/pwa.html /opt/ghostport/public/
+cp public/manifest.json /opt/ghostport/public/
 
 cd /opt/ghostport
 npm init -y >/dev/null
@@ -118,7 +123,7 @@ echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
 echo ""
 echo "  ✓ GhostPort OS installed successfully!"
 echo ""
-echo "  Dashboard → http://$PI_IP:4200"
+echo "  Dashboard → https://$PI_IP:4200"
 echo "  Pi-hole   → http://$PI_IP/admin"
 echo ""
 echo "  Commands:"
