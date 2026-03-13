@@ -355,6 +355,115 @@
     .ticket-status { font-size: 11px; margin-top: 8px; }
     .ticket-status.ok { color: var(--green); }
     .ticket-status.err { color: var(--red); }
+
+    /* Arsenal section */
+    .arsenal-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    @media(max-width: 600px) { .arsenal-grid { grid-template-columns: 1fr; } }
+
+    .arsenal-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+      position: relative;
+      transition: all 0.3s;
+    }
+    .arsenal-card:hover { border-color: #39ff8f33; }
+    .arsenal-card-wide { grid-column: 1 / -1; }
+
+    .arsenal-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .arsenal-icon { font-size: 20px; }
+    .arsenal-name { font-family: 'Cinzel', serif; font-size: 13px; color: var(--green); letter-spacing: 1px; }
+    .arsenal-toggle { margin-left: auto; }
+
+    .arsenal-desc { font-size: 11px; color: #6a9a6a; line-height: 1.5; margin-bottom: 8px; }
+    .arsenal-protect {
+      font-size: 10px; color: var(--text-dim); padding: 6px 8px;
+      background: #060a06; border-radius: 3px; border-left: 2px solid var(--green-dim);
+    }
+    .arsenal-protect strong { color: var(--green); font-weight: normal; }
+
+    .arsenal-status {
+      display: inline-block; font-size: 9px; letter-spacing: 1px;
+      padding: 2px 6px; border-radius: 2px; margin-top: 6px;
+    }
+    .arsenal-status.on { background: #39ff8f22; color: var(--green); }
+    .arsenal-status.off { background: #1a1a1a; color: var(--text-faint); }
+    .arsenal-status.tripped { background: #ff444422; color: var(--red); animation: blink 1s infinite; }
+
+    .arsenal-btn {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; padding: 6px 12px; border-radius: 3px;
+      cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
+      background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    }
+    .arsenal-btn:hover { border-color: var(--green); color: var(--green); }
+    .arsenal-btn:disabled { opacity: 0.4; pointer-events: none; }
+
+    /* DNS test results */
+    .dns-result { margin-top: 8px; font-size: 10px; padding: 8px; background: #060a06; border-radius: 3px; }
+    .dns-result.pass { border-left: 2px solid var(--green); color: var(--green); }
+    .dns-result.fail { border-left: 2px solid var(--red); color: var(--red); }
+
+    /* Client list */
+    .client-list { max-height: 160px; overflow-y: auto; margin-top: 8px; }
+    .client-row {
+      display: flex; gap: 12px; font-size: 10px; padding: 4px 0;
+      border-bottom: 1px solid #0d1f0d;
+    }
+    .client-row span { flex: 1; }
+    .client-ip { color: var(--green); }
+    .client-mac { color: var(--text-dim); }
+    .client-host { color: var(--text); }
+
+    /* Schedule form */
+    .schedule-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+    .schedule-form input, .schedule-form select {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+      color: var(--text); font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; padding: 6px 8px;
+    }
+    .schedule-form input:focus, .schedule-form select:focus { outline: none; border-color: var(--green); }
+
+    .day-picker { display: flex; gap: 3px; }
+    .day-btn {
+      width: 26px; height: 24px; font-size: 9px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text-dim); border-radius: 2px;
+      cursor: pointer; font-family: 'Share Tech Mono', monospace;
+    }
+    .day-btn.active { background: #0d2a1a; border-color: var(--green); color: var(--green); }
+
+    .schedule-list { margin-top: 8px; }
+    .schedule-item {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 10px; padding: 6px 8px; background: #060a06;
+      border-radius: 3px; margin-bottom: 4px;
+    }
+    .schedule-item .schedule-del {
+      background: none; border: none; color: var(--red); cursor: pointer;
+      font-size: 12px; font-family: 'Share Tech Mono', monospace;
+    }
+
+    /* Blocklist freq select */
+    .freq-select {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+      color: var(--text); font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; padding: 4px 6px;
+    }
+    .freq-select:focus { outline: none; border-color: var(--green); }
+
+    /* Coming soon */
+    .arsenal-card.coming-soon { opacity: 0.35; pointer-events: none; }
+    .coming-badge {
+      position: absolute; top: 8px; right: 8px;
+      font-size: 8px; color: var(--text-dim); letter-spacing: 1px;
+      background: #1a1a1a; padding: 2px 6px; border-radius: 2px;
+    }
   </style>
 </head>
 <body>
@@ -524,6 +633,190 @@
           <input class="ticket-field" id="ticket-contact" placeholder="Contact info (optional — email, phone, etc.)"/>
           <button class="btn-support" onclick="sendTicket()">SEND TICKET</button>
           <div class="ticket-status" id="ticket-status"></div>
+        </div>
+      </div>
+
+      <!-- Arsenal -->
+      <div class="section-label" style="margin-top:20px">▸ ARSENAL</div>
+      <div class="arsenal-grid" id="arsenal-grid">
+
+        <!-- VPN Kill Switch -->
+        <div class="arsenal-card" id="ac-killswitch">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🛡</span>
+            <span class="arsenal-name">Kill Switch</span>
+            <div class="arsenal-toggle">
+              <div class="toggle-switch" id="tog-killswitch" onclick="arsenalToggle('killswitch')">
+                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="arsenal-desc">Kills DNS resolution if VPN drops in DoubleHop or Z-HOP mode, preventing your traffic from leaking to your ISP.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> DNS leaks when your VPN tunnel goes down unexpectedly</div>
+          <div class="arsenal-status off" id="ks-status">OFF</div>
+        </div>
+
+        <!-- Encrypted DNS -->
+        <div class="arsenal-card" id="ac-encrypteddns">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🔒</span>
+            <span class="arsenal-name">Encrypted DNS</span>
+            <div class="arsenal-toggle">
+              <div class="toggle-switch" id="tog-encrypteddns" onclick="arsenalToggle('encrypteddns')">
+                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="arsenal-desc">Routes all DNS queries through Cloudflare's DNS-over-HTTPS (DoH) instead of cleartext. Your ISP can't see what sites you look up.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> ISP snooping on your DNS queries and DNS spoofing attacks</div>
+          <div class="arsenal-status off" id="edns-status">OFF</div>
+        </div>
+
+        <!-- DNS Leak Test -->
+        <div class="arsenal-card" id="ac-dnstest">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🔍</span>
+            <span class="arsenal-name">DNS Leak Test</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-dnstest" onclick="runDnsTest()">RUN TEST</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Checks if your DNS queries are leaking outside your VPN tunnel by comparing what resolver Cloudflare sees for local vs direct requests.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> Unknowingly exposing your browsing to your ISP while on VPN</div>
+          <div id="dns-result"></div>
+        </div>
+
+        <!-- MAC Randomization -->
+        <div class="arsenal-card" id="ac-macrandom">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🎲</span>
+            <span class="arsenal-name">MAC Randomization</span>
+            <div class="arsenal-toggle">
+              <div class="toggle-switch" id="tog-macrandom" onclick="arsenalToggle('macrandom')">
+                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="arsenal-desc">Generates a random MAC address for the WiFi AP on each reboot. Uses locally-administered (02:xx) prefix. Takes effect on next reboot.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> Device fingerprinting and network tracking across locations</div>
+          <div class="arsenal-status off" id="mac-status">OFF</div>
+        </div>
+
+        <!-- Blocklist Management -->
+        <div class="arsenal-card" id="ac-blocklist">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">📋</span>
+            <span class="arsenal-name">Blocklist Manager</span>
+            <div class="arsenal-toggle">
+              <select class="freq-select" id="sel-blockfreq" onchange="setBlockFreq(this.value)">
+                <option value="weekly">Weekly</option>
+                <option value="daily">Daily</option>
+              </select>
+            </div>
+          </div>
+          <div class="arsenal-desc">Controls how often Pi-hole updates its ad/tracker blocklists. Daily catches new threats faster; weekly is lighter on resources.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> Ads, trackers, and malicious domains across all devices on your network</div>
+          <button class="arsenal-btn" id="btn-gravity" onclick="updateGravity()" style="margin-top:8px">UPDATE NOW</button>
+          <span id="gravity-status" style="font-size:10px;margin-left:8px"></span>
+        </div>
+
+        <!-- Connected Clients -->
+        <div class="arsenal-card arsenal-card-wide" id="ac-clients">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">📡</span>
+            <span class="arsenal-name">Connected Clients</span>
+            <span style="margin-left:auto;font-size:11px;color:var(--green)" id="client-count">0 devices</span>
+          </div>
+          <div class="arsenal-desc">Shows all devices currently connected to GhostPort's WiFi network via DHCP.</div>
+          <div class="client-list" id="client-list">
+            <div style="font-size:10px;color:var(--text-faint)">Loading...</div>
+          </div>
+        </div>
+
+        <!-- Scheduled Modes -->
+        <div class="arsenal-card arsenal-card-wide" id="ac-schedules">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">⏰</span>
+            <span class="arsenal-name">Scheduled Modes</span>
+          </div>
+          <div class="arsenal-desc">Automatically switch security modes on a schedule. For example, switch to Z-HOP every night and back to ISP in the morning.</div>
+          <div class="schedule-form">
+            <input type="time" id="sched-time" value="22:00"/>
+            <div class="day-picker" id="day-picker">
+              <button class="day-btn active" data-day="0">Su</button>
+              <button class="day-btn active" data-day="1">Mo</button>
+              <button class="day-btn active" data-day="2">Tu</button>
+              <button class="day-btn active" data-day="3">We</button>
+              <button class="day-btn active" data-day="4">Th</button>
+              <button class="day-btn active" data-day="5">Fr</button>
+              <button class="day-btn active" data-day="6">Sa</button>
+            </div>
+            <select class="freq-select" id="sched-mode">
+              <option value="isp">ISP</option>
+              <option value="zerotrust">Zero Trust</option>
+              <option value="doublehop">Double Hop</option>
+              <option value="zhop">Z-HOP</option>
+            </select>
+            <button class="arsenal-btn" onclick="addSchedule()">ADD</button>
+          </div>
+          <div class="schedule-list" id="schedule-list"></div>
+        </div>
+
+        <!-- Coming Soon cards -->
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">🧅</span><span class="arsenal-name">Tor Mode</span></div>
+          <div class="arsenal-desc">Route all traffic through Tor for anonymous browsing</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">🔗</span><span class="arsenal-name">Multi-VPN Chaining</span></div>
+          <div class="arsenal-desc">Chain multiple VPN servers so no single provider sees the full picture</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">📦</span><span class="arsenal-name">IoT VLAN Isolation</span></div>
+          <div class="arsenal-desc">Put smart devices on a separate network away from your computers</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">🔬</span><span class="arsenal-name">Suricata IDS</span></div>
+          <div class="arsenal-desc">Watch for suspicious network patterns like malware beacons</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">📊</span><span class="arsenal-name">Traffic Padding</span></div>
+          <div class="arsenal-desc">Add dummy traffic to hide your real browsing patterns</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">📶</span><span class="arsenal-name">Guest Network</span></div>
+          <div class="arsenal-desc">A separate WiFi for visitors that can't see your devices</div>
+        </div>
+        <div class="arsenal-card coming-soon">
+          <div class="coming-badge">COMING SOON</div>
+          <div class="arsenal-header"><span class="arsenal-icon">💾</span><span class="arsenal-name">Disk Encryption</span></div>
+          <div class="arsenal-desc">Encrypt the router's storage to protect configs if it's stolen</div>
+        </div>
+
+      </div>
+
+      <!-- Device Passcode -->
+      <div class="section-label" style="margin-top:20px">▸ DEVICE PASSCODE</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🔑</span>
+          <span class="arsenal-name">Change Passcode</span>
+          <div class="arsenal-toggle">
+            <button class="arsenal-btn" onclick="logoutSession()">LOGOUT</button>
+          </div>
+        </div>
+        <div class="arsenal-desc">Change the passcode used to access this Command Deck. Leave "new passcode" blank to auto-generate a secure one.</div>
+        <div style="margin-top:10px">
+          <input type="password" class="ticket-field" id="current-passcode" placeholder="Current passcode"/>
+          <input type="password" class="ticket-field" id="new-passcode" placeholder="New passcode (blank = auto-generate)"/>
+          <button class="arsenal-btn" onclick="changePasscode()">CHANGE PASSCODE</button>
+          <div id="passcode-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
         </div>
       </div>
     </div>
@@ -884,5 +1177,6 @@
   // Poll status every 5 seconds (faster to catch rollback countdown)
   setInterval(fetchStatus, 5000);
 </script>
+<script src="arsenal.js"></script>
 </body>
 </html>

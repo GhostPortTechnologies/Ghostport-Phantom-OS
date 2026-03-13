@@ -1,0 +1,1 @@
+{ "killSwitch": false, "encryptedDns": false, "macRandomization": false, "blocklistFreq": "weekly", "schedules": [] }
