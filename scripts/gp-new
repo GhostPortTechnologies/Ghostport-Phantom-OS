@@ -1,0 +1,121 @@
+#!/bin/bash
+# gp-new — Generate a unique device passcode (requires GP-DA authentication)
+# Usage: sudo gp-new
+
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Error: must run as root (sudo gp-new)"
+  exit 1
+fi
+
+ADMIN_AUTH="/etc/ghostport/admin-auth.json"
+AUTH_DIR="/etc/ghostport"
+AUTH_FILE="${AUTH_DIR}/auth.json"
+PIHOLE_FILE="${AUTH_DIR}/pihole.json"
+
+mkdir -p "$AUTH_DIR"
+
+# ── GP-DA Setup (first run) ──────────────────────────────
+if [ ! -f "$ADMIN_AUTH" ]; then
+  echo ""
+  echo "  ╔═══════════════════════════════════════════╗"
+  echo "  ║   GP-DA — Domain Admin Setup              ║"
+  echo "  ╚═══════════════════════════════════════════╝"
+  echo ""
+  read -s -p "  Create GP-DA password: " PASS1
+  echo ""
+  read -s -p "  Confirm password: " PASS2
+  echo ""
+
+  if [ "$PASS1" != "$PASS2" ]; then
+    echo "  Passwords do not match."
+    exit 1
+  fi
+
+  if [ ${#PASS1} -lt 8 ]; then
+    echo "  Password must be at least 8 characters."
+    exit 1
+  fi
+
+  node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const password = process.argv[1];
+    const salt = crypto.randomBytes(32).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    fs.writeFileSync('${ADMIN_AUTH}', JSON.stringify({ hash, salt }, null, 2));
+    fs.chmodSync('${ADMIN_AUTH}', 0o600);
+  " "$PASS1"
+
+  echo ""
+  echo "  GP-DA account created. Run sudo gp-new again to generate a device passcode."
+  echo ""
+  exit 0
+fi
+
+# ── GP-DA Authentication ─────────────────────────────────
+echo ""
+read -s -p "  GP-DA Password: " INPUT_PASS
+echo ""
+
+VALID=$(node -e "
+  const crypto = require('crypto');
+  const fs = require('fs');
+  const admin = JSON.parse(fs.readFileSync('${ADMIN_AUTH}', 'utf8'));
+  const hash = crypto.scryptSync(process.argv[1], admin.salt, 64).toString('hex');
+  console.log(hash === admin.hash ? 'yes' : 'no');
+" "$INPUT_PASS")
+
+if [ "$VALID" != "yes" ]; then
+  echo "  Access denied."
+  exit 1
+fi
+
+# ── Generate Device Passcode ─────────────────────────────
+PASSCODE=$(node -e "
+  const crypto = require('crypto');
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  let parts = [];
+  for (let p = 0; p < 3; p++) {
+    let s = '';
+    for (let i = 0; i < 4; i++) s += chars[crypto.randomInt(chars.length)];
+    parts.push(s);
+  }
+  console.log('GP-' + parts.join('-'));
+")
+
+node -e "
+  const crypto = require('crypto');
+  const fs = require('fs');
+  const passcode = process.argv[1];
+  const salt = crypto.randomBytes(32).toString('hex');
+  const hash = crypto.scryptSync(passcode, salt, 64).toString('hex');
+  fs.writeFileSync('${AUTH_FILE}', JSON.stringify({ hash, salt }, null, 2));
+  fs.chmodSync('${AUTH_FILE}', 0o600);
+" "$PASSCODE"
+
+# ── Auto-configure Pi-hole password ──────────────────────
+PIHOLE_PW=$(node -e "
+  const crypto = require('crypto');
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let pw = '';
+  for (let i = 0; i < 24; i++) pw += chars[crypto.randomInt(chars.length)];
+  console.log(pw);
+")
+
+# Set Pi-hole password and save it for the Command Deck
+pihole setpassword "$PIHOLE_PW" > /dev/null 2>&1 || true
+echo "{\"password\":\"$PIHOLE_PW\"}" > "$PIHOLE_FILE"
+chmod 600 "$PIHOLE_FILE"
+chown ghostport-admin:ghostport-admin "$PIHOLE_FILE"
+
+echo ""
+echo "  ╔═══════════════════════════════════════════╗"
+echo "  ║   DEVICE PASSCODE                         ║"
+echo "  ║   ${PASSCODE}                      ║"
+echo "  ╚═══════════════════════════════════════════╝"
+echo ""
+echo "  Pi-hole API: auto-configured"
+echo "  Device is ready to ship."
+echo ""

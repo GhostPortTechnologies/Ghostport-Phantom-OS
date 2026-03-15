@@ -7,16 +7,96 @@
 const express = require("express");
 const { exec } = require("child_process");
 const path = require("path");
-const cors = require("cors");
 const crypto = require("crypto");
 const https = require("https");
 const fs = require("fs");
 
+const http = require("http");
+
 const app = express();
 const PORT = 4200;
 
-app.use(cors());
+// ── Pi-hole API integration ─────────────────────────────
+const PIHOLE_FILE = "/etc/ghostport/pihole.json";
+let piholeSid = null;
+
+function readPiholeConfig() {
+  try { return JSON.parse(fs.readFileSync(PIHOLE_FILE, "utf8")); }
+  catch { return null; }
+}
+
+function piholeRequest(method, apiPath, body) {
+  return new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const headers = { "Accept": "application/json" };
+    if (data) {
+      headers["Content-Type"] = "application/json";
+      headers["Content-Length"] = Buffer.byteLength(data);
+    }
+    if (piholeSid) headers["sid"] = piholeSid;
+    const req = http.request({ hostname: "localhost", port: 80, path: `/api${apiPath}`, method, headers, timeout: 10000 }, res => {
+      let chunks = "";
+      res.on("data", c => chunks += c);
+      res.on("end", () => {
+        try { resolve({ status: res.statusCode, data: JSON.parse(chunks) }); }
+        catch { resolve({ status: res.statusCode, data: chunks }); }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("Pi-hole API timeout")); });
+    if (data) req.write(data);
+    req.end();
+  });
+}
+
+async function piholeAuth() {
+  const config = readPiholeConfig();
+  if (!config || !config.password) {
+    console.log("[Pi-hole] No credentials configured");
+    return false;
+  }
+  try {
+    const res = await piholeRequest("POST", "/auth", { password: config.password });
+    if (res.data?.session?.valid) {
+      piholeSid = res.data.session.sid;
+      console.log("[Pi-hole] Authenticated");
+      return true;
+    }
+    console.error("[Pi-hole] Auth failed:", res.data?.session?.message);
+    return false;
+  } catch (e) {
+    console.error("[Pi-hole] Auth error:", e.message);
+    return false;
+  }
+}
+
+async function piholeApi(method, apiPath, body) {
+  let res = await piholeRequest(method, apiPath, body);
+  // Re-auth on 401
+  if (res.status === 401) {
+    if (await piholeAuth()) {
+      res = await piholeRequest(method, apiPath, body);
+    }
+  }
+  return res;
+}
+
+// Auth on startup
+piholeAuth();
+
 app.use(express.json());
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("X-XSS-Protection", "0");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  next();
+});
 
 // ── authentication ────────────────────────────────────────
 
@@ -84,7 +164,7 @@ function recordFailedAttempt(ip) {
   const passcode = generatePasscode();
   const salt = crypto.randomBytes(32).toString("hex");
   const hash = hashPasscode(passcode, salt);
-  writeAuth({ passcode, hash, salt });
+  writeAuth({ hash, salt });
   console.log("");
   console.log("  ╔═══════════════════════════════════════════╗");
   console.log("  ║   DEVICE PASSCODE (save this!)            ║");
@@ -92,7 +172,7 @@ function recordFailedAttempt(ip) {
   console.log("  ╚═══════════════════════════════════════════╝");
   console.log("");
   console.log("  Use this to log into the Command Deck.");
-  console.log("  Recover via SSH: sudo gp-passcode show");
+  console.log("  Reset via SSH: sudo gp-passcode reset");
   console.log("");
 })();
 
@@ -159,7 +239,7 @@ app.use((req, res, next) => {
   const token = getCookie(req, "gp-session");
   if (token && sessions.has(token)) {
     const session = sessions.get(token);
-    if (Date.now() - session.created < SESSION_TTL) {
+    if (Date.now() - session.created < SESSION_TTL && session.ip === req.ip) {
       return next();
     }
     sessions.delete(token);
@@ -191,7 +271,7 @@ app.post("/api/auth/change-passcode", (req, res) => {
     : generatePasscode();
   const salt = crypto.randomBytes(32).toString("hex");
   const hash = hashPasscode(passcode, salt);
-  writeAuth({ passcode, hash, salt });
+  writeAuth({ hash, salt });
 
   // Invalidate all other sessions
   const myToken = getCookie(req, "gp-session");
@@ -205,9 +285,9 @@ app.post("/api/auth/change-passcode", (req, res) => {
 
 // ── helpers ────────────────────────────────────────────────
 
-function run(cmd) {
+function run(cmd, timeout = 15000) {
   return new Promise((resolve) => {
-    exec(cmd, { timeout: 15000 }, (err, stdout, stderr) => {
+    exec(cmd, { timeout }, (err, stdout, stderr) => {
       resolve({ ok: !err, out: stdout.trim(), err: stderr.trim() });
     });
   });
@@ -267,7 +347,7 @@ app.get("/api/status", async (req, res) => {
       run("ip link show tailscale0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN' && echo up || echo down"),
       run("curl -s --max-time 5 https://icanhazip.com || echo unknown"),
       run("awk '{print $1}' /proc/uptime"),
-      run("curl -s --max-time 3 http://localhost/admin/api.php?summary | python3 -c \"import sys,json; d=json.load(sys.stdin); print(d['ads_blocked_today'])\" 2>/dev/null || echo 0"),
+      piholeApi("GET", "/stats/summary").then(r => ({ out: String(r.data?.queries?.blocked || 0), ok: true })).catch(() => ({ out: "0", ok: false })),
     ]);
 
     // Read active mode from file written by gp-mode
@@ -333,6 +413,13 @@ app.post("/api/mode", async (req, res) => {
     scheduleRollback(previousMode, 60);
   }
 
+  // Remove QUIC block rules if toggle is off
+  const arsenalAfter = readArsenal();
+  if (arsenalAfter.quicBlock === false && mode !== "isp") {
+    await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+    console.log("[Arsenal] QUIC block disabled — removed rules after mode switch");
+  }
+
   console.log(`[GhostPort] Mode switched: ${result.out}`);
   res.json({
     ok: true,
@@ -375,17 +462,12 @@ app.post("/api/mode/rollback", async (req, res) => {
  * Returns Pi-hole stats
  */
 app.get("/api/pihole", async (req, res) => {
-  const result = await run(
-    "curl -s --max-time 3 http://localhost/admin/api.php?summary"
-  );
-  if (!result.ok || !result.out) {
-    return res.json({ ok: false, error: "Pi-hole unreachable" });
-  }
   try {
-    const data = JSON.parse(result.out);
-    res.json({ ok: true, ...data });
-  } catch {
-    res.json({ ok: false, error: "Failed to parse Pi-hole response" });
+    const r = await piholeApi("GET", "/stats/summary");
+    if (r.status !== 200) return res.json({ ok: false, error: "Pi-hole unreachable" });
+    res.json({ ok: true, ...r.data });
+  } catch (e) {
+    res.json({ ok: false, error: "Pi-hole unreachable" });
   }
 });
 
@@ -429,6 +511,393 @@ app.get("/api/wg", async (req, res) => {
   res.json({ ok: true, peers });
 });
 
+// ── hostapd ───────────────────────────────────────────────
+
+app.post("/api/hostapd/restart", async (req, res) => {
+  console.log("[GhostPort] Restarting hostapd (WiFi AP)");
+  const result = await run("sudo systemctl restart hostapd");
+  if (!result.ok) {
+    return res.status(500).json({ ok: false, error: result.err || "hostapd restart failed" });
+  }
+  // Verify AP came back
+  const check = await run("sleep 2 && iw dev wlan0 info 2>/dev/null | grep -q 'type AP' && echo up || echo down");
+  const isUp = check.out.trim() === "up";
+  console.log(`[GhostPort] hostapd restart: ${isUp ? "AP is up" : "AP failed to come up"}`);
+  res.json({ ok: isUp, status: isUp ? "AP broadcasting" : "AP failed to start — check hostapd config" });
+});
+
+// ── repair tools ──────────────────────────────────────────
+
+app.post("/api/repair/dns", async (req, res) => {
+  console.log("[GhostPort] Restarting DNS stack");
+  const r1 = await run("sudo systemctl restart dnsmasq");
+  const r2 = await run("sudo systemctl restart pihole-FTL");
+  const r3 = await run("sudo systemctl restart unbound");
+  // Verify resolution works
+  const check = await run("sleep 1 && dig +short +time=3 example.com @127.0.0.1");
+  const ok = check.ok && check.out.length > 0;
+  console.log(`[GhostPort] DNS restart: ${ok ? "resolving" : "still broken"}`);
+  res.json({
+    ok,
+    status: ok ? "DNS stack restarted — resolving" : "DNS restarted but resolution failed",
+    services: { dnsmasq: r1.ok, piholeFTL: r2.ok, unbound: r3.ok },
+  });
+});
+
+app.post("/api/repair/wireguard", async (req, res) => {
+  console.log("[GhostPort] Restarting WireGuard");
+  const result = await run("sudo systemctl restart wg-quick@wg0");
+  const check = await run("sleep 2 && ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down");
+  const isUp = check.out.trim() === "up";
+  console.log(`[GhostPort] WireGuard restart: ${isUp ? "tunnel up" : "tunnel down"}`);
+  res.json({ ok: isUp, status: isUp ? "WireGuard tunnel is up" : "WireGuard failed to start — check wg0 config" });
+});
+
+app.post("/api/repair/firewall", async (req, res) => {
+  const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+  const mode = modeFile.out.trim() || "isp";
+  console.log(`[GhostPort] Reapplying firewall for mode: ${mode}`);
+  const result = await run(`sudo gp-mode ${mode} --no-rollback`);
+  const check = await run("sudo nft list ruleset | head -3");
+  const ok = check.ok && check.out.length > 0;
+  console.log(`[GhostPort] Firewall reapply: ${ok ? "rules loaded" : "empty ruleset"}`);
+  res.json({ ok, mode, status: ok ? `Firewall reapplied for ${mode}` : "Firewall reapply failed" });
+});
+
+app.post("/api/repair/reboot", async (req, res) => {
+  console.log("[GhostPort] Reboot requested from UI");
+  res.json({ ok: true, status: "Rebooting in 3 seconds..." });
+  setTimeout(() => run("sudo reboot"), 3000);
+});
+
+app.post("/api/repair/factory-reset", async (req, res) => {
+  console.log("[GhostPort] Factory reset requested");
+  try {
+    // Switch to ISP safe mode
+    await run("sudo gp-mode isp --no-rollback");
+    // Remove auth (new passcode generated on next boot)
+    await run("sudo rm -f /etc/ghostport/auth.json");
+    // Reset arsenal config
+    await run("sudo rm -f /etc/ghostport/arsenal.json");
+    // Remove Pi-hole saved credentials
+    await run("sudo rm -f /etc/ghostport/pihole.json");
+    // Clear mode state to ISP
+    await run("echo isp | sudo tee /etc/ghostport/current-mode");
+    console.log("[GhostPort] Factory reset complete — rebooting");
+    res.json({ ok: true, status: "Factory reset complete. Rebooting..." });
+    setTimeout(() => run("sudo reboot"), 3000);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── pihole stats by range ─────────────────────────────────
+
+app.get("/api/pihole/stats", async (req, res) => {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const ranges = {
+      today:     [now - 86400, now],
+      thisMonth: [now - 2592000, now],
+      thisYear:  [now - 31536000, now],
+      allTime:   [1, now],
+    };
+
+    // Live session stats for "today" (most accurate)
+    const liveRes = await piholeApi("GET", "/stats/summary");
+    const liveBlocked = liveRes.data?.queries?.blocked || 0;
+    const liveTotal = liveRes.data?.queries?.total || 0;
+
+    // Database stats for historical ranges
+    const dbResults = {};
+    for (const [key, [from, until]] of Object.entries(ranges)) {
+      if (key === "today") continue;
+      try {
+        const r = await piholeApi("GET", `/stats/database/summary?from=${from}&until=${until}`);
+        dbResults[key] = { blocked: r.data?.sum_blocked || 0, total: r.data?.sum_queries || 0 };
+      } catch { dbResults[key] = { blocked: 0, total: 0 }; }
+    }
+
+    res.json({
+      ok: true,
+      today:     { blocked: liveBlocked, total: liveTotal },
+      thisMonth: dbResults.thisMonth,
+      thisYear:  dbResults.thisYear,
+      allTime:   dbResults.allTime,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── wireguard setup ──────────────────────────────────────
+
+app.get("/api/wireguard/status", async (req, res) => {
+  try {
+    const hasConfig = await run("sudo test -s /etc/wireguard/wg0.conf && echo yes || echo no");
+    const ifUp = await run("ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down");
+    res.json({ ok: true, configured: hasConfig.out.trim() === "yes", status: ifUp.out.trim() });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/wireguard/setup", async (req, res) => {
+  const { config } = req.body;
+  if (!config || !config.includes("[Interface]")) {
+    return res.status(400).json({ ok: false, error: "Invalid WireGuard config — must contain [Interface] section" });
+  }
+  // Basic validation
+  if (!config.includes("PrivateKey") || !config.includes("[Peer]")) {
+    return res.status(400).json({ ok: false, error: "Config must contain PrivateKey and at least one [Peer] section" });
+  }
+  try {
+    // Write config to temp file, then move with sudo
+    const tmpFile = "/tmp/gp-wg0.conf";
+    fs.writeFileSync(tmpFile, config);
+    await run(`sudo cp ${tmpFile} /etc/wireguard/wg0.conf`);
+    await run("sudo chmod 600 /etc/wireguard/wg0.conf");
+    fs.unlinkSync(tmpFile);
+    // Restart WireGuard
+    await run("sudo systemctl stop wg-quick@wg0 2>/dev/null");
+    const start = await run("sudo systemctl start wg-quick@wg0");
+    const check = await run("sleep 2 && ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down");
+    const isUp = check.out.trim() === "up";
+    console.log(`[WireGuard] Config saved and ${isUp ? "tunnel is up" : "tunnel failed to start"}`);
+    res.json({ ok: true, status: isUp ? "up" : "down", message: isUp ? "WireGuard tunnel is up" : "Config saved but tunnel failed to start — check your config" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── restart tailscale ─────────────────────────────────────
+
+app.post("/api/repair/tailscale", async (req, res) => {
+  console.log("[GhostPort] Restarting Tailscale");
+  await run("sudo systemctl restart tailscaled");
+  const check = await run("sleep 2 && ip link show tailscale0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN' && echo up || echo down");
+  const isUp = check.out.trim() === "up";
+  console.log(`[GhostPort] Tailscale restart: ${isUp ? "up" : "down"}`);
+  res.json({ ok: isUp, status: isUp ? "Tailscale is up" : "Tailscale failed to start" });
+});
+
+// ── flush DNS cache ──────────────────────────────────────
+
+app.post("/api/repair/flushdns", async (req, res) => {
+  console.log("[GhostPort] Flushing DNS cache");
+  try {
+    const r = await piholeApi("DELETE", "/dns/cache");
+    const ok = r.status >= 200 && r.status < 300;
+    if (!ok) {
+      // Fallback: restart pihole-FTL to clear cache
+      await run("sudo systemctl restart pihole-FTL");
+    }
+    res.json({ ok: true, status: "DNS cache flushed" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── speed test ───────────────────────────────────────────
+
+app.post("/api/tools/speedtest", async (req, res) => {
+  try {
+    // Check if speedtest-cli is available
+    const which = await run("which speedtest-cli 2>/dev/null || which speedtest 2>/dev/null");
+    if (!which.ok || !which.out.trim()) {
+      return res.json({ ok: false, error: "speedtest-cli not installed — run: sudo apt install speedtest-cli" });
+    }
+    console.log("[Tools] Running speed test...");
+    const result = await run("speedtest-cli --json --timeout 60 2>/dev/null || speedtest --format=json 2>/dev/null", 120000);
+    if (!result.ok) return res.json({ ok: false, error: "Speed test failed" });
+    const data = JSON.parse(result.out);
+    res.json({
+      ok: true,
+      download: (data.download / 1e6).toFixed(1),
+      upload: (data.upload / 1e6).toFixed(1),
+      ping: data.ping?.toFixed(0) || data.server?.latency?.toFixed(0) || "?",
+      server: data.server?.sponsor || data.server?.name || "Unknown",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── ping test ────────────────────────────────────────────
+
+app.post("/api/tools/ping", async (req, res) => {
+  try {
+    const targets = [
+      { name: "Gateway", cmd: "ip route | awk '/default/{print $3}'" },
+    ];
+    const gateway = await run(targets[0].cmd);
+    const gatewayIp = gateway.out.trim();
+
+    const [gw, dns, ext] = await Promise.all([
+      run(`ping -c3 -W2 ${gatewayIp} 2>/dev/null`),
+      run("ping -c3 -W2 127.0.0.1 2>/dev/null"),
+      run("ping -c3 -W2 1.1.1.1 2>/dev/null"),
+    ]);
+
+    function parseLatency(output) {
+      const match = output.match(/rtt min\/avg\/max.*= ([\d.]+)\/([\d.]+)\/([\d.]+)/);
+      return match ? { min: match[1], avg: match[2], max: match[3] } : null;
+    }
+
+    res.json({
+      ok: true,
+      results: [
+        { name: "Gateway", target: gatewayIp, reachable: gw.ok, latency: parseLatency(gw.out) },
+        { name: "DNS (local)", target: "127.0.0.1", reachable: dns.ok, latency: parseLatency(dns.out) },
+        { name: "Internet", target: "1.1.1.1", reachable: ext.ok, latency: parseLatency(ext.out) },
+      ],
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── IP leak test ─────────────────────────────────────────
+
+app.post("/api/tools/ipleak", async (req, res) => {
+  try {
+    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const mode = modeFile.out.trim();
+    const vpnModes = ["doublehop", "zhop"];
+
+    const publicIp = await run("curl -s --max-time 5 https://icanhazip.com");
+    const wgIp = await run("sudo wg show wg0 endpoints 2>/dev/null | awk '{print $2}' | cut -d: -f1");
+
+    const ip = publicIp.out.trim();
+    const wgEndpoint = wgIp.out.trim();
+    const isVpn = vpnModes.includes(mode);
+    // If in VPN mode, public IP should NOT match WireGuard endpoint
+    const leaked = isVpn && ip === wgEndpoint;
+
+    res.json({
+      ok: true,
+      publicIp: ip || "unknown",
+      mode,
+      vpnMode: isVpn,
+      wgEndpoint: wgEndpoint || "none",
+      leaked,
+      status: !isVpn ? "Not in VPN mode" : leaked ? "IP LEAK DETECTED" : "No leak — IP is masked",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── recent blocked domains ───────────────────────────────
+
+app.get("/api/tools/blocked", async (req, res) => {
+  try {
+    const r = await piholeApi("GET", "/queries?blocked=true&length=25");
+    if (r.status !== 200) return res.json({ ok: false, error: "Pi-hole API error" });
+    const queries = (r.data?.queries || []).map(q => ({
+      domain: q.domain,
+      client: q.client?.name || q.client?.ip || "unknown",
+      time: q.time,
+      type: q.type,
+    }));
+    res.json({ ok: true, queries });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── bandwidth monitor ────────────────────────────────────
+
+app.get("/api/tools/bandwidth", async (req, res) => {
+  try {
+    const interfaces = ["eth0", "wlan0", "wg0", "tailscale0"];
+    const stats = {};
+    for (const iface of interfaces) {
+      const rx = await run(`cat /sys/class/net/${iface}/statistics/rx_bytes 2>/dev/null`);
+      const tx = await run(`cat /sys/class/net/${iface}/statistics/tx_bytes 2>/dev/null`);
+      if (rx.ok && tx.ok) {
+        stats[iface] = {
+          rx: parseInt(rx.out.trim()) || 0,
+          tx: parseInt(tx.out.trim()) || 0,
+        };
+      }
+    }
+    res.json({ ok: true, interfaces: stats });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── system update ────────────────────────────────────────
+
+app.post("/api/tools/update", async (req, res) => {
+  try {
+    console.log("[Tools] Running system update...");
+    const update = await run("sudo apt-get update -qq 2>&1 | tail -5", 120000);
+    const upgrade = await run("sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq 2>&1 | tail -10", 300000);
+    const ok = upgrade.ok;
+    console.log(`[Tools] System update: ${ok ? "complete" : "failed"}`);
+    res.json({
+      ok,
+      status: ok ? "System updated" : "Update failed",
+      output: upgrade.out.trim().split("\n").slice(-5).join("\n"),
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── backup config ────────────────────────────────────────
+
+app.get("/api/tools/backup", async (req, res) => {
+  try {
+    const backup = {};
+    const files = {
+      arsenal: "/etc/ghostport/arsenal.json",
+      currentMode: "/etc/ghostport/current-mode",
+    };
+    for (const [key, filePath] of Object.entries(files)) {
+      try { backup[key] = fs.readFileSync(filePath, "utf8").trim(); }
+      catch { backup[key] = null; }
+    }
+    // Include schedules from arsenal
+    try { backup.arsenal = JSON.parse(backup.arsenal); } catch { /* keep as string */ }
+    backup.exportDate = new Date().toISOString();
+    backup.version = "1.1";
+
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", "attachment; filename=ghostport-backup.json");
+    res.json(backup);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/api/tools/restore", async (req, res) => {
+  try {
+    const backup = req.body;
+    if (!backup || !backup.version) {
+      return res.status(400).json({ ok: false, error: "Invalid backup file" });
+    }
+    // Restore arsenal config
+    if (backup.arsenal) {
+      const data = typeof backup.arsenal === "string" ? backup.arsenal : JSON.stringify(backup.arsenal, null, 2);
+      fs.writeFileSync("/etc/ghostport/arsenal.json", data);
+    }
+    // Restore mode
+    if (backup.currentMode) {
+      const mode = backup.currentMode.trim();
+      if (["isp", "zerotrust", "doublehop", "zhop"].includes(mode)) {
+        await run(`sudo gp-mode ${mode} --no-rollback`);
+      }
+    }
+    console.log("[Tools] Config restored from backup");
+    res.json({ ok: true, status: "Config restored" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── diagnostics ───────────────────────────────────────────
 
 app.get("/api/diagnostics", async (req, res) => {
@@ -457,12 +926,8 @@ app.get("/api/diagnostics", async (req, res) => {
         name: "hostapd", ok: r.out === "active", detail: r.out,
         fix: r.out === "active" ? null : "WiFi AP is down — run: sudo systemctl restart hostapd", warn: false,
       })),
-      run("systemctl is-active dnsmasq").then(r => ({
-        name: "dnsmasq", ok: r.out === "active", detail: r.out,
-        fix: r.out === "active" ? null : "DHCP server is down — run: sudo systemctl restart dnsmasq", warn: false,
-      })),
       run("systemctl is-active pihole-FTL").then(r => ({
-        name: "pihole-FTL", ok: r.out === "active", detail: r.out,
+        name: "Pi-hole (DNS+DHCP)", ok: r.out === "active", detail: r.out,
         fix: r.out === "active" ? null : "Pi-hole is down — run: sudo systemctl restart pihole-FTL", warn: false,
       })),
       run("systemctl is-active wg-quick@wg0").then(r => {
@@ -606,9 +1071,14 @@ function writeArsenal(data) {
   fs.writeFileSync(ARSENAL_FILE, JSON.stringify(data, null, 2));
 }
 
-// Kill switch interval state
+// Kill switch — blocks all forwarded traffic if wg0 drops in VPN modes
 let killSwitchInterval = null;
 let killSwitchTripped = false;
+
+// DNS leak monitor — background check every 30s in VPN modes
+let dnsLeakInterval = null;
+let dnsLeakDetected = false;
+let cachedIspIp = null;
 
 function startKillSwitch() {
   if (killSwitchInterval) return;
@@ -619,44 +1089,177 @@ function startKillSwitch() {
     if (mode !== "doublehop" && mode !== "zhop") return;
 
     const wg = await run("ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down");
-    const conf = "/etc/unbound/unbound.conf.d/resolvconf_resolvers.conf";
 
     if (wg.out.trim() === "down" && !killSwitchTripped) {
       killSwitchTripped = true;
-      console.log("[Arsenal] KILL SWITCH TRIPPED — wg0 down, killing DNS forwarders");
-      await run(`sudo sed -i 's/^\\(\\s*forward-addr:\\)/# KILLED \\1/' ${conf}`);
-      await run("sudo systemctl restart unbound");
+      console.log("[Arsenal] KILL SWITCH TRIPPED — wg0 down, blocking all forwarded traffic");
+      // Drop all forwarded traffic so nothing leaks through eth0
+      await run("sudo nft add rule inet filter forward counter drop comment \"gp-killswitch\"");
+      // Also drop the Pi's own outbound (except management)
+      await run("sudo nft add rule inet filter output oifname eth0 tcp dport != 22 udp dport != 41641 counter drop comment \"gp-killswitch\"");
     } else if (wg.out.trim() === "up" && killSwitchTripped) {
       killSwitchTripped = false;
-      console.log("[Arsenal] wg0 recovered — restoring DNS forwarders");
-      await run(`sudo sed -i 's/^# KILLED \\(\\s*forward-addr:\\)/\\1/' ${conf}`);
-      await run("sudo systemctl restart unbound");
+      console.log("[Arsenal] wg0 recovered — restoring traffic");
+      // Remove kill switch rules and reapply mode profile
+      await run(`sudo gp-mode ${mode} --no-rollback`);
     }
-  }, 30000);
+  }, 5000);
 }
 
 function stopKillSwitch() {
   if (killSwitchInterval) {
     clearInterval(killSwitchInterval);
     killSwitchInterval = null;
+  }
+  if (killSwitchTripped) {
     killSwitchTripped = false;
+    console.log("[Arsenal] Kill switch disabled — restoring traffic");
+    // Reapply current mode to clear kill switch rules
+    run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp").then(async (modeFile) => {
+      const mode = modeFile.out.trim();
+      await run(`sudo gp-mode ${mode} --no-rollback`);
+    });
+  } else {
     console.log("[Arsenal] Kill switch disabled");
   }
 }
 
-// Self-heal on startup: uncomment any stuck killed forwarders
-(async () => {
-  const conf = "/etc/unbound/unbound.conf.d/resolvconf_resolvers.conf";
-  const check = await run(`grep -c '# KILLED' ${conf}`);
-  if (parseInt(check.out) > 0) {
-    console.log("[Arsenal] Self-healing: uncommenting killed DNS forwarders from previous crash");
-    await run(`sudo sed -i 's/^# KILLED \\(\\s*forward-addr:\\)/\\1/' ${conf}`);
-    await run("sudo systemctl restart unbound");
+// DNS leak monitor — runs every 30s, checks if DNS resolver matches ISP
+async function checkDnsLeak() {
+  try {
+    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const mode = modeFile.out.trim();
+    // Only monitor in VPN modes and zerotrust
+    if (mode !== "doublehop" && mode !== "zhop" && mode !== "zerotrust") {
+      if (dnsLeakDetected) {
+        dnsLeakDetected = false;
+        console.log("[DNS Monitor] Not in protected mode — clearing leak flag");
+      }
+      return;
+    }
+
+    const cfResult = await run("dig +short TXT o-o.myaddr.l.google.com @127.0.0.1 +time=5 +tries=1");
+    const dnsResolverIp = cfResult.out.replace(/"/g, "").trim();
+
+    if (!dnsResolverIp) return; // DNS not responding, skip this cycle
+
+    // Cache ISP IP so we don't curl every 30s
+    if (!cachedIspIp) {
+      const ispResult = await run("curl -4 -s --max-time 5 --interface eth0 ifconfig.me");
+      cachedIspIp = ispResult.out.trim();
+    }
+
+    if (cachedIspIp && dnsResolverIp === cachedIspIp) {
+      if (!dnsLeakDetected) {
+        dnsLeakDetected = true;
+        console.log(`[DNS Monitor] LEAK DETECTED — resolver ${dnsResolverIp} matches ISP ${cachedIspIp}`);
+
+        // Auto-trip kill switch if enabled and set to auto
+        const arsenal = readArsenal();
+        if (arsenal.killSwitch && arsenal.killSwitchAuto && !killSwitchTripped) {
+          killSwitchTripped = true;
+          console.log("[DNS Monitor] Auto-tripping kill switch due to DNS leak");
+          await run("sudo nft add rule inet filter forward counter drop comment \"gp-killswitch\"");
+          await run("sudo nft add rule inet filter output oifname eth0 tcp dport != 22 udp dport != 41641 counter drop comment \"gp-killswitch\"");
+        }
+      }
+    } else if (dnsLeakDetected) {
+      dnsLeakDetected = false;
+      console.log("[DNS Monitor] Leak resolved — DNS no longer matches ISP");
+    }
+  } catch (e) {
+    // Silent — don't crash the monitor
   }
-  // Restore kill switch if it was enabled
+}
+
+function startDnsLeakMonitor() {
+  if (dnsLeakInterval) return;
+  console.log("[DNS Monitor] Started — checking every 30s");
+  cachedIspIp = null; // refresh ISP IP on start
+  dnsLeakInterval = setInterval(checkDnsLeak, 30000);
+  checkDnsLeak(); // run immediately
+}
+
+function stopDnsLeakMonitor() {
+  if (dnsLeakInterval) {
+    clearInterval(dnsLeakInterval);
+    dnsLeakInterval = null;
+    dnsLeakDetected = false;
+    console.log("[DNS Monitor] Stopped");
+  }
+}
+
+// Restore arsenal state on restart
+(async () => {
   const arsenal = readArsenal();
   if (arsenal.killSwitch) startKillSwitch();
+  // Remove QUIC block rules if toggle is off
+  if (arsenal.quicBlock === false) {
+    await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+    console.log("[Arsenal] QUIC block disabled — removed rules on startup");
+  }
+  // Always run DNS leak monitor in protected modes
+  startDnsLeakMonitor();
 })();
+
+/**
+ * POST /api/pihole/setup — { password } — save Pi-hole credentials and test connection
+ */
+app.post("/api/pihole/setup", async (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ ok: false, error: "Password required" });
+  try {
+    // Test the password before saving
+    const testRes = await piholeRequest("POST", "/auth", { password });
+    if (!testRes.data?.session?.valid) {
+      return res.json({ ok: false, error: "Invalid Pi-hole password" });
+    }
+    piholeSid = testRes.data.session.sid;
+    const dir = path.dirname(PIHOLE_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(PIHOLE_FILE, JSON.stringify({ password }, null, 2));
+    fs.chmodSync(PIHOLE_FILE, 0o600);
+    console.log("[Pi-hole] Credentials saved and authenticated");
+    res.json({ ok: true, connected: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/pihole/reset-password — { newPassword } — change Pi-hole password and update saved credentials
+ */
+app.post("/api/pihole/reset-password", async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword) return res.status(400).json({ ok: false, error: "New password required" });
+  try {
+    const result = await run(`sudo pihole setpassword ${JSON.stringify(newPassword)}`);
+    if (!result.ok) return res.status(500).json({ ok: false, error: "Failed to set Pi-hole password" });
+    // Save new credentials and re-authenticate
+    fs.writeFileSync(PIHOLE_FILE, JSON.stringify({ password: newPassword }, null, 2));
+    fs.chmodSync(PIHOLE_FILE, 0o600);
+    const authed = await piholeAuth();
+    console.log("[Pi-hole] Password reset and re-authenticated");
+    res.json({ ok: true, connected: authed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * GET /api/pihole/status — check if Pi-hole API is connected
+ */
+app.get("/api/pihole/status", async (req, res) => {
+  const config = readPiholeConfig();
+  if (!config) return res.json({ ok: true, configured: false, connected: false });
+  // Test current session
+  try {
+    const r = await piholeApi("GET", "/stats/summary");
+    res.json({ ok: true, configured: true, connected: r.status === 200 });
+  } catch {
+    res.json({ ok: true, configured: true, connected: false });
+  }
+});
 
 /**
  * GET /api/arsenal/status
@@ -675,8 +1278,12 @@ app.get("/api/arsenal/status", async (req, res) => {
       ok: true,
       killSwitch: arsenal.killSwitch,
       killSwitchTripped,
+      killSwitchAuto: arsenal.killSwitchAuto !== false, // default true
+      dnsLeakDetected,
       encryptedDns: dnsMode.out.trim() === "on",
       macRandomization: macService.out.trim() === "enabled",
+      quicBlock: arsenal.quicBlock !== false, // default true
+      piholeConnected: piholeSid !== null,
       blocklistFreq: arsenal.blocklistFreq,
       schedules: arsenal.schedules || [],
       wg0: wg.out.trim(),
@@ -713,31 +1320,48 @@ app.get("/api/arsenal/clients", async (req, res) => {
  */
 app.post("/api/arsenal/dnstest", async (req, res) => {
   try {
-    const [cfResult, googleResult, dnsMode, modeFile] = await Promise.all([
-      run("dig +short whoami.cloudflare TXT @127.0.0.1"),
-      run("dig +short whoami.cloudflare TXT @8.8.8.8"),
+    const [cfResult, publicIpResult, dnsMode, modeFile] = await Promise.all([
+      run("dig +short TXT o-o.myaddr.l.google.com @127.0.0.1"),
+      run("curl -4 -s --max-time 5 ifconfig.me"),
       run("sudo gp-dns-switch status"),
       run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp"),
     ]);
 
-    const cfResolver = cfResult.out.replace(/"/g, "").trim();
-    const googleResolver = googleResult.out.replace(/"/g, "").trim();
+    const dnsResolverIp = cfResult.out.replace(/"/g, "").trim();
+    const publicIp = publicIpResult.out.trim();
     const encrypted = dnsMode.out.trim() === "on";
     const mode = modeFile.out.trim();
     const isVpn = ["doublehop", "zhop"].includes(mode);
 
+    // Get ISP IP (always via eth0, never through tunnel)
+    const ispResult = await run("curl -4 -s --max-time 5 --interface eth0 ifconfig.me");
+    const ispIp = ispResult.out.trim();
+
     let passed = true;
     let reason = "DNS resolving through expected path";
 
-    if (isVpn && cfResolver === googleResolver && cfResolver !== "") {
+    if (!dnsResolverIp) {
       passed = false;
-      reason = "DNS resolver matches direct path — possible leak";
+      reason = "Could not determine DNS resolver — check Pi-hole/cloudflared";
+    } else if (dnsResolverIp === ispIp || dnsResolverIp === publicIp && isVpn) {
+      // DNS resolver is your ISP — that's a leak
+      passed = false;
+      reason = "DNS leaking through ISP — resolver matches your public IP";
+    } else if (isVpn) {
+      passed = true;
+      reason = "DNS exits through encrypted tunnel, not your ISP";
+    } else if (encrypted) {
+      passed = true;
+      reason = "DNS encrypted via cloudflared (DoH)";
+    } else {
+      passed = false;
+      reason = "DNS is unencrypted — enable encrypted DNS for protection";
     }
 
     res.json({
       ok: true, passed, reason,
-      localResolver: cfResolver || "No response",
-      directResolver: googleResolver || "No response",
+      localResolver: dnsResolverIp || "No response",
+      directResolver: `Public: ${publicIp} | ISP: ${ispIp}`,
       encrypted, mode,
     });
   } catch (e) {
@@ -775,8 +1399,48 @@ app.post("/api/arsenal/blocklist", async (req, res) => {
 app.post("/api/arsenal/blocklist/update", async (req, res) => {
   try {
     console.log("[Arsenal] Triggering Pi-hole gravity update");
-    const result = await run("sudo pihole updateGravity 2>&1 | tail -5");
-    res.json({ ok: result.ok, output: result.out });
+    const r = await piholeApi("POST", "/action/gravity");
+    res.json({ ok: r.status === 200 || r.status === 204, output: r.data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/arsenal/blocklist/domain — { domain, action: "deny"|"allow"|"remove-deny"|"remove-allow" }
+ */
+app.post("/api/arsenal/blocklist/domain", async (req, res) => {
+  const { domain, action } = req.body;
+  const validActions = ["deny", "allow", "remove-deny", "remove-allow"];
+  if (!domain || !validActions.includes(action)) {
+    return res.status(400).json({ ok: false, error: "Invalid domain or action" });
+  }
+
+  // Sanitize domain: only allow valid domain characters
+  const sanitized = domain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(sanitized)) {
+    return res.status(400).json({ ok: false, error: "Invalid domain format" });
+  }
+
+  try {
+    let r;
+    switch (action) {
+      case "deny":
+        r = await piholeApi("POST", "/domains/deny/exact", { domain: sanitized });
+        break;
+      case "allow":
+        r = await piholeApi("POST", "/domains/allow/exact", { domain: sanitized });
+        break;
+      case "remove-deny":
+        r = await piholeApi("DELETE", `/domains/deny/exact/${encodeURIComponent(sanitized)}`);
+        break;
+      case "remove-allow":
+        r = await piholeApi("DELETE", `/domains/allow/exact/${encodeURIComponent(sanitized)}`);
+        break;
+    }
+    const ok = r.status >= 200 && r.status < 300;
+    console.log(`[Arsenal] Domain ${action}: ${sanitized} (${ok ? "ok" : "failed"})`);
+    res.json({ ok, domain: sanitized, action, error: ok ? undefined : r.data?.error?.message });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -813,17 +1477,28 @@ app.post("/api/arsenal/killswitch", async (req, res) => {
       startKillSwitch();
     } else {
       stopKillSwitch();
-      const conf = "/etc/unbound/unbound.conf.d/resolvconf_resolvers.conf";
-      const check = await run(`grep -c '# KILLED' ${conf}`);
-      if (parseInt(check.out) > 0) {
-        await run(`sudo sed -i 's/^# KILLED \\(\\s*forward-addr:\\)/\\1/' ${conf}`);
-        await run("sudo systemctl restart unbound");
-      }
     }
     const arsenal = readArsenal();
     arsenal.killSwitch = enabled;
     writeArsenal(arsenal);
     res.json({ ok: true, killSwitch: enabled });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * POST /api/arsenal/killswitch/auto — { enabled: true|false }
+ * Toggles whether kill switch auto-trips on DNS leak detection
+ */
+app.post("/api/arsenal/killswitch/auto", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const arsenal = readArsenal();
+    arsenal.killSwitchAuto = enabled;
+    writeArsenal(arsenal);
+    console.log(`[Arsenal] Kill switch auto-trip ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, killSwitchAuto: enabled });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -873,16 +1548,56 @@ app.post("/api/arsenal/macrandom", async (req, res) => {
 });
 
 /**
+ * POST /api/arsenal/quicblock — { enabled: true|false }
+ * Toggles QUIC (UDP 443) blocking in privacy modes
+ */
+app.post("/api/arsenal/quicblock", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const arsenal = readArsenal();
+    arsenal.quicBlock = enabled;
+    writeArsenal(arsenal);
+
+    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const mode = modeFile.out.trim();
+
+    if (mode !== "isp") {
+      if (enabled) {
+        // Re-apply mode to restore QUIC block rules from the nft profile
+        await run(`sudo gp-mode ${mode} --no-rollback`);
+      } else {
+        // Remove QUIC block rules from live ruleset
+        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+      }
+    }
+
+    console.log(`[Arsenal] QUIC block ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, quicBlock: enabled });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
  * POST /api/arsenal/schedules — { time: "HH:MM", days: [0-6], mode: "isp"|... }
  */
 app.post("/api/arsenal/schedules", async (req, res) => {
   const { time, days, mode } = req.body;
   const valid = ["isp", "zerotrust", "doublehop", "zhop"];
-  if (!time || !days || !valid.includes(mode)) {
+  if (!time || !Array.isArray(days) || !valid.includes(mode)) {
     return res.status(400).json({ ok: false, error: "Invalid schedule parameters" });
+  }
+  if (!/^\d{1,2}:\d{2}$/.test(time)) {
+    return res.status(400).json({ ok: false, error: "Invalid time format (use HH:MM)" });
+  }
+  if (!days.every(d => Number.isInteger(d) && d >= 0 && d <= 6)) {
+    return res.status(400).json({ ok: false, error: "Invalid days (must be integers 0-6)" });
   }
   try {
     const [hour, minute] = time.split(":");
+    if (parseInt(hour) > 23 || parseInt(minute) > 59) {
+      return res.status(400).json({ ok: false, error: "Invalid time value" });
+    }
     const id = Date.now().toString(36);
     const dayStr = days.join(",");
     const cronLine = `${minute} ${hour} * * ${dayStr} root /usr/local/bin/gp-mode ${mode} --no-rollback # gp-schedule-${id}`;
@@ -906,12 +1621,40 @@ app.post("/api/arsenal/schedules", async (req, res) => {
  */
 app.delete("/api/arsenal/schedules/:id", async (req, res) => {
   const { id } = req.params;
+  // Sanitize ID to prevent command injection
+  if (!/^[a-z0-9]+$/.test(id)) {
+    return res.status(400).json({ ok: false, error: "Invalid schedule ID" });
+  }
   try {
     await run(`sudo sed -i '/gp-schedule-${id}/d' /etc/cron.d/ghostport-schedules`);
     const arsenal = readArsenal();
     arsenal.schedules = (arsenal.schedules || []).filter(s => s.id !== id);
     writeArsenal(arsenal);
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── terminal mode ─────────────────────────────────────────
+
+app.get("/api/terminal-mode", async (req, res) => {
+  const result = await run("systemctl is-enabled lightdm 2>/dev/null");
+  const enabled = result.out.trim() === "enabled";
+  res.json({ ok: true, terminalMode: !enabled });
+});
+
+app.post("/api/terminal-mode", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    if (enabled) {
+      console.log("[GhostPort] Terminal mode enabled — disabling lightdm for next boot");
+      await run("sudo systemctl disable lightdm");
+    } else {
+      console.log("[GhostPort] Terminal mode disabled — enabling lightdm for next boot");
+      await run("sudo systemctl enable lightdm");
+    }
+    res.json({ ok: true, terminalMode: enabled, note: "Takes effect on next reboot" });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

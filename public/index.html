@@ -43,13 +43,28 @@
 
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.97)} }
     @keyframes flicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.6} 94%{opacity:1} 97%{opacity:0.8} 98%{opacity:1} }
+    @keyframes glitch {
+      0% { transform: translate(0); text-shadow: 0 0 20px #39ff8f66; }
+      10% { transform: translate(-3px, 1px); text-shadow: 3px 0 #ff4444, -3px 0 #00f0ff; }
+      20% { transform: translate(3px, -1px); text-shadow: -3px 0 #ff4444, 3px 0 #00f0ff; }
+      30% { transform: translate(-2px, 2px); text-shadow: 2px 0 #ff4444, -2px 0 #00f0ff; }
+      40% { transform: translate(2px, -2px); text-shadow: -2px 0 #ff4444, 2px 0 #00f0ff; opacity: 0.8; }
+      50% { transform: translate(-1px, 1px); text-shadow: 1px 0 #ff4444, -1px 0 #00f0ff; }
+      60% { transform: translate(3px, 0); text-shadow: -3px 0 #ff4444, 3px 0 #00f0ff; opacity: 0.6; }
+      70% { transform: translate(-3px, -1px); text-shadow: 3px 0 #ff4444, -3px 0 #00f0ff; }
+      80% { transform: translate(1px, 2px); text-shadow: -1px 0 #ff4444, 1px 0 #00f0ff; opacity: 0.9; }
+      90% { transform: translate(-2px, 0); text-shadow: 2px 0 #ff4444, -2px 0 #00f0ff; }
+      100% { transform: translate(0); text-shadow: 0 0 20px #39ff8f66; }
+    }
+    .brand-name.glitch { animation: glitch 0.6s linear; }
     @keyframes glow { 0%,100%{box-shadow:0 0 8px var(--green-glow)} 50%{box-shadow:0 0 24px #39ff8f66} }
     @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
     @keyframes countdownPulse { 0%,100%{border-color:#ffaa0066} 50%{border-color:#ffaa00} }
 
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; box-sizing: border-box; }
+    * { box-sizing: border-box; }
 
     /* Header */
     header {
@@ -171,7 +186,10 @@
 
     /* Grid */
     .grid { display: grid; grid-template-columns: 1fr 320px; gap: 20px; }
-    @media(max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+    @media(max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+      .right-panel { order: -1; }
+    }
 
     .section-label {
       font-size: 10px; color: var(--text-dim);
@@ -180,7 +198,7 @@
 
     /* Mode cards */
     .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
-    @media(max-width: 480px) { .modes { grid-template-columns: 1fr; } }
+    @media(max-width: 480px) { .modes { grid-template-columns: 1fr 1fr; gap: 8px; } }
 
     .mode-card {
       cursor: pointer;
@@ -363,7 +381,44 @@
       gap: 12px;
       margin-bottom: 20px;
     }
-    @media(max-width: 600px) { .arsenal-grid { grid-template-columns: 1fr; } }
+    @media(max-width: 600px) {
+      .arsenal-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .arsenal-card { padding: 10px; }
+      .arsenal-card-wide { grid-column: 1 / -1; }
+      .arsenal-icon { font-size: 14px; }
+      .arsenal-name { font-size: 11px; }
+      .arsenal-header { gap: 6px; margin-bottom: 4px; }
+      .arsenal-desc { display: none; }
+      .arsenal-protect { display: none; }
+      .arsenal-btn { font-size: 9px; padding: 4px 8px; }
+      .arsenal-status { font-size: 8px; padding: 2px 4px; }
+      .wg-tab { font-size: 8px; padding: 3px 6px; }
+
+      .wrap { padding: 12px 10px; }
+      .right-panel { overflow: hidden; }
+      .ship-stat { padding: 8px 10px; flex-wrap: wrap; gap: 2px; }
+      .ship-stat-label { font-size: 8px; }
+      .ship-stat-val { font-size: 14px; }
+      .ship-stat-unit { font-size: 8px; max-width: none; }
+      .log-box { height: 150px; padding: 8px; }
+      .log-entry { font-size: 10px; gap: 6px; }
+      .log-time { min-width: 48px; font-size: 9px; }
+      #bandwidth-result { padding: 8px; }
+
+      .mode-card { padding: 12px; }
+      .mode-icon { font-size: 20px; margin-bottom: 4px; }
+      .mode-name { font-size: 12px; }
+      .mode-subtitle { font-size: 9px; margin-bottom: 4px; }
+      .mode-desc { display: none; }
+      .privacy-bar-wrap { margin-top: 8px; }
+
+      .support-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+      .btn-support { font-size: 9px; padding: 6px 8px; text-align: center; }
+
+      .section-label { font-size: 9px; }
+      .tunnels { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+      .stat-box { padding: 10px; }
+    }
 
     .arsenal-card {
       background: var(--bg2);
@@ -404,6 +459,8 @@
     }
     .arsenal-btn:hover { border-color: var(--green); color: var(--green); }
     .arsenal-btn:disabled { opacity: 0.4; pointer-events: none; }
+    .wg-tab { opacity: 0.5; }
+    .wg-tab.active { opacity: 1; border-color: var(--green); color: var(--green); }
 
     /* DNS test results */
     .dns-result { margin-top: 8px; font-size: 10px; padding: 8px; background: #060a06; border-radius: 3px; }
@@ -457,6 +514,30 @@
     }
     .freq-select:focus { outline: none; border-color: var(--green); }
 
+    /* DNS Leak Alert Banner */
+    .dns-leak-alert {
+      display: none;
+      background: #ff444422;
+      border: 1px solid var(--red);
+      color: var(--red);
+      padding: 10px 16px;
+      margin-bottom: 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      letter-spacing: 1px;
+      animation: blink 1.5s infinite;
+      text-align: center;
+    }
+    .dns-leak-alert.visible { display: block; }
+    .dns-leak-alert strong { font-weight: normal; text-transform: uppercase; }
+
+    /* Kill switch auto-mode toggle */
+    .ks-auto-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 8px; font-size: 10px; color: var(--text-dim);
+    }
+    .ks-auto-row .toggle-switch { transform: scale(0.8); }
+
     /* Coming soon */
     .arsenal-card.coming-soon { opacity: 0.35; pointer-events: none; }
     .coming-badge {
@@ -472,21 +553,9 @@
   <!-- Header -->
   <header>
     <div class="brand">
-      <svg class="skull" viewBox="0 0 100 100">
-        <ellipse cx="50" cy="42" rx="32" ry="30" fill="#39ff8f" opacity="0.12" stroke="#39ff8f" stroke-width="2"/>
-        <ellipse cx="50" cy="42" rx="28" ry="26" fill="#060a06"/>
-        <circle cx="38" cy="40" r="9" fill="#39ff8f" opacity="0.9"/>
-        <circle cx="62" cy="40" r="9" fill="#39ff8f" opacity="0.9"/>
-        <circle cx="38" cy="40" r="5" fill="#060a06"/>
-        <circle cx="62" cy="40" r="5" fill="#060a06"/>
-        <rect x="40" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
-        <rect x="48" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
-        <rect x="56" y="62" width="5" height="10" rx="2" fill="#39ff8f" opacity="0.8"/>
-        <rect x="44" y="60" width="13" height="4" rx="2" fill="#39ff8f" opacity="0.3"/>
-        <rect x="25" y="55" width="50" height="12" rx="6" fill="#39ff8f" opacity="0.08" stroke="#39ff8f" stroke-width="1"/>
-      </svg>
+      <a href="https://www.ghostporttechnologies.com" target="_blank" rel="noopener"><img src="/logo.png" alt="GhostPort" class="skull" style="border-radius:50%"/></a>
       <div>
-        <div class="brand-name">GHOSTPORT</div>
+        <div class="brand-name" onclick="this.classList.add('glitch');setTimeout(()=>this.classList.remove('glitch'),600)" style="cursor:pointer">GHOSTPORT</div>
         <div class="brand-sub">PRIVACY ROUTER // COMMAND DECK</div>
       </div>
     </div>
@@ -626,6 +695,17 @@
         <button class="btn-support" id="btn-diag" onclick="runDiagnostics()">RUN DIAGNOSTICS</button>
         <button class="btn-support" id="btn-ticket" onclick="toggleTicketForm()">SUBMIT TICKET</button>
       </div>
+      <div class="section-label" style="margin-top:16px">▸ REPAIR TOOLS</div>
+      <div class="support-buttons" style="flex-wrap:wrap">
+        <button class="btn-support" id="btn-ap" onclick="repairAction('ap')">RESTART AP</button>
+        <button class="btn-support" id="btn-dns" onclick="repairAction('dns')">RESTART DNS</button>
+        <button class="btn-support" id="btn-wg" onclick="repairAction('wireguard')">RESTART WIREGUARD</button>
+        <button class="btn-support" id="btn-ts" onclick="repairAction('tailscale')">RESTART TAILSCALE</button>
+        <button class="btn-support" id="btn-fw" onclick="repairAction('firewall')">REAPPLY FIREWALL</button>
+        <button class="btn-support" id="btn-flush" onclick="repairAction('flushdns')">FLUSH DNS CACHE</button>
+        <button class="btn-support" id="btn-reboot" onclick="confirmReboot()" style="border-color:#ff444466;color:#ff8888">REBOOT DEVICE</button>
+        <button class="btn-support" id="btn-factory" onclick="confirmFactory()" style="border-color:#ff444466;color:#ff8888">FACTORY RESET</button>
+      </div>
       <div id="diag-results" style="display:none"></div>
       <div id="ticket-form-wrap" style="display:none">
         <div class="ticket-form">
@@ -634,6 +714,26 @@
           <button class="btn-support" onclick="sendTicket()">SEND TICKET</button>
           <div class="ticket-status" id="ticket-status"></div>
         </div>
+      </div>
+
+      <!-- DNS Leak Alert -->
+      <div class="dns-leak-alert" id="dns-leak-alert">
+        <strong>⚠ DNS LEAK DETECTED</strong> — Your DNS queries are being exposed to your ISP.
+        <span id="dns-leak-action"></span>
+      </div>
+
+      <!-- Pi-hole Setup Banner -->
+      <div class="arsenal-card arsenal-card-wide" id="pihole-setup" style="display:none; margin-top:20px; border-color:#ff9f43;">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">⚙</span>
+          <span class="arsenal-name" style="color:#ff9f43">Pi-hole Setup Required</span>
+        </div>
+        <div class="arsenal-desc">Connect the Command Deck to Pi-hole to manage blocklists, domain filtering, and ad blocking stats. Enter your Pi-hole admin password below.</div>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <input type="password" id="pihole-pw" placeholder="Pi-hole password" style="background:#0a0a0a;border:1px solid #333;color:var(--green);padding:6px 10px;font-family:'Share Tech Mono',monospace;font-size:12px;flex:1;border-radius:3px">
+          <button class="arsenal-btn" onclick="setupPihole()" id="btn-pihole-setup">CONNECT</button>
+        </div>
+        <div id="pihole-setup-status" style="font-size:11px;margin-top:6px"></div>
       </div>
 
       <!-- Arsenal -->
@@ -651,9 +751,15 @@
               </div>
             </div>
           </div>
-          <div class="arsenal-desc">Kills DNS resolution if VPN drops in DoubleHop or Z-HOP mode, preventing your traffic from leaking to your ISP.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> DNS leaks when your VPN tunnel goes down unexpectedly</div>
+          <div class="arsenal-desc">Blocks all traffic if VPN drops or DNS leaks are detected, preventing your traffic from leaking to your ISP.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> DNS leaks and VPN tunnel failures</div>
           <div class="arsenal-status off" id="ks-status">OFF</div>
+          <div class="ks-auto-row">
+            <div class="toggle-switch" id="tog-ks-auto" onclick="toggleKsAuto()">
+              <div class="toggle-track"></div><div class="toggle-thumb"></div>
+            </div>
+            <span>Auto-trip on DNS leak</span>
+          </div>
         </div>
 
         <!-- Encrypted DNS -->
@@ -670,6 +776,22 @@
           <div class="arsenal-desc">Routes all DNS queries through Cloudflare's DNS-over-HTTPS (DoH) instead of cleartext. Your ISP can't see what sites you look up.</div>
           <div class="arsenal-protect"><strong>Protects you from:</strong> ISP snooping on your DNS queries and DNS spoofing attacks</div>
           <div class="arsenal-status off" id="edns-status">OFF</div>
+        </div>
+
+        <!-- QUIC Block -->
+        <div class="arsenal-card" id="ac-quicblock">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🚫</span>
+            <span class="arsenal-name">QUIC Block</span>
+            <div class="arsenal-toggle">
+              <div class="toggle-switch" id="tog-quicblock" onclick="arsenalToggle('quicblock')">
+                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="arsenal-desc">Blocks the QUIC protocol (UDP port 443) on all privacy modes. Forces browsers to fall back to standard HTTPS, which ensures Pi-hole DNS filtering can't be bypassed.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> Browsers using QUIC to bypass DNS-based ad blocking and privacy filters</div>
+          <div class="arsenal-status on" id="quic-status">BLOCKING</div>
         </div>
 
         <!-- DNS Leak Test -->
@@ -702,6 +824,22 @@
           <div class="arsenal-status off" id="mac-status">OFF</div>
         </div>
 
+        <!-- Terminal Mode -->
+        <div class="arsenal-card" id="ac-terminalmode">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🖥️</span>
+            <span class="arsenal-name">Terminal Mode</span>
+            <div class="arsenal-toggle">
+              <div class="toggle-switch" id="tog-terminalmode" onclick="arsenalToggle('terminalmode')">
+                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+              </div>
+            </div>
+          </div>
+          <div class="arsenal-desc">Boots the Pi into a CLI-only terminal instead of the graphical desktop. Frees up RAM and CPU for routing. Takes effect on next reboot.</div>
+          <div class="arsenal-protect"><strong>Benefit:</strong> Reduced attack surface and lower resource usage — ideal for headless operation</div>
+          <div class="arsenal-status off" id="term-status">OFF</div>
+        </div>
+
         <!-- Blocklist Management -->
         <div class="arsenal-card" id="ac-blocklist">
           <div class="arsenal-header">
@@ -718,6 +856,15 @@
           <div class="arsenal-protect"><strong>Protects you from:</strong> Ads, trackers, and malicious domains across all devices on your network</div>
           <button class="arsenal-btn" id="btn-gravity" onclick="updateGravity()" style="margin-top:8px">UPDATE NOW</button>
           <span id="gravity-status" style="font-size:10px;margin-left:8px"></span>
+          <div style="margin-top:10px;border-top:1px solid #1a2a1a;padding-top:10px">
+            <div style="font-size:11px;color:var(--green);margin-bottom:6px">Block or Allow a Domain</div>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+              <input type="text" id="domain-input" placeholder="example.com" style="flex:1;min-width:150px;background:var(--bg2);border:1px solid #1a3a1a;color:var(--text);padding:6px 8px;font-family:Share Tech Mono;font-size:11px;border-radius:4px">
+              <button class="arsenal-btn" onclick="submitDomain('deny')" style="font-size:10px">BLOCK</button>
+              <button class="arsenal-btn" onclick="submitDomain('allow')" style="font-size:10px;background:#1a1a0a;border-color:#3a3a1a">ALLOW</button>
+            </div>
+            <span id="domain-status" style="font-size:10px;margin-top:4px;display:block"></span>
+          </div>
         </div>
 
         <!-- Connected Clients -->
@@ -762,6 +909,85 @@
           <div class="schedule-list" id="schedule-list"></div>
         </div>
 
+        <!-- Speed Test -->
+        <div class="arsenal-card" id="ac-speedtest">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">⚡</span>
+            <span class="arsenal-name">Speed Test</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-speedtest" onclick="runSpeedTest()">RUN TEST</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Measures download/upload speed and latency through your current tunnel. Shows the real-world performance impact of your privacy mode.</div>
+          <div id="speed-result"></div>
+        </div>
+
+        <!-- Ping Test -->
+        <div class="arsenal-card" id="ac-pingtest">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">📡</span>
+            <span class="arsenal-name">Ping Test</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-pingtest" onclick="runPingTest()">RUN TEST</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Checks latency to your gateway, local DNS, and the internet. Helps pinpoint where connectivity issues are happening.</div>
+          <div id="ping-result"></div>
+        </div>
+
+        <!-- IP Leak Test -->
+        <div class="arsenal-card" id="ac-ipleak">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🌐</span>
+            <span class="arsenal-name">IP Leak Test</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-ipleak" onclick="runIpLeak()">RUN TEST</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Checks if your real IP address is leaking outside the VPN tunnel by comparing your public IP against the WireGuard endpoint.</div>
+          <div class="arsenal-protect"><strong>Protects you from:</strong> VPN misconfigurations that expose your real IP address</div>
+          <div id="ipleak-result"></div>
+        </div>
+
+        <!-- Recent Blocked Domains -->
+        <div class="arsenal-card arsenal-card-wide" id="ac-blocked">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🚷</span>
+            <span class="arsenal-name">Recent Blocked Domains</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-blocked" onclick="fetchBlocked()">REFRESH</button>
+            </div>
+          </div>
+          <div id="blocked-result" style="margin-top:8px"></div>
+        </div>
+
+        <!-- Backup / Restore -->
+        <div class="arsenal-card" id="ac-backup">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">💾</span>
+            <span class="arsenal-name">Backup / Restore</span>
+          </div>
+          <div class="arsenal-desc">Export your GhostPort settings or restore from a previous backup.</div>
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+            <button class="arsenal-btn" onclick="downloadBackup()">EXPORT BACKUP</button>
+            <label class="arsenal-btn" style="cursor:pointer">IMPORT BACKUP<input type="file" accept=".json" onchange="importBackup(event)" style="display:none"></label>
+          </div>
+          <div id="backup-status" style="font-size:10px;margin-top:6px;min-height:16px"></div>
+        </div>
+
+        <!-- System Update -->
+        <div class="arsenal-card" id="ac-update">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">🔄</span>
+            <span class="arsenal-name">System Update</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-update" onclick="confirmUpdate()">UPDATE</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Runs apt update & upgrade to install the latest system and security patches. This may take several minutes.</div>
+          <div id="update-result" style="margin-top:8px"></div>
+        </div>
+
         <!-- Coming Soon cards -->
         <div class="arsenal-card coming-soon">
           <div class="coming-badge">COMING SOON</div>
@@ -801,6 +1027,84 @@
 
       </div>
 
+      <!-- WireGuard Setup -->
+      <div class="section-label" style="margin-top:20px">▸ WIREGUARD VPN</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🔐</span>
+          <span class="arsenal-name">WireGuard Config</span>
+          <div class="arsenal-toggle">
+            <span class="arsenal-status" id="wg-setup-status">---</span>
+          </div>
+        </div>
+        <div class="arsenal-desc">Set up your VPN tunnel to enable Double Hop &amp; Z-HOP privacy modes.</div>
+        <div style="margin-top:10px">
+          <!-- Mode tabs -->
+          <div style="display:flex;gap:4px;margin-bottom:10px">
+            <button class="arsenal-btn wg-tab active" data-tab="guided" onclick="switchWgTab('guided')">GUIDED SETUP</button>
+            <button class="arsenal-btn wg-tab" data-tab="form" onclick="switchWgTab('form')">EASY FORM</button>
+            <button class="arsenal-btn wg-tab" data-tab="advanced" onclick="switchWgTab('advanced')">PASTE CONFIG</button>
+          </div>
+
+          <!-- Guided Setup (provider selection) -->
+          <div id="wg-tab-guided" class="wg-tab-content">
+            <select class="ticket-field" id="wg-provider" onchange="showProviderGuide()" style="margin-bottom:8px">
+              <option value="">— Select your VPN provider —</option>
+              <option value="mullvad">Mullvad VPN</option>
+              <option value="proton">ProtonVPN</option>
+              <option value="ivpn">IVPN</option>
+              <option value="surfshark">Surfshark</option>
+              <option value="nord">NordVPN</option>
+              <option value="pia">Private Internet Access</option>
+              <option value="windscribe">Windscribe</option>
+              <option value="airvpn">AirVPN</option>
+              <option value="other">Other Provider</option>
+            </select>
+            <div id="wg-provider-guide" style="font-size:11px;line-height:1.6;color:var(--text-dim);display:none">
+              <div id="wg-provider-steps"></div>
+              <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+                <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">Once you have the file, upload or paste it below:</div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <label class="arsenal-btn" style="cursor:pointer">UPLOAD .conf<input type="file" accept=".conf" onchange="uploadWgConfig(event)" style="display:none"></label>
+                  <button class="arsenal-btn" onclick="switchWgTab('advanced')">PASTE MANUALLY</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Easy Form -->
+          <div id="wg-tab-form" class="wg-tab-content" style="display:none">
+            <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Fill in the fields from your VPN provider. All fields required.</div>
+            <input class="ticket-field" id="wg-private-key" placeholder="Your Private Key" style="font-family:'Share Tech Mono',monospace;font-size:11px"/>
+            <input class="ticket-field" id="wg-address" placeholder="Your VPN Address (e.g. 10.66.0.2/32)"/>
+            <input class="ticket-field" id="wg-dns" placeholder="DNS Server (e.g. 10.64.0.1)" value="10.64.0.1"/>
+            <div style="font-size:10px;color:var(--green);margin:8px 0 4px">Server / Peer</div>
+            <input class="ticket-field" id="wg-peer-key" placeholder="Server Public Key"/>
+            <input class="ticket-field" id="wg-endpoint" placeholder="Server Endpoint (e.g. vpn.example.com:51820)"/>
+            <input class="ticket-field" id="wg-allowed" placeholder="Allowed IPs (default: 0.0.0.0/0)" value="0.0.0.0/0, ::/0"/>
+            <button class="arsenal-btn" onclick="saveWgForm()" style="margin-top:4px">SAVE &amp; CONNECT</button>
+          </div>
+
+          <!-- Advanced (raw paste) -->
+          <div id="wg-tab-advanced" class="wg-tab-content" style="display:none">
+            <textarea class="ticket-field" id="wg-config" rows="6" placeholder="[Interface]
+PrivateKey = ...
+Address = ...
+
+[Peer]
+PublicKey = ...
+Endpoint = ...
+AllowedIPs = 0.0.0.0/0"></textarea>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="arsenal-btn" onclick="saveWgConfig()">SAVE &amp; CONNECT</button>
+              <label class="arsenal-btn" style="cursor:pointer">UPLOAD .conf<input type="file" accept=".conf" onchange="uploadWgConfig(event)" style="display:none"></label>
+            </div>
+          </div>
+
+          <div id="wg-setup-msg" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
+
       <!-- Device Passcode -->
       <div class="section-label" style="margin-top:20px">▸ DEVICE PASSCODE</div>
       <div class="arsenal-card">
@@ -819,6 +1123,21 @@
           <div id="passcode-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
         </div>
       </div>
+
+      <!-- Pi-hole Password -->
+      <div class="section-label" style="margin-top:20px">▸ PI-HOLE</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🛡</span>
+          <span class="arsenal-name">Pi-hole Password</span>
+        </div>
+        <div class="arsenal-desc">Change the Pi-hole admin password. This also updates the Command Deck's saved credentials so the connection stays active.</div>
+        <div style="margin-top:10px">
+          <input type="password" class="ticket-field" id="pihole-new-pw" placeholder="New Pi-hole password"/>
+          <button class="arsenal-btn" onclick="resetPiholePassword()">CHANGE PASSWORD</button>
+          <div id="pihole-pw-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Right panel -->
@@ -827,8 +1146,19 @@
         <div class="section-label">▸ SHIP STATS</div>
         <div class="ship-stats">
           <div class="ship-stat">
-            <div><div class="ship-stat-label">Ads Plundered</div><div class="ship-stat-val" id="stat-ads">---</div></div>
-            <div class="ship-stat-unit">blocked today</div>
+            <div>
+              <div class="ship-stat-label" style="display:flex;align-items:center;gap:6px">
+                Ads Plundered
+                <select id="ads-range" onchange="fetchAdsRange()" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Share Tech Mono',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
+                  <option value="today">Today</option>
+                  <option value="thisMonth">This Month</option>
+                  <option value="thisYear">This Year</option>
+                  <option value="allTime">All Time</option>
+                </select>
+              </div>
+              <div class="ship-stat-val" id="stat-ads">---</div>
+            </div>
+            <div class="ship-stat-unit" id="stat-ads-label">blocked today</div>
           </div>
           <div class="ship-stat">
             <div><div class="ship-stat-label">Current IP</div><div class="ship-stat-val" id="stat-ip">---</div></div>
@@ -848,6 +1178,11 @@
       <div>
         <div class="section-label">▸ CREW LOG</div>
         <div class="log-box" id="log-box"></div>
+      </div>
+
+      <div>
+        <div class="section-label">▸ BANDWIDTH</div>
+        <div id="bandwidth-result" style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px"></div>
       </div>
 
       <div class="footer">
@@ -967,7 +1302,10 @@
     document.getElementById("role-ts").textContent = roles.ts;
 
     // Stats
-    document.getElementById("stat-ads").textContent = (data.adsBlocked || 0).toLocaleString();
+    adsCache.today = data.adsBlocked || 0;
+    if (document.getElementById("ads-range").value === "today") {
+      document.getElementById("stat-ads").textContent = adsCache.today.toLocaleString();
+    }
     document.getElementById("stat-ip").textContent = data.ip;
     document.getElementById("stat-ip-label").textContent = mode === "isp" ? "your ISP IP" : "VPN/tunnel IP";
     document.getElementById("stat-enc").textContent = info.enc;
@@ -977,6 +1315,33 @@
     updateRollbackBar(data.rollback);
 
     currentMode = mode;
+  }
+
+  let adsCache = {};
+  async function fetchAdsRange() {
+    const range = document.getElementById("ads-range").value;
+    const labels = { today: "blocked today", thisMonth: "blocked this month", thisYear: "blocked this year", allTime: "blocked all time" };
+    document.getElementById("stat-ads-label").textContent = labels[range];
+
+    // Use cached data if available
+    if (adsCache[range] !== undefined) {
+      document.getElementById("stat-ads").textContent = adsCache[range].toLocaleString();
+      return;
+    }
+
+    try {
+      const res = await fetch(API + "/api/pihole/stats");
+      const data = await res.json();
+      if (data.ok) {
+        adsCache = {
+          today: data.today.blocked,
+          thisMonth: data.thisMonth.blocked,
+          thisYear: data.thisYear.blocked,
+          allTime: data.allTime.blocked,
+        };
+        document.getElementById("stat-ads").textContent = (adsCache[range] || 0).toLocaleString();
+      }
+    } catch (e) { /* silent */ }
   }
 
   async function fetchStatus() {
@@ -1079,9 +1444,19 @@
         document.getElementById("status-text").textContent = "MODE SWITCH FAILED";
       }
     } catch (e) {
-      log(`ERROR: Could not reach API — ${e.message}`, "error");
-      document.getElementById("status-text").textContent = "CONNECTION LOST";
-      document.getElementById("status-dot").className = "status-dot error";
+      // Network drops during mode switch are expected (routing path changes).
+      log(`Reconnecting after mode switch...`, "warn");
+      document.getElementById("status-text").innerHTML = `<span class="spinner"></span>RECONNECTING...`;
+      let recovered = false;
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        try { await fetchStatus(); recovered = true; log(`Mode active: ${mode.toUpperCase()}`, "success"); break; } catch (_) {}
+      }
+      if (!recovered) {
+        log(`ERROR: Could not reach API — ${e.message}`, "error");
+        document.getElementById("status-text").textContent = "CONNECTION LOST";
+        document.getElementById("status-dot").className = "status-dot error";
+      }
     }
 
     document.getElementById("card-" + mode).classList.remove("switching");
@@ -1125,6 +1500,87 @@
   function toggleTicketForm() {
     const wrap = document.getElementById("ticket-form-wrap");
     wrap.style.display = wrap.style.display === "none" ? "block" : "none";
+  }
+
+  const REPAIR_ENDPOINTS = {
+    ap:        { url: "/api/hostapd/restart",    label: "RESTART AP",        name: "WiFi AP" },
+    dns:       { url: "/api/repair/dns",         label: "RESTART DNS",       name: "DNS stack" },
+    wireguard: { url: "/api/repair/wireguard",   label: "RESTART WIREGUARD", name: "WireGuard" },
+    tailscale: { url: "/api/repair/tailscale",   label: "RESTART TAILSCALE", name: "Tailscale" },
+    firewall:  { url: "/api/repair/firewall",    label: "REAPPLY FIREWALL",  name: "Firewall" },
+    flushdns:  { url: "/api/repair/flushdns",    label: "FLUSH DNS CACHE",   name: "DNS cache" },
+  };
+
+  async function repairAction(key) {
+    const cfg = REPAIR_ENDPOINTS[key];
+    if (!cfg) return;
+    const btnMap = { ap: "btn-ap", wireguard: "btn-wg", firewall: "btn-fw", dns: "btn-dns", tailscale: "btn-ts", flushdns: "btn-flush" };
+    const btnId = btnMap[key] || "btn-" + key;
+    const btn = document.getElementById(btnId);
+    btn.disabled = true;
+    btn.textContent = "WORKING...";
+    log(`Restarting ${cfg.name}...`, "warn");
+
+    try {
+      const res = await fetch(API + cfg.url, { method: "POST" });
+      const data = await res.json();
+      if (data.ok) {
+        log(`${cfg.name}: ${data.status}`, "success");
+      } else {
+        log(`${cfg.name} failed: ${data.error || data.status}`, "error");
+      }
+      // Refresh dashboard status
+      await fetchStatus();
+    } catch (e) {
+      log(`${cfg.name} error: ${e.message}`, "error");
+    }
+
+    btn.disabled = false;
+    btn.textContent = cfg.label;
+  }
+
+  function confirmReboot() {
+    const btn = document.getElementById("btn-reboot");
+    if (btn.dataset.armed === "true") {
+      btn.disabled = true;
+      btn.textContent = "REBOOTING...";
+      log("Rebooting device...", "error");
+      fetch(API + "/api/repair/reboot", { method: "POST" });
+      return;
+    }
+    btn.dataset.armed = "true";
+    btn.textContent = "CONFIRM REBOOT?";
+    btn.style.borderColor = "var(--red)";
+    btn.style.color = "var(--red)";
+    log("Press REBOOT again within 5s to confirm", "warn");
+    setTimeout(() => {
+      btn.dataset.armed = "false";
+      btn.textContent = "REBOOT DEVICE";
+      btn.style.borderColor = "#ff444466";
+      btn.style.color = "#ff8888";
+    }, 5000);
+  }
+
+  function confirmFactory() {
+    const btn = document.getElementById("btn-factory");
+    if (btn.dataset.armed === "true") {
+      btn.disabled = true;
+      btn.textContent = "RESETTING...";
+      log("Factory reset in progress...", "error");
+      fetch(API + "/api/repair/factory-reset", { method: "POST" });
+      return;
+    }
+    btn.dataset.armed = "true";
+    btn.textContent = "CONFIRM RESET?";
+    btn.style.borderColor = "var(--red)";
+    btn.style.color = "var(--red)";
+    log("Press FACTORY RESET again within 5s to confirm — THIS WILL ERASE ALL SETTINGS", "error");
+    setTimeout(() => {
+      btn.dataset.armed = "false";
+      btn.textContent = "FACTORY RESET";
+      btn.style.borderColor = "#ff444466";
+      btn.style.color = "#ff8888";
+    }, 5000);
   }
 
   async function sendTicket() {
