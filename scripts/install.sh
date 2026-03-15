@@ -204,7 +204,7 @@ cat > "$DESKTOP_DIR/ghostport.desktop" <<EOF
 [Desktop Entry]
 Name=GhostPort
 Comment=GhostPort Command Deck
-Exec=firefox --kiosk https://localhost:4200
+Exec=firefox --kiosk http://localhost:4200
 Icon=$ICON_DIR/ghostport.png
 Type=Application
 Categories=Network;
@@ -216,7 +216,7 @@ cat > "$DESKTOP_DIR/ghostport-webapp.desktop" <<EOF
 [Desktop Entry]
 Name=GhostPort Web
 Comment=GhostPort Command Deck (Browser)
-Exec=firefox --new-window https://localhost:4200
+Exec=firefox --new-window http://localhost:4200
 Icon=$ICON_DIR/ghostport.png
 Type=Application
 Categories=Network;
@@ -242,7 +242,7 @@ echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
 echo ""
 echo "  ✓ GhostPort OS installed successfully!"
 echo ""
-echo "  Dashboard → https://$PI_IP:4200"
+echo "  Dashboard → http://$PI_IP:4200"
 echo "  Pi-hole   → http://$PI_IP/admin"
 echo ""
 echo "  Next steps:"

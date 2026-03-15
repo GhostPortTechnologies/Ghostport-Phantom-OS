@@ -14,6 +14,7 @@ const fs = require("fs");
 const http = require("http");
 
 const app = express();
+app.disable("x-powered-by");
 const PORT = 4200;
 
 // ── Pi-hole API integration ─────────────────────────────
@@ -93,7 +94,6 @@ app.use((req, res, next) => {
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("X-XSS-Protection", "0");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   next();
 });
@@ -210,14 +210,14 @@ app.post("/api/auth/login", (req, res) => {
   sessions.set(token, { created: Date.now(), ip });
   console.log(`[Auth] Successful login from ${ip}`);
 
-  res.setHeader("Set-Cookie", `gp-session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`);
+  res.setHeader("Set-Cookie", `gp-session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400`);
   res.json({ ok: true });
 });
 
 app.post("/api/auth/logout", (req, res) => {
   const token = getCookie(req, "gp-session");
   if (token) sessions.delete(token);
-  res.setHeader("Set-Cookie", "gp-session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0");
+  res.setHeader("Set-Cookie", "gp-session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
   res.json({ ok: true });
 });
 
@@ -652,9 +652,12 @@ app.post("/api/wireguard/setup", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Config must contain PrivateKey and at least one [Peer] section" });
   }
   try {
+    // Strip dangerous directives that execute arbitrary commands as root
+    const dangerousDirectives = /^\s*(PostUp|PostDown|PreUp|PreDown|SaveConfig)\s*=.*$/gmi;
+    const sanitizedConfig = config.replace(dangerousDirectives, "# [removed by GhostPort for security]");
     // Write config to temp file, then move with sudo
     const tmpFile = "/tmp/gp-wg0.conf";
-    fs.writeFileSync(tmpFile, config);
+    fs.writeFileSync(tmpFile, sanitizedConfig);
     await run(`sudo cp ${tmpFile} /etc/wireguard/wg0.conf`);
     await run("sudo chmod 600 /etc/wireguard/wg0.conf");
     fs.unlinkSync(tmpFile);
@@ -1233,7 +1236,12 @@ app.post("/api/pihole/reset-password", async (req, res) => {
   const { newPassword } = req.body;
   if (!newPassword) return res.status(400).json({ ok: false, error: "New password required" });
   try {
-    const result = await run(`sudo pihole setpassword ${JSON.stringify(newPassword)}`);
+    // Sanitize: only allow alphanumeric + basic punctuation, no shell metacharacters
+    const sanitizedPw = newPassword.replace(/[^a-zA-Z0-9!@#$%^&*()_+\-=]/g, "");
+    if (sanitizedPw !== newPassword) {
+      return res.status(400).json({ ok: false, error: "Password contains invalid characters" });
+    }
+    const result = await run("sudo pihole setpassword '" + sanitizedPw + "'");
     if (!result.ok) return res.status(500).json({ ok: false, error: "Failed to set Pi-hole password" });
     // Save new credentials and re-authenticate
     fs.writeFileSync(PIHOLE_FILE, JSON.stringify({ password: newPassword }, null, 2));
@@ -1660,17 +1668,114 @@ app.post("/api/terminal-mode", async (req, res) => {
   }
 });
 
+
+// ── security scan (Lynis) ────────────────────────────────
+
+let lynisScanRunning = false;
+
+app.get("/api/security/scan", async (req, res) => {
+  if (lynisScanRunning) {
+    return res.status(409).json({ ok: false, error: "Scan already in progress" });
+  }
+  lynisScanRunning = true;
+  console.log("[Security] Starting Lynis scan...");
+
+  try {
+    const reportFile = "/tmp/gp-lynis-report.dat";
+    // Remove old report
+    try { fs.unlinkSync(reportFile); } catch {}
+
+    const result = await run(
+      `sudo lynis audit system --quick --no-colors --no-log --report-file ${reportFile} 2>&1 | tail -5`,
+      120000
+    );
+
+    // Parse report file
+    let report;
+    try { report = fs.readFileSync(reportFile, "utf8"); } catch {
+      lynisScanRunning = false;
+      return res.status(500).json({ ok: false, error: "Scan completed but report not found" });
+    }
+
+    const lines = report.split("\n");
+    let score = 0;
+    const warnings = [];
+    const suggestions = [];
+    const details = {};
+
+    for (const line of lines) {
+      if (line.startsWith("hardening_index=")) {
+        score = parseInt(line.split("=")[1]) || 0;
+      }
+      if (line.startsWith("warning[]=")) {
+        const parts = line.replace("warning[]=", "").split("|");
+        if (parts[0] && parts[1]) {
+          warnings.push({ id: parts[0], message: parts[1], detail: parts[2] || "", fix: parts[3] || "" });
+        }
+      }
+      if (line.startsWith("suggestion[]=")) {
+        const parts = line.replace("suggestion[]=", "").split("|");
+        if (parts[0] && parts[1]) {
+          suggestions.push({ id: parts[0], message: parts[1], fix: parts[2] || "", detail: parts[3] || "" });
+        }
+      }
+      // Grab key stats
+      if (line.startsWith("firewall_active=")) details.firewall = line.split("=")[1];
+      if (line.startsWith("ids_ips_tooling[]=")) details.ids = (details.ids || []).concat(line.split("=")[1]);
+      if (line.startsWith("minimum_password_length=")) details.minPwLen = line.split("=")[1];
+      if (line.startsWith("ssh_root_login=")) details.sshRoot = line.split("=")[1];
+      if (line.startsWith("pam_cracklib=")) details.pamCracklib = line.split("=")[1];
+      if (line.startsWith("file_integrity_tool_installed=")) details.fileIntegrity = line.split("=")[1];
+    }
+
+    // Categorize score
+    let grade;
+    if (score >= 80) grade = "A";
+    else if (score >= 70) grade = "B";
+    else if (score >= 60) grade = "C";
+    else if (score >= 50) grade = "D";
+    else grade = "F";
+
+    console.log(`[Security] Scan complete — score: ${score}/100 (grade: ${grade}), ${warnings.length} warnings, ${suggestions.length} suggestions`);
+    lynisScanRunning = false;
+
+    res.json({
+      ok: true,
+      score,
+      grade,
+      warnings,
+      suggestions,
+      details,
+      scannedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    lynisScanRunning = false;
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── start ──────────────────────────────────────────────────
-const sslOptions = {
-  key: fs.readFileSync("/opt/ghostport/ssl/ghostport.key"),
-  cert: fs.readFileSync("/opt/ghostport/ssl/ghostport.crt"),
-};
-https.createServer(sslOptions, app).listen(PORT, "0.0.0.0", () => {
-  console.log(`
+// HTTP — primary, no SSL warnings for customers
+http.createServer(app).listen(PORT, "0.0.0.0", () => {
+  console.log(`  ☠  HTTP  running on port ${PORT}`);
+});
+
+// HTTPS — available for admin/Tailscale use
+try {
+  const sslOptions = {
+    key: fs.readFileSync("/opt/ghostport/ssl/ghostport.key"),
+    cert: fs.readFileSync("/opt/ghostport/ssl/ghostport.crt"),
+  };
+  https.createServer(sslOptions, app).listen(4201, "0.0.0.0", () => {
+    console.log("  ☠  HTTPS running on port 4201");
+  });
+} catch (e) {
+  console.log("  [!] HTTPS disabled — no SSL certs found");
+}
+
+console.log(`
   ☠  GhostPort Command Deck  ☠
   ─────────────────────────────
-  API running at https://0.0.0.0:${PORT}
-  Access from any device on your network:
-  → https://<PI_IP>:${PORT}
-  `);
-});
+  HTTP  → http://0.0.0.0:${PORT}  (customers)
+  HTTPS → https://0.0.0.0:4201   (admin)
+`);

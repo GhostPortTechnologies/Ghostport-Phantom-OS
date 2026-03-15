@@ -991,3 +991,76 @@ fetchWgStatus();
 setInterval(fetchArsenalStatus, 10000);
 setInterval(fetchClients, 15000);
 setInterval(fetchBandwidth, 30000);
+
+
+// ── Security Scan (Lynis) ──────────────────────────────────
+
+async function runSecurityScan() {
+  const btn = document.getElementById("btn-securityscan");
+  const result = document.getElementById("security-scan-result");
+  btn.disabled = true;
+  btn.textContent = "SCANNING...";
+  result.innerHTML = '<div class="scan-progress"><span class="spinner"></span>Running full system audit... this takes about 60 seconds.</div>';
+  log("Starting security scan...", "info");
+
+  try {
+    const res = await fetch(ARSENAL_API + "/api/security/scan");
+    const data = await res.json();
+
+    if (!data.ok) {
+      result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">${data.error}</div>`;
+      log("Scan failed: " + data.error, "error");
+      btn.disabled = false;
+      btn.textContent = "RUN SCAN";
+      return;
+    }
+
+    let html = '<div class="scan-overview">';
+    html += `<div class="scan-score-ring grade-${data.grade}">${data.score}</div>`;
+    html += '<div class="scan-stats">';
+    html += `<div><span class="label">Grade:</span> ${data.grade}</div>`;
+    html += `<div><span class="label">Warnings:</span> <span style="color:${data.warnings.length > 0 ? 'var(--red)' : 'var(--green)'}">${data.warnings.length}</span></div>`;
+    html += `<div><span class="label">Suggestions:</span> <span style="color:var(--amber)">${data.suggestions.length}</span></div>`;
+    html += `<div><span class="label">Scanned:</span> ${new Date(data.scannedAt).toLocaleTimeString()}</div>`;
+    html += '</div></div>';
+
+    if (data.warnings.length > 0) {
+      html += '<div class="scan-section"><div class="scan-section-title">WARNINGS</div>';
+      for (const w of data.warnings) {
+        html += `<div class="scan-item warning"><span class="scan-id">${w.id}</span>${w.message}`;
+        if (w.fix) html += `<span class="scan-fix">${w.fix}</span>`;
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (data.suggestions.length > 0) {
+      const shown = data.suggestions.slice(0, 15);
+      const remaining = data.suggestions.length - shown.length;
+      html += '<div class="scan-section"><div class="scan-section-title">SUGGESTIONS</div>';
+      for (const s of shown) {
+        html += `<div class="scan-item"><span class="scan-id">${s.id}</span>${s.message}`;
+        if (s.fix) html += `<span class="scan-fix">${s.fix}</span>`;
+        html += '</div>';
+      }
+      if (remaining > 0) {
+        html += `<div style="font-size:10px;color:var(--text-dim);padding:6px 8px">+ ${remaining} more suggestions</div>`;
+      }
+      html += '</div>';
+    }
+
+    if (data.warnings.length === 0 && data.suggestions.length === 0) {
+      html += '<div style="color:var(--green);font-size:11px;padding:8px 0">No warnings or suggestions — system is hardened.</div>';
+    }
+
+    result.innerHTML = html;
+    log(`Security scan complete — Score: ${data.score}/100 (Grade ${data.grade})`, data.warnings.length > 0 ? "warning" : "success");
+
+  } catch (e) {
+    result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">Error: ${e.message}</div>`;
+    log("Scan error: " + e.message, "error");
+  }
+
+  btn.disabled = false;
+  btn.textContent = "RUN SCAN";
+}

@@ -545,6 +545,44 @@
       font-size: 8px; color: var(--text-dim); letter-spacing: 1px;
       background: #1a1a1a; padding: 2px 6px; border-radius: 2px;
     }
+  
+    /* Security Scan */
+    .scan-score-ring {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 80px; height: 80px; border-radius: 50%;
+      border: 3px solid var(--green); font-size: 28px; font-weight: bold;
+      color: var(--green); font-family: 'Cinzel', serif; margin-right: 16px;
+    }
+    .scan-score-ring.grade-A { border-color: var(--green); color: var(--green); }
+    .scan-score-ring.grade-B { border-color: #88cc44; color: #88cc44; }
+    .scan-score-ring.grade-C { border-color: var(--amber); color: var(--amber); }
+    .scan-score-ring.grade-D { border-color: #ff6622; color: #ff6622; }
+    .scan-score-ring.grade-F { border-color: var(--red); color: var(--red); }
+    .scan-overview { display: flex; align-items: center; margin: 12px 0; }
+    .scan-stats { font-size: 11px; line-height: 1.8; }
+    .scan-stats .label { color: var(--text-dim); }
+    .scan-section { margin-top: 12px; }
+    .scan-section-title {
+      font-family: 'Cinzel', serif; font-size: 11px; color: var(--green);
+      letter-spacing: 1px; margin-bottom: 6px; padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .scan-item {
+      font-size: 10px; padding: 4px 8px; margin: 2px 0;
+      background: var(--bg); border-left: 2px solid var(--amber);
+      line-height: 1.5;
+    }
+    .scan-item.warning { border-left-color: var(--red); }
+    .scan-item .scan-id { color: var(--text-dim); margin-right: 6px; }
+    .scan-item .scan-fix { color: var(--text-dim); font-style: italic; display: block; margin-top: 2px; }
+    .scan-progress { font-size: 11px; color: var(--text-dim); padding: 12px 0; }
+    .scan-progress .spinner {
+      display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border);
+      border-top-color: var(--green); border-radius: 50%; animation: spin 1s linear infinite;
+      margin-right: 8px; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
   </style>
 </head>
 <body>
@@ -947,6 +985,20 @@
           <div class="arsenal-desc">Checks if your real IP address is leaking outside the VPN tunnel by comparing your public IP against the WireGuard endpoint.</div>
           <div class="arsenal-protect"><strong>Protects you from:</strong> VPN misconfigurations that expose your real IP address</div>
           <div id="ipleak-result"></div>
+        </div>
+
+        <!-- Security Scan -->
+        <div class="arsenal-card arsenal-card-wide" id="ac-securityscan">
+          <div class="arsenal-header">
+            <span class="arsenal-icon">&#x1f6e1;</span>
+            <span class="arsenal-name">Security Scan</span>
+            <div class="arsenal-toggle">
+              <button class="arsenal-btn" id="btn-securityscan" onclick="runSecurityScan()">RUN SCAN</button>
+            </div>
+          </div>
+          <div class="arsenal-desc">Full system security audit powered by Lynis. Checks firewall, SSH, permissions, kernel hardening, authentication, and 200+ security controls.</div>
+          <div class="arsenal-protect"><strong>Scans for:</strong> Misconfigurations, weak permissions, missing hardening, vulnerable services, authentication weaknesses</div>
+          <div id="security-scan-result"></div>
         </div>
 
         <!-- Recent Blocked Domains -->
