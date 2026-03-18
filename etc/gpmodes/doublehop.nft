@@ -4,6 +4,8 @@ include "/etc/gpmodes/common.nft"
 table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
+        # Drop all IPv6 forwarded traffic to prevent tunnel bypass
+        meta nfproto ipv6 counter drop
         ct state established,related accept
         # LAN exits only through WireGuard
         iifname $LAN_IF oifname $WG_IF accept

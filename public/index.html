@@ -3,6 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#060A06">
   <title>GhostPort — Command Deck</title>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
   <style>
@@ -583,6 +588,47 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
+
+    /* PWA Install Banner */
+    .pwa-install-bar {
+      display: none;
+      background: linear-gradient(90deg, var(--bg3), var(--bg2));
+      border: 1px solid #39ff8f33;
+      border-left: 3px solid var(--green);
+      border-radius: 4px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      align-items: center;
+      gap: 12px;
+    }
+    .pwa-install-bar.visible { display: flex; }
+    .pwa-install-bar .pwa-icon { width: 36px; height: 36px; border-radius: 8px; }
+    .pwa-install-bar .pwa-text { flex: 1; }
+    .pwa-install-bar .pwa-title { font-size: 11px; color: var(--green); letter-spacing: 1px; }
+    .pwa-install-bar .pwa-desc { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+    .pwa-install-bar .btn-install {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; padding: 6px 14px; border-radius: 3px;
+      cursor: pointer; letter-spacing: 1px;
+      background: #0d2a1a; border: 1px solid var(--green); color: var(--green);
+    }
+    .pwa-install-bar .btn-install:hover { background: #1a3a2a; box-shadow: 0 0 10px var(--green-glow); }
+    .pwa-install-bar .btn-dismiss {
+      background: none; border: none; color: var(--text-faint);
+      cursor: pointer; font-size: 14px; font-family: 'Share Tech Mono', monospace;
+    }
+
+
+    /* Exit button */
+    .btn-exit {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 10px; padding: 4px 10px; border-radius: 3px;
+      cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
+      background: transparent; border: 1px solid #ff444466; color: #ff8888;
+      margin-left: 10px;
+    }
+    .btn-exit:hover { background: #1a0a0a; border-color: var(--red); color: var(--red); box-shadow: 0 0 8px #ff444444; }
+
   </style>
 </head>
 <body>
@@ -597,14 +643,29 @@
         <div class="brand-sub">PRIVACY ROUTER // COMMAND DECK</div>
       </div>
     </div>
-    <div class="header-right">
-      <div class="header-status">
-        <span class="status-dot" id="status-dot"></span>
-        <span id="status-text">CONNECTING...</span>
+    <div class="header-right" style="display:flex;align-items:center;gap:8px">
+      <div>
+        <div class="header-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">CONNECTING...</span>
+        </div>
+        <div class="header-uptime">UPTIME: <span id="uptime">--</span></div>
       </div>
-      <div class="header-uptime">UPTIME: <span id="uptime">--</span></div>
+      <button class="btn-exit" onclick="exitApp()" title="Exit application">EXIT</button>
     </div>
   </header>
+
+
+  <!-- PWA Install Banner -->
+  <div class="pwa-install-bar" id="pwa-install-bar">
+    <img class="pwa-icon" src="/apple-touch-icon.png" alt="GhostPort" onerror="this.style.display='none'">
+    <div class="pwa-text">
+      <div class="pwa-title">INSTALL GHOSTPORT</div>
+      <div class="pwa-desc">Add to your home screen for quick access</div>
+    </div>
+    <button class="btn-install" onclick="installPwa()">INSTALL</button>
+    <button class="btn-dismiss" onclick="dismissPwa()">&times;</button>
+  </div>
 
   <!-- Active mode banner -->
   <div class="banner">
@@ -1153,7 +1214,10 @@ AllowedIPs = 0.0.0.0/0"></textarea>
             </div>
           </div>
 
-          <div id="wg-setup-msg" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+            <div id="wg-setup-msg" style="font-size:10px;min-height:16px;flex:1"></div>
+            <button class="arsenal-btn" id="btn-wg-restore" onclick="restoreWgConfig()" style="font-size:9px;white-space:nowrap;display:none">RESTORE PREVIOUS</button>
+          </div>
         </div>
       </div>
 
@@ -1188,6 +1252,26 @@ AllowedIPs = 0.0.0.0/0"></textarea>
           <input type="password" class="ticket-field" id="pihole-new-pw" placeholder="New Pi-hole password"/>
           <button class="arsenal-btn" onclick="resetPiholePassword()">CHANGE PASSWORD</button>
           <div id="pihole-pw-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
+
+
+      <!-- WiFi Network -->
+      <div class="section-label" style="margin-top:20px">▸ WIFI NETWORK</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">📶</span>
+          <span class="arsenal-name">SSID &amp; Password</span>
+        </div>
+        <div class="arsenal-desc">Change the WiFi network name and password for GhostPort's access point. Devices will need to reconnect after changes.</div>
+        <div style="margin-top:10px">
+          <input type="text" class="ticket-field" id="wifi-ssid" placeholder="Network name (SSID)" maxlength="32"/>
+          <div style="position:relative">
+            <input type="password" class="ticket-field" id="wifi-pass" placeholder="WiFi password (8-63 characters)" maxlength="63" style="padding-right:40px"/>
+            <button onclick="toggleWifiPassVisibility()" style="position:absolute;right:8px;top:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:'Share Tech Mono',monospace" id="wifi-pass-eye">SHOW</button>
+          </div>
+          <button class="arsenal-btn" onclick="saveWifiConfig()">SAVE &amp; RESTART AP</button>
+          <div id="wifi-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
         </div>
       </div>
     </div>
@@ -1675,6 +1759,67 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     }
   }
 
+
+  // ── PWA Install ───────────────────────────────────────────
+
+  let deferredInstallPrompt = null;
+
+  // Register SW once to clear stale caches, then it self-unregisters
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    if (!localStorage.getItem('gp-pwa-dismissed')) {
+      document.getElementById('pwa-install-bar').classList.add('visible');
+    }
+  });
+
+  async function installPwa() {
+    if (!deferredInstallPrompt) {
+      // Fallback for iOS / browsers without beforeinstallprompt
+      const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      if (isIos) {
+        alert('Tap the Share button (box with arrow) then "Add to Home Screen"');
+      } else {
+        alert('Use your browser menu to "Add to Home Screen" or "Install app"');
+      }
+      return;
+    }
+    deferredInstallPrompt.prompt();
+    const result = await deferredInstallPrompt.userChoice;
+    if (result.outcome === 'accepted') {
+      log('GhostPort app installed', 'success');
+    }
+    deferredInstallPrompt = null;
+    document.getElementById('pwa-install-bar').classList.remove('visible');
+  }
+
+  function dismissPwa() {
+    document.getElementById('pwa-install-bar').classList.remove('visible');
+    localStorage.setItem('gp-pwa-dismissed', '1');
+  }
+
+  // Show iOS hint if in Safari and not already installed
+  if (/iPad|iPhone|iPod/.test(navigator.userAgent) && !window.navigator.standalone && !localStorage.getItem('gp-pwa-dismissed')) {
+    document.getElementById('pwa-install-bar').classList.add('visible');
+  }
+
+
+  function exitApp() {
+    if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone) {
+      // PWA standalone mode — try to close, fall back to blank page
+      window.close();
+      setTimeout(() => { window.location.href = 'about:blank'; }, 200);
+    } else {
+      // Regular browser tab — just close
+      window.close();
+      setTimeout(() => { history.back(); }, 200);
+    }
+  }
+
   // Boot sequence
   log("GhostPort Command Deck v1.1 initializing...", "info");
   log("Establishing connection to Pi...", "info");
@@ -1684,6 +1829,80 @@ AllowedIPs = 0.0.0.0/0"></textarea>
 
   // Poll status every 5 seconds (faster to catch rollback countdown)
   setInterval(fetchStatus, 5000);
+
+  // ── WiFi Network ──────────────────────────────────────────
+
+  function toggleWifiPassVisibility() {
+    const input = document.getElementById("wifi-pass");
+    const btn = document.getElementById("wifi-pass-eye");
+    if (input.type === "password") {
+      input.type = "text";
+      btn.textContent = "HIDE";
+    } else {
+      input.type = "password";
+      btn.textContent = "SHOW";
+    }
+  }
+
+  async function loadWifiConfig() {
+    try {
+      const res = await fetch(API + "/api/hostapd/config");
+      const data = await res.json();
+      if (data.ok) {
+        document.getElementById("wifi-ssid").value = data.ssid;
+        document.getElementById("wifi-pass").value = data.passphrase;
+      }
+    } catch (e) { /* silent */ }
+  }
+
+  async function saveWifiConfig() {
+    const ssid = document.getElementById("wifi-ssid").value.trim();
+    const passphrase = document.getElementById("wifi-pass").value;
+    const status = document.getElementById("wifi-status");
+
+    if (!ssid && !passphrase) {
+      status.style.color = "var(--red)";
+      status.textContent = "Enter an SSID or password to change";
+      return;
+    }
+    if (passphrase && (passphrase.length < 8 || passphrase.length > 63)) {
+      status.style.color = "var(--red)";
+      status.textContent = "Password must be 8-63 characters";
+      return;
+    }
+
+    status.style.color = "var(--text-dim)";
+    status.textContent = "Saving and restarting AP...";
+    log("Updating WiFi network config...", "warn");
+
+    try {
+      const body = {};
+      if (ssid) body.ssid = ssid;
+      if (passphrase) body.passphrase = passphrase;
+
+      const res = await fetch(API + "/api/hostapd/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        status.style.color = "var(--green)";
+        status.textContent = data.status;
+        log("WiFi network updated — devices must reconnect", "success");
+      } else {
+        status.style.color = "var(--red)";
+        status.textContent = data.error;
+        log("WiFi update failed: " + data.error, "error");
+      }
+    } catch (e) {
+      status.style.color = "var(--red)";
+      status.textContent = "Failed: " + e.message;
+      log("WiFi update error: " + e.message, "error");
+    }
+  }
+
+  loadWifiConfig();
 </script>
 <script src="arsenal.js"></script>
 </body>

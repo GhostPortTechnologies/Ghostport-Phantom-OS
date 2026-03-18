@@ -3,6 +3,11 @@
  * Manages security tool toggles, DNS testing, client display, and scheduling
  */
 
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+
 const ARSENAL_API = "";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -126,7 +131,7 @@ function renderClients(clients) {
     return;
   }
   list.innerHTML = clients.map(c =>
-    `<div class="client-row"><span class="client-host">${c.hostname}</span><span class="client-ip">${c.ip}</span><span class="client-mac">${c.mac}</span></div>`
+    `<div class="client-row"><span class="client-host">${escapeHtml(c.hostname)}</span><span class="client-ip">${escapeHtml(c.ip)}</span><span class="client-mac">${escapeHtml(c.mac)}</span></div>`
   ).join("");
 }
 
@@ -214,9 +219,9 @@ async function runDnsTest() {
     if (data.ok) {
       const cls = data.passed ? "pass" : "fail";
       result.innerHTML = `<div class="dns-result ${cls}">
-        <div>${data.passed ? "PASS" : "FAIL"} — ${data.reason}</div>
-        <div style="margin-top:4px;color:var(--text-dim)">Local resolver: ${data.localResolver} | Direct: ${data.directResolver}</div>
-        <div style="color:var(--text-dim)">Mode: ${data.mode} | Encrypted: ${data.encrypted ? "Yes" : "No"}</div>
+        <div>${data.passed ? "PASS" : "FAIL"} — ${escapeHtml(data.reason)}</div>
+        <div style="margin-top:4px;color:var(--text-dim)">Local resolver: ${escapeHtml(data.localResolver)} | Direct: ${escapeHtml(data.directResolver)}</div>
+        <div style="color:var(--text-dim)">Mode: ${escapeHtml(data.mode)} | Encrypted: ${data.encrypted ? "Yes" : "No"}</div>
       </div>`;
       log(`DNS test: ${data.passed ? "PASS" : "FAIL"} — ${data.reason}`, data.passed ? "success" : "error");
     } else {
@@ -454,7 +459,7 @@ async function runSpeedTest() {
         <div><div style="font-size:10px;color:var(--text-faint)">DOWNLOAD</div><div style="font-size:18px;color:var(--green)">${data.download} <span style="font-size:11px">Mbps</span></div></div>
         <div><div style="font-size:10px;color:var(--text-faint)">UPLOAD</div><div style="font-size:18px;color:var(--green)">${data.upload} <span style="font-size:11px">Mbps</span></div></div>
         <div><div style="font-size:10px;color:var(--text-faint)">PING</div><div style="font-size:18px;color:var(--green)">${data.ping} <span style="font-size:11px">ms</span></div></div>
-      </div><div style="font-size:10px;color:var(--text-faint);margin-top:4px">Server: ${data.server}</div>`;
+      </div><div style="font-size:10px;color:var(--text-faint);margin-top:4px">Server: ${escapeHtml(data.server)}</div>`;
       log(`Speed: ${data.download} Mbps down / ${data.upload} Mbps up / ${data.ping}ms`, "success");
     } else {
       result.innerHTML = `<div class="dns-result fail">${data.error}</div>`;
@@ -484,8 +489,8 @@ async function runPingTest() {
         const cls = r.reachable ? "pass" : "fail";
         const latency = r.latency ? `${r.latency.avg}ms` : "timeout";
         return `<div class="dns-result ${cls}" style="padding:6px 10px;margin-top:4px">
-          <span style="color:var(--text)">${r.name}</span>
-          <span style="color:var(--text-dim);margin-left:8px">${r.target}</span>
+          <span style="color:var(--text)">${escapeHtml(r.name)}</span>
+          <span style="color:var(--text-dim);margin-left:8px">${escapeHtml(r.target)}</span>
           <span style="float:right;color:${r.reachable ? 'var(--green)' : 'var(--red)'}">${latency}</span>
         </div>`;
       }).join("");
@@ -516,7 +521,7 @@ async function runIpLeak() {
       const cls = data.leaked ? "fail" : "pass";
       result.innerHTML = `<div class="dns-result ${cls}" style="margin-top:4px">
         <div>${data.leaked ? "FAIL — IP LEAK DETECTED" : data.vpnMode ? "PASS — IP is masked" : "INFO — Not in VPN mode"}</div>
-        <div style="margin-top:4px;color:var(--text-dim);font-size:11px">Public IP: ${data.publicIp} | Mode: ${data.mode} | WG endpoint: ${data.wgEndpoint}</div>
+        <div style="margin-top:4px;color:var(--text-dim);font-size:11px">Public IP: ${escapeHtml(data.publicIp)} | Mode: ${escapeHtml(data.mode)} | WG endpoint: ${escapeHtml(data.wgEndpoint)}</div>
       </div>`;
       log(`IP leak test: ${data.status}`, data.leaked ? "error" : "success");
     } else {
@@ -569,8 +574,8 @@ async function fetchBlocked() {
     if (data.ok && data.queries.length) {
       result.innerHTML = data.queries.map(q =>
         `<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a1a1a;font-size:10px">
-          <span style="color:var(--red);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${q.domain}</span>
-          <span style="color:var(--text-faint);margin-left:8px;white-space:nowrap">${q.client}</span>
+          <span style="color:var(--red);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(q.domain)}</span>
+          <span style="color:var(--text-faint);margin-left:8px;white-space:nowrap">${escapeHtml(q.client)}</span>
         </div>`
       ).join("");
     } else if (data.ok) {
@@ -664,7 +669,7 @@ async function runSystemUpdate() {
     const data = await res.json();
     if (data.ok) {
       result.innerHTML = `<div class="dns-result pass">${data.status}</div>`;
-      if (data.output) result.innerHTML += `<pre style="font-size:9px;color:var(--text-dim);margin-top:4px;white-space:pre-wrap">${data.output}</pre>`;
+      if (data.output) result.innerHTML += `<pre style="font-size:9px;color:var(--text-dim);margin-top:4px;white-space:pre-wrap">${escapeHtml(data.output)}</pre>`;
       log("System update complete", "success");
     } else {
       result.innerHTML = `<div class="dns-result fail">${data.error || data.status}</div>`;
@@ -810,8 +815,38 @@ async function fetchWgStatus() {
         el.className = "arsenal-status tripped";
         el.textContent = "DOWN";
       }
+      var rb = document.getElementById("btn-wg-restore");
+      if (rb && data.configured) rb.style.display = "inline-block";
     }
   } catch (e) { /* silent */ }
+}
+
+
+async function restoreWgConfig() {
+  const msg = document.getElementById("wg-setup-msg");
+  const btn = document.getElementById("btn-wg-restore");
+  btn.disabled = true;
+  btn.textContent = "RESTORING...";
+  msg.style.color = "var(--text-dim)";
+  msg.textContent = "Restoring previous config...";
+  try {
+    const res = await fetch(ARSENAL_API + "/api/wireguard/restore", { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      msg.style.color = data.status === "up" ? "var(--green)" : "var(--amber)";
+      msg.textContent = data.message;
+      log("WireGuard: " + data.message, data.status === "up" ? "success" : "warn");
+      fetchWgStatus();
+    } else {
+      msg.style.color = "var(--red)";
+      msg.textContent = data.error;
+    }
+  } catch (e) {
+    msg.style.color = "var(--red)";
+    msg.textContent = "Restore failed: " + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = "RESTORE PREVIOUS";
 }
 
 async function submitWgConfig(config) {
@@ -982,6 +1017,16 @@ function updatePiholeSetupBanner(connected) {
 }
 
 // ── Init ────────────────────────────────────────────────────
+
+// Wrap fetch to redirect on 401 (session expired)
+const _origFetch = window.fetch;
+window.fetch = async function(...args) {
+  const res = await _origFetch.apply(this, args);
+  if (res.status === 401 && !args[0]?.toString().includes("/api/auth/login")) {
+    window.location.href = "/login.html";
+  }
+  return res;
+};
 
 fetchArsenalStatus();
 fetchClients();

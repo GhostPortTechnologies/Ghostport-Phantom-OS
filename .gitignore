@@ -4,6 +4,7 @@ ssl/
 *.env
 support.json
 *.bak
+*.bak2
 *.log
 .DS_Store
 *.swp

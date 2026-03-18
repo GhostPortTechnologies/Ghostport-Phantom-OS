@@ -35,11 +35,11 @@ The repo lives at `/opt/ghostport/` but live system files are in their standard 
 
 ## Architecture
 
-**Web server** (`ghostport-server.js`): Express 5 over HTTPS on `0.0.0.0:4200`. Serves static files from `public/` and exposes a REST API. Shell commands run via `child_process.exec` with 15s timeout. The server process runs as `ghostport-admin` but calls `sudo gp-mode` for privileged operations.
+**Web server** (`ghostport-server.js`): Express 5 with dual HTTP (port 4200) and HTTPS (port 4201) servers on `0.0.0.0`. Serves static files from `public/` and exposes a REST API. Shell commands run via `child_process.exec` with 15s timeout. The server process runs as `ghostport-admin` but calls `sudo gp-mode` for privileged operations.
 
 **Authentication**: Passcode-based auth using scrypt hashing. Passcode auto-generated on first boot and stored in `/etc/ghostport/auth.json`. Sessions are cookie-based (`gp_session`) with 24h TTL, rate-limited to 5 attempts with 60s lockout. All API routes except `/login`, `/api/auth/*` require a valid session (enforced by `requireAuth` middleware).
 
-**Frontend** (`public/index.html`): Single-file vanilla HTML/CSS/JS app (~1200 lines). No framework, no build. Polls `GET /api/status` every 5 seconds. Cyberpunk terminal aesthetic (neon green on dark, Cinzel + Share Tech Mono fonts, scanline animations). Login page is `public/login.html` (passcode entry).
+**Frontend** (`public/index.html`): Single-file vanilla HTML/CSS/JS app (~1700 lines). No framework, no build. Polls `GET /api/status` every 5 seconds. Cyberpunk terminal aesthetic (neon green on dark, Cinzel + Share Tech Mono fonts, scanline animations). Login page is `public/login.html` (passcode entry).
 
 **Arsenal** (`public/arsenal.js`): Separate JS file for the security tools panel. Manages kill switch, encrypted DNS toggle, MAC randomization, blocklist updates, DNS leak testing, connected clients display, and mode scheduling. State persisted in `/etc/ghostport/arsenal.json`.
 

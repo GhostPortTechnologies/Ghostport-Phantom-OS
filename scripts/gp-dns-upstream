@@ -1,0 +1,25 @@
+#!/bin/bash
+# Switch Pi-hole upstream DNS based on current mode
+# Called by gp-mode after profile apply
+
+MODE="${1:-$(cat /etc/ghostport/current-mode 2>/dev/null || echo isp)}"
+DNSMASQ_CONF="/etc/dnsmasq.d/10-ghostport-core.conf"
+
+case "$MODE" in
+  doublehop|zhop)
+    # Use EC2 unbound resolver (DNS-over-TLS inside WireGuard tunnel)
+    if grep -q "server=127.0.0.1#5053" "$DNSMASQ_CONF"; then
+      sed -i 's|server=127.0.0.1#5053|server=10.66.66.1#53|' "$DNSMASQ_CONF"
+      sudo pihole reloaddns 2>/dev/null || true
+      echo "[DNS] Upstream switched to EC2 unbound (10.66.66.1:53)"
+    fi
+    ;;
+  isp|zerotrust|*)
+    # Use local cloudflared (no tunnel available)
+    if grep -q "server=10.66.66.1#53" "$DNSMASQ_CONF"; then
+      sed -i 's|server=10.66.66.1#53|server=127.0.0.1#5053|' "$DNSMASQ_CONF"
+      sudo pihole reloaddns 2>/dev/null || true
+      echo "[DNS] Upstream switched to cloudflared (127.0.0.1:5053)"
+    fi
+    ;;
+esac

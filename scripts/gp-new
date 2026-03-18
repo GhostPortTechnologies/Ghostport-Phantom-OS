@@ -1,8 +1,17 @@
 #!/bin/bash
 # gp-new — Generate a unique device passcode (requires GP-DA authentication)
-# Usage: sudo gp-new
+# Usage: sudo gp-new [--license-key=XXXX-XXXX-XXXX]
 
 set -euo pipefail
+
+LICENSE_KEY=""
+FLEET_SERVER="http://10.66.66.1:8080"
+
+for arg in "$@"; do
+  case "$arg" in
+    --license-key=*) LICENSE_KEY="${arg#*=}" ;;
+  esac
+done
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Error: must run as root (sudo gp-new)"
@@ -110,6 +119,61 @@ echo "{\"password\":\"$PIHOLE_PW\"}" > "$PIHOLE_FILE"
 chmod 600 "$PIHOLE_FILE"
 chown ghostport-admin:ghostport-admin "$PIHOLE_FILE"
 
+
+# ── Randomize WiFi password ─────────────────────────────
+WIFI_PW=$(node -e "
+  const crypto = require('crypto');
+  const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  let pw = '';
+  for (let i = 0; i < 16; i++) pw += chars[crypto.randomInt(chars.length)];
+  console.log(pw);
+")
+
+HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
+if [ -f "$HOSTAPD_CONF" ]; then
+  cp "$HOSTAPD_CONF" "${HOSTAPD_CONF}.bak"
+  sed -i "s/^ssid=.*/ssid=GhostPort Router/" "$HOSTAPD_CONF"
+  sed -i "s/^wpa_passphrase=.*/wpa_passphrase=${WIFI_PW}/" "$HOSTAPD_CONF"
+  systemctl restart hostapd 2>/dev/null || true
+fi
+
+
+# ── Fleet Registration ───────────────────────────────────
+FLEET_STATUS="not registered (no license key)"
+DEVICE_ID=""
+
+if [ -n "$LICENSE_KEY" ]; then
+  SERIAL=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
+  HOSTNAME=$(hostname)
+
+  echo "  Registering with fleet server..."
+
+  # First activate the license key
+  ACTIVATE=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/activate"     -H "Content-Type: application/json"     -d "{\"license_key\":\"$LICENSE_KEY\",\"serial\":\"$SERIAL\"}" 2>/dev/null || echo '{"error":"unreachable"}')
+
+  # Check if activation returned a token or if we should register directly
+  REG_TOKEN=$(echo "$ACTIVATE" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.token||'')}catch{console.log('')}" 2>/dev/null)
+
+  if [ -n "$REG_TOKEN" ]; then
+    # Register with activation token
+    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer $REG_TOKEN"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
+  else
+    # Try direct registration with license key as auth
+    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer ***REVOKED-TOKEN***"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
+  fi
+
+  DEVICE_ID=$(echo "$REG" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.device?.id||'')}catch{console.log('')}" 2>/dev/null)
+
+  if [ -n "$DEVICE_ID" ]; then
+    # Save fleet config
+    echo "{\"device_id\":\"$DEVICE_ID\",\"serial\":\"$SERIAL\",\"license_key\":\"$LICENSE_KEY\",\"fleet_server\":\"$FLEET_SERVER\"}" > /etc/ghostport/fleet.json
+    chmod 600 /etc/ghostport/fleet.json
+    FLEET_STATUS="registered (ID: $DEVICE_ID)"
+  else
+    FLEET_STATUS="registration failed — check tunnel"
+  fi
+fi
+
 echo ""
 echo "  ╔═══════════════════════════════════════════╗"
 echo "  ║   DEVICE PASSCODE                         ║"
@@ -117,5 +181,17 @@ echo "  ║   ${PASSCODE}                      ║"
 echo "  ╚═══════════════════════════════════════════╝"
 echo ""
 echo "  Pi-hole API: auto-configured"
+echo ""
+echo "  ╔═══════════════════════════════════════════╗"
+echo "  ║   WIFI NETWORK                            ║"
+echo "  ║   SSID: GhostPort Router                  ║"
+echo "  ║   PASS: ${WIFI_PW}                ║"
+echo "  ╚═══════════════════════════════════════════╝"
+echo ""
+echo "  ╔═══════════════════════════════════════════╗"
+echo "  ║   FLEET                                   ║"
+echo "  ║   ${FLEET_STATUS}"
+echo "  ╚═══════════════════════════════════════════╝"
+echo ""
 echo "  Device is ready to ship."
 echo ""

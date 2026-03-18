@@ -9,6 +9,7 @@ table inet management {
         type filter hook input priority -100; policy accept;
         iifname "lo" accept
         ct state established,related accept
+        ct state invalid drop
         tcp dport 22 accept
         tcp dport 80 accept
         tcp dport 443 accept

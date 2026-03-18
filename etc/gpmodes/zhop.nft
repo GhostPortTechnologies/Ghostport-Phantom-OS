@@ -4,8 +4,12 @@ include "/etc/gpmodes/common.nft"
 table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
+        # Drop all IPv6 forwarded traffic to prevent tunnel bypass
+        meta nfproto ipv6 counter drop
         ct state established,related accept
         # LAN exits only through WireGuard (Tailscale handles mgmt)
+        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
+        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
         iifname $LAN_IF oifname $WG_IF accept
         iifname $WG_IF oifname $LAN_IF ct state established,related accept
     }
@@ -20,13 +24,16 @@ table inet filter {
 
     chain output {
         type filter hook output priority 0; policy accept;
-        # Allow DNS to localhost (Pi-hole)
+        # Allow DNS to localhost (Pi-hole / cloudflared)
         ip daddr 127.0.0.1 udp dport 53 accept
         ip daddr 127.0.0.1 tcp dport 53 accept
         # Allow DNS to Tailscale MagicDNS
         ip daddr 100.100.100.100 udp dport 53 accept
         ip daddr 100.100.100.100 tcp dport 53 accept
-        # Block all other DNS to prevent leaks from the Pi
+        # Allow DNS out through WireGuard tunnel (Pi-hole upstream)
+        oifname $WG_IF udp dport 53 accept
+        oifname $WG_IF tcp dport 53 accept
+        # Block DNS over any other interface to prevent leaks
         udp dport 53 drop
         tcp dport 53 drop
     }

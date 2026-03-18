@@ -19,7 +19,6 @@ get_current_mode() { cat "$MODEFILE" 2>/dev/null || echo "isp"; }
 apply_profile() {
   local f="$1"
   [[ -f "$f" ]] || die "Missing nft profile: $f"
-  # Validate before applying
   sudo $NFT -c -f "$f" >/dev/null
   save_rules
   sudo $NFT -f "$f"
@@ -27,21 +26,65 @@ apply_profile() {
     restore_rules
     die "No masquerade rule after applying $f; restored previous ruleset."
   fi
-  # Flush stale conntrack so AP clients reconnect through new path
   sudo conntrack -F 2>/dev/null || true
+  sudo pihole reloaddns 2>/dev/null || true
+  gp-dns-upstream "$(cat /etc/ghostport/current-mode 2>/dev/null || echo isp)" 2>/dev/null || true
 }
 
 ensure_tailscale() {
-  # Tailscale is the management plane — always keep it running
   if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
     sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
-    # Give it a moment to establish
     sleep 2
   fi
 }
 
-start_wg0() { sudo systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || die "Failed to start wg0"; }
-stop_wg0() { sudo systemctl stop wg-quick@wg0 >/dev/null 2>&1 || true; }
+start_wg0() {
+  sudo systemctl stop wg-quick@wg0 >/dev/null 2>&1 || true
+  sudo ip link del wg0 2>/dev/null || true
+
+  sudo ip link add wg0 type wireguard || die "Failed to create wg0"
+
+  local tmpconf
+  tmpconf=$(mktemp)
+  sudo grep -v '^Address\|^DNS\|^PostUp\|^PostDown\|^SaveConfig' /etc/wireguard/wg0.conf > "$tmpconf"
+  sudo wg setconf wg0 "$tmpconf" || { rm -f "$tmpconf"; die "Failed to configure wg0"; }
+  rm -f "$tmpconf"
+
+  local addr
+  addr=$(sudo grep -oP 'Address\s*=\s*\K\S+' /etc/wireguard/wg0.conf)
+  sudo ip addr replace "$addr" dev wg0 2>/dev/null || true
+  sudo ip link set wg0 mtu 1420 up || die "Failed to bring up wg0"
+}
+
+stop_wg0() {
+  sudo systemctl stop wg-quick@wg0 >/dev/null 2>&1 || true
+  sudo ip link del wg0 2>/dev/null || true
+}
+
+fix_wg_routing() {
+  local wg_endpoint gateway
+  wg_endpoint=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
+  gateway=$(ip route show default dev eth0 | awk '{print $3}' | head -1)
+
+  # Host route for WG endpoint via eth0 (prevent routing loop)
+  if [[ -n "$wg_endpoint" && -n "$gateway" ]]; then
+    sudo ip route replace "$wg_endpoint" via "$gateway" dev eth0 2>/dev/null || true
+  fi
+
+  # Keep Tailscale traffic on tailscale0
+  sudo ip route replace 100.64.0.0/10 dev tailscale0 2>/dev/null || true
+
+  # Default route through wg0 (lower metric wins over eth0's metric 100)
+  sudo ip route replace default dev wg0 metric 10 2>/dev/null || true
+}
+
+clean_wg_routing() {
+  sudo ip route del default dev wg0 2>/dev/null || true
+  sudo ip route del 100.64.0.0/10 dev tailscale0 2>/dev/null || true
+  local wg_endpoint
+  wg_endpoint=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
+  [[ -n "$wg_endpoint" ]] && sudo ip route del "$wg_endpoint" 2>/dev/null || true
+}
 
 cancel_rollback() {
   if [[ -f "$ROLLBACK_PID_FILE" ]]; then
@@ -54,7 +97,6 @@ cancel_rollback() {
   fi
 }
 
-# Schedule automatic rollback after N seconds
 schedule_rollback() {
   local prev_mode="$1"
   local timeout="${2:-60}"
@@ -90,7 +132,6 @@ status() {
   fi
 }
 
-# Check for --no-rollback flag (used by rollback process itself)
 NO_ROLLBACK=false
 for arg in "$@"; do
   [[ "$arg" == "--no-rollback" ]] && NO_ROLLBACK=true
@@ -99,6 +140,7 @@ done
 case "$MODE" in
   isp)
     cancel_rollback
+    clean_wg_routing
     stop_wg0
     ensure_tailscale
     apply_profile "$RULEDIR/isp.nft"
@@ -108,6 +150,7 @@ case "$MODE" in
   zerotrust)
     PREV=$(get_current_mode)
     ensure_tailscale
+    clean_wg_routing
     stop_wg0
     apply_profile "$RULEDIR/zerotrust.nft"
     echo "zerotrust" | sudo tee "$MODEFILE" > /dev/null
@@ -117,10 +160,11 @@ case "$MODE" in
   doublehop)
     PREV=$(get_current_mode)
     ensure_tailscale
+    apply_profile "$RULEDIR/doublehop.nft"
     start_wg0
     iface_exists wg0 || die "wg0 does not exist; refusing to switch."
     iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
-    apply_profile "$RULEDIR/doublehop.nft"
+    fix_wg_routing
     echo "doublehop" | sudo tee "$MODEFILE" > /dev/null
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
     echo "Mode: DoubleHop (LAN -> wg0). Tailscale: management."
@@ -128,10 +172,11 @@ case "$MODE" in
   zhop)
     PREV=$(get_current_mode)
     ensure_tailscale
+    apply_profile "$RULEDIR/zhop.nft"
     start_wg0
     iface_exists wg0 || die "wg0 does not exist; refusing to switch."
     iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
-    apply_profile "$RULEDIR/zhop.nft"
+    fix_wg_routing
     echo "zhop" | sudo tee "$MODEFILE" > /dev/null
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
     echo "Mode: ZHop (LAN -> wg0, DNS locked). Tailscale: management."
