@@ -5,7 +5,7 @@
 
 function escapeHtml(str) {
   if (str == null) return "";
-  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  return String(str).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
 
 const ARSENAL_API = "";
@@ -225,10 +225,10 @@ async function runDnsTest() {
       </div>`;
       log(`DNS test: ${data.passed ? "PASS" : "FAIL"} — ${data.reason}`, data.passed ? "success" : "error");
     } else {
-      result.innerHTML = `<div class="dns-result fail">Error: ${data.error}</div>`;
+      result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(data.error)}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="dns-result fail">Error: ${e.message}</div>`;
+    result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(e.message)}</div>`;
     log("DNS test failed: " + e.message, "error");
   }
   btn.disabled = false;
@@ -341,7 +341,7 @@ function renderSchedules(schedules) {
       <span style="color:var(--green)">${s.time}</span>
       <span style="color:var(--text-dim)">${dayLabels}</span>
       <span style="color:var(--text)">${s.mode.toUpperCase()}</span>
-      <button class="schedule-del" onclick="deleteSchedule('${s.id}')">&times;</button>
+      <button class="schedule-del" onclick="deleteSchedule('${escapeHtml(s.id)}')">&times;</button>
     </div>`;
   }).join("");
 }
@@ -456,17 +456,17 @@ async function runSpeedTest() {
     const data = await res.json();
     if (data.ok) {
       result.innerHTML = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:4px">
-        <div><div style="font-size:10px;color:var(--text-faint)">DOWNLOAD</div><div style="font-size:18px;color:var(--green)">${data.download} <span style="font-size:11px">Mbps</span></div></div>
-        <div><div style="font-size:10px;color:var(--text-faint)">UPLOAD</div><div style="font-size:18px;color:var(--green)">${data.upload} <span style="font-size:11px">Mbps</span></div></div>
-        <div><div style="font-size:10px;color:var(--text-faint)">PING</div><div style="font-size:18px;color:var(--green)">${data.ping} <span style="font-size:11px">ms</span></div></div>
+        <div><div style="font-size:10px;color:var(--text-faint)">DOWNLOAD</div><div style="font-size:18px;color:var(--green)">${escapeHtml(data.download)} <span style="font-size:11px">Mbps</span></div></div>
+        <div><div style="font-size:10px;color:var(--text-faint)">UPLOAD</div><div style="font-size:18px;color:var(--green)">${escapeHtml(data.upload)} <span style="font-size:11px">Mbps</span></div></div>
+        <div><div style="font-size:10px;color:var(--text-faint)">PING</div><div style="font-size:18px;color:var(--green)">${escapeHtml(data.ping)} <span style="font-size:11px">ms</span></div></div>
       </div><div style="font-size:10px;color:var(--text-faint);margin-top:4px">Server: ${escapeHtml(data.server)}</div>`;
       log(`Speed: ${data.download} Mbps down / ${data.upload} Mbps up / ${data.ping}ms`, "success");
     } else {
-      result.innerHTML = `<div class="dns-result fail">${data.error}</div>`;
+      result.innerHTML = `<div class="dns-result fail">${escapeHtml(data.error)}</div>`;
       log("Speed test failed: " + data.error, "error");
     }
   } catch (e) {
-    result.innerHTML = `<div class="dns-result fail">Error: ${e.message}</div>`;
+    result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(e.message)}</div>`;
   }
   btn.disabled = false;
   btn.textContent = "RUN TEST";
@@ -496,10 +496,10 @@ async function runPingTest() {
       }).join("");
       log("Ping test complete", "success");
     } else {
-      result.innerHTML = `<div class="dns-result fail">${data.error}</div>`;
+      result.innerHTML = `<div class="dns-result fail">${escapeHtml(data.error)}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="dns-result fail">Error: ${e.message}</div>`;
+    result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(e.message)}</div>`;
   }
   btn.disabled = false;
   btn.textContent = "RUN TEST";
@@ -525,10 +525,10 @@ async function runIpLeak() {
       </div>`;
       log(`IP leak test: ${data.status}`, data.leaked ? "error" : "success");
     } else {
-      result.innerHTML = `<div class="dns-result fail">${data.error}</div>`;
+      result.innerHTML = `<div class="dns-result fail">${escapeHtml(data.error)}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div class="dns-result fail">Error: ${e.message}</div>`;
+    result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(e.message)}</div>`;
   }
   btn.disabled = false;
   btn.textContent = "RUN TEST";
@@ -581,10 +581,10 @@ async function fetchBlocked() {
     } else if (data.ok) {
       result.innerHTML = '<div style="font-size:10px;color:var(--text-faint)">No blocked queries found</div>';
     } else {
-      result.innerHTML = `<div style="font-size:10px;color:var(--red)">${data.error}</div>`;
+      result.innerHTML = `<div style="font-size:10px;color:var(--red)">${escapeHtml(data.error)}</div>`;
     }
   } catch (e) {
-    result.innerHTML = `<div style="font-size:10px;color:var(--red)">Error: ${e.message}</div>`;
+    result.innerHTML = `<div style="font-size:10px;color:var(--red)">Error: ${escapeHtml(e.message)}</div>`;
   }
   btn.disabled = false;
 }
@@ -668,15 +668,15 @@ async function runSystemUpdate() {
     const res = await fetch(ARSENAL_API + "/api/tools/update", { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      result.innerHTML = `<div class="dns-result pass">${data.status}</div>`;
+      result.innerHTML = `<div class="dns-result pass">${escapeHtml(data.status)}</div>`;
       if (data.output) result.innerHTML += `<pre style="font-size:9px;color:var(--text-dim);margin-top:4px;white-space:pre-wrap">${escapeHtml(data.output)}</pre>`;
       log("System update complete", "success");
     } else {
-      result.innerHTML = `<div class="dns-result fail">${data.error || data.status}</div>`;
+      result.innerHTML = `<div class="dns-result fail">${escapeHtml(data.error || data.status)}</div>`;
       log("System update failed", "error");
     }
   } catch (e) {
-    result.innerHTML = `<div class="dns-result fail">Error: ${e.message}</div>`;
+    result.innerHTML = `<div class="dns-result fail">Error: ${escapeHtml(e.message)}</div>`;
   }
   btn.disabled = false;
   btn.textContent = "UPDATE";
@@ -1053,7 +1053,7 @@ async function runSecurityScan() {
     const data = await res.json();
 
     if (!data.ok) {
-      result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">${data.error}</div>`;
+      result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">${escapeHtml(data.error)}</div>`;
       log("Scan failed: " + data.error, "error");
       btn.disabled = false;
       btn.textContent = "RUN SCAN";
@@ -1061,9 +1061,9 @@ async function runSecurityScan() {
     }
 
     let html = '<div class="scan-overview">';
-    html += `<div class="scan-score-ring grade-${data.grade}">${data.score}</div>`;
+    html += `<div class="scan-score-ring grade-${escapeHtml(data.grade)}">${escapeHtml(data.score)}</div>`;
     html += '<div class="scan-stats">';
-    html += `<div><span class="label">Grade:</span> ${data.grade}</div>`;
+    html += `<div><span class="label">Grade:</span> ${escapeHtml(data.grade)}</div>`;
     html += `<div><span class="label">Warnings:</span> <span style="color:${data.warnings.length > 0 ? 'var(--red)' : 'var(--green)'}">${data.warnings.length}</span></div>`;
     html += `<div><span class="label">Suggestions:</span> <span style="color:var(--amber)">${data.suggestions.length}</span></div>`;
     html += `<div><span class="label">Scanned:</span> ${new Date(data.scannedAt).toLocaleTimeString()}</div>`;
@@ -1072,8 +1072,8 @@ async function runSecurityScan() {
     if (data.warnings.length > 0) {
       html += '<div class="scan-section"><div class="scan-section-title">WARNINGS</div>';
       for (const w of data.warnings) {
-        html += `<div class="scan-item warning"><span class="scan-id">${w.id}</span>${w.message}`;
-        if (w.fix) html += `<span class="scan-fix">${w.fix}</span>`;
+        html += `<div class="scan-item warning"><span class="scan-id">${escapeHtml(w.id)}</span>${escapeHtml(w.message)}`;
+        if (w.fix) html += `<span class="scan-fix">${escapeHtml(w.fix)}</span>`;
         html += '</div>';
       }
       html += '</div>';
@@ -1084,8 +1084,8 @@ async function runSecurityScan() {
       const remaining = data.suggestions.length - shown.length;
       html += '<div class="scan-section"><div class="scan-section-title">SUGGESTIONS</div>';
       for (const s of shown) {
-        html += `<div class="scan-item"><span class="scan-id">${s.id}</span>${s.message}`;
-        if (s.fix) html += `<span class="scan-fix">${s.fix}</span>`;
+        html += `<div class="scan-item"><span class="scan-id">${escapeHtml(s.id)}</span>${escapeHtml(s.message)}`;
+        if (s.fix) html += `<span class="scan-fix">${escapeHtml(s.fix)}</span>`;
         html += '</div>';
       }
       if (remaining > 0) {
@@ -1102,7 +1102,7 @@ async function runSecurityScan() {
     log(`Security scan complete — Score: ${data.score}/100 (Grade ${data.grade})`, data.warnings.length > 0 ? "warning" : "success");
 
   } catch (e) {
-    result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">Error: ${e.message}</div>`;
+    result.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px 0">Error: ${escapeHtml(e.message)}</div>`;
     log("Scan error: " + e.message, "error");
   }
 

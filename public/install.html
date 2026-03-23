@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GhostPort OS — Setup</title>
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --card: #111;
+    --card-border: #1a1a1a;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --accent: #00e5ff;
+    --accent-hover: #00b8d4;
+    --accent-glow: rgba(0, 229, 255, 0.15);
+    --danger: #ff4444;
+    --success: #00c853;
+    --radius: 12px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    line-height: 1.5;
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    width: 100%;
+    max-width: 500px;
+    padding: 40px 32px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  }
+
+  .brand {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+
+  .brand-icon {
+    font-size: 48px;
+    margin-bottom: 8px;
+    display: block;
+    opacity: 0.9;
+  }
+
+  .brand h1 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text);
+  }
+
+  .brand h1 span {
+    color: var(--accent);
+  }
+
+  .brand p {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-top: 8px;
+  }
+
+  .form-group {
+    margin-bottom: 20px;
+  }
+
+  .form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+
+  .license-input {
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 18px;
+    letter-spacing: 2px;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .license-input::placeholder {
+    color: #444;
+    letter-spacing: 1px;
+    font-size: 15px;
+  }
+
+  .license-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+
+  .btn {
+    width: 100%;
+    padding: 14px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .btn-copy {
+    background: transparent;
+    border: 1px solid var(--card-border);
+    color: var(--text-dim);
+    padding: 8px 14px;
+    font-size: 13px;
+    width: auto;
+    border-radius: 6px;
+  }
+
+  .btn-copy:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .btn-copy.copied {
+    border-color: var(--success);
+    color: var(--success);
+  }
+
+  .spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid transparent;
+    border-top-color: #000;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    display: none;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .error-msg {
+    background: rgba(255, 68, 68, 0.1);
+    border: 1px solid rgba(255, 68, 68, 0.3);
+    color: var(--danger);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin-top: 16px;
+    display: none;
+  }
+
+  .skip {
+    display: block;
+    text-align: center;
+    margin-top: 20px;
+    color: var(--text-dim);
+    font-size: 13px;
+    text-decoration: none;
+    transition: color 0.2s;
+  }
+
+  .skip:hover { color: var(--text); }
+
+  /* Success state */
+  .success-view { display: none; }
+
+  .success-header {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .success-header .check {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(0, 200, 83, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 16px;
+    font-size: 28px;
+  }
+
+  .success-header h2 {
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .success-header p {
+    color: var(--text-dim);
+    font-size: 14px;
+    margin-top: 4px;
+  }
+
+  .cred-box {
+    background: var(--bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .cred-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+  }
+
+  .cred-row + .cred-row {
+    border-top: 1px solid var(--card-border);
+  }
+
+  .cred-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+
+  .cred-value {
+    font-family: var(--mono);
+    font-size: 14px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .fleet-badge {
+    display: inline-block;
+    background: rgba(0, 200, 83, 0.12);
+    color: var(--success);
+    font-size: 12px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .copy-all-wrap {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+
+  .copy-all-wrap .btn { flex: 1; }
+
+  .btn-go {
+    background: var(--accent);
+    color: #000;
+  }
+
+  .btn-go:hover { background: var(--accent-hover); }
+
+  footer {
+    margin-top: 32px;
+    color: #444;
+    font-size: 12px;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+
+  @media (max-width: 540px) {
+    .card { padding: 32px 20px; }
+    .license-input { font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <!-- Activation Form -->
+  <div id="activate-view">
+    <div class="brand">
+      <span class="brand-icon">&#x1f6e1;</span>
+      <h1>Welcome to <span>Ghost</span>Port</h1>
+      <p>Enter your license key to activate your device and register it with GhostPort Fleet management.</p>
+    </div>
+
+    <div class="form-group">
+      <label for="license-key">License Key</label>
+      <input
+        type="text"
+        id="license-key"
+        class="license-input"
+        placeholder="XXXX-XXXX-XXXX-XXXX"
+        maxlength="19"
+        autocomplete="off"
+        spellcheck="false"
+      >
+    </div>
+
+    <button id="activate-btn" class="btn btn-primary" disabled>
+      <span class="spinner" id="spinner"></span>
+      <span id="btn-text">Activate Device</span>
+    </button>
+
+    <div id="error-msg" class="error-msg"></div>
+
+    <a href="/" class="skip">Skip &mdash; use without subscription</a>
+  </div>
+
+  <!-- Success State -->
+  <div id="success-view" class="success-view">
+    <div class="success-header">
+      <div class="check">&#10003;</div>
+      <h2>Device Activated</h2>
+      <p>Your GhostPort is ready to use.</p>
+    </div>
+
+    <div class="cred-box">
+      <div class="cred-row">
+        <span class="cred-label">Device Passcode</span>
+        <span class="cred-value" id="cred-passcode"></span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">WiFi Network</span>
+        <span class="cred-value" id="cred-ssid"></span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">WiFi Password</span>
+        <span class="cred-value" id="cred-wifi-pw"></span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-label">Fleet Status</span>
+        <span class="cred-value"><span class="fleet-badge" id="cred-fleet"></span></span>
+      </div>
+    </div>
+
+    <div class="copy-all-wrap">
+      <button class="btn btn-copy" id="copy-all-btn">Copy All</button>
+      <a href="/" class="btn btn-go">Open Dashboard</a>
+    </div>
+  </div>
+</div>
+
+<footer>GhostPort Technologies &mdash; Privacy by Default</footer>
+
+<script>
+(function() {
+  const input = document.getElementById('license-key');
+  const btn = document.getElementById('activate-btn');
+  const btnText = document.getElementById('btn-text');
+  const spinner = document.getElementById('spinner');
+  const errorMsg = document.getElementById('error-msg');
+  const activateView = document.getElementById('activate-view');
+  const successView = document.getElementById('success-view');
+
+  let credentials = null;
+
+  // Auto-format: insert dashes every 4 alphanumeric characters
+  input.addEventListener('input', function(e) {
+    const raw = input.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 16);
+    const parts = raw.match(/.{1,4}/g) || [];
+    const formatted = parts.join('-');
+
+    if (formatted !== input.value) {
+      const cursorWasAtEnd = input.selectionStart >= input.value.length;
+      input.value = formatted;
+      if (cursorWasAtEnd) input.setSelectionRange(formatted.length, formatted.length);
+    }
+
+    btn.disabled = raw.length !== 16;
+    errorMsg.style.display = 'none';
+  });
+
+  // Allow Enter key
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !btn.disabled) activate();
+  });
+
+  btn.addEventListener('click', activate);
+
+  async function activate() {
+    const key = input.value.trim();
+    if (key.length !== 19) return;
+
+    btn.disabled = true;
+    btnText.textContent = 'Activating...';
+    spinner.style.display = 'inline-block';
+    errorMsg.style.display = 'none';
+
+    try {
+      const res = await fetch('/api/fleet/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: key })
+      });
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error('Server returned an invalid response. Please try again.');
+      }
+
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Activation failed. Please check your key and try again.');
+      }
+
+      credentials = data;
+      showSuccess(data);
+
+    } catch (err) {
+      let msg = err.message;
+      if (err.name === 'TypeError' && msg.includes('fetch')) {
+        msg = 'Unable to reach the server. Make sure you are connected to the GhostPort network.';
+      }
+      errorMsg.textContent = msg;
+      errorMsg.style.display = 'block';
+      btn.disabled = false;
+      btnText.textContent = 'Activate Device';
+      spinner.style.display = 'none';
+    }
+  }
+
+  function showSuccess(data) {
+    document.getElementById('cred-passcode').textContent = data.passcode || '—';
+    document.getElementById('cred-ssid').textContent = data.wifi_ssid || '—';
+    document.getElementById('cred-wifi-pw').textContent = data.wifi_password || '—';
+    document.getElementById('cred-fleet').textContent = data.fleet_status || 'registered';
+
+    activateView.style.display = 'none';
+    successView.style.display = 'block';
+  }
+
+  // Copy all credentials
+  document.getElementById('copy-all-btn').addEventListener('click', function() {
+    if (!credentials) return;
+    const text = [
+      'GhostPort Device Credentials',
+      '============================',
+      'Passcode:      ' + (credentials.passcode || '—'),
+      'WiFi Network:  ' + (credentials.wifi_ssid || '—'),
+      'WiFi Password: ' + (credentials.wifi_password || '—'),
+      'Fleet Status:  ' + (credentials.fleet_status || '—')
+    ].join('\n');
+
+    copyToClipboard(text, this);
+  });
+
+  function copyToClipboard(text, button) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        flashCopied(button);
+      }).catch(function() {
+        fallbackCopy(text, button);
+      });
+    } else {
+      fallbackCopy(text, button);
+    }
+  }
+
+  function fallbackCopy(text, button) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); flashCopied(button); }
+    catch { /* silent */ }
+    document.body.removeChild(ta);
+  }
+
+  function flashCopied(button) {
+    const orig = button.textContent;
+    button.textContent = 'Copied';
+    button.classList.add('copied');
+    setTimeout(function() {
+      button.textContent = orig;
+      button.classList.remove('copied');
+    }, 1500);
+  }
+})();
+</script>
+
+</body>
+</html>

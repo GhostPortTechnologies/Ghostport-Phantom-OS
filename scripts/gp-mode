@@ -28,7 +28,6 @@ apply_profile() {
   fi
   sudo conntrack -F 2>/dev/null || true
   sudo pihole reloaddns 2>/dev/null || true
-  gp-dns-upstream "$(cat /etc/ghostport/current-mode 2>/dev/null || echo isp)" 2>/dev/null || true
 }
 
 ensure_tailscale() {
@@ -145,6 +144,7 @@ case "$MODE" in
     ensure_tailscale
     apply_profile "$RULEDIR/isp.nft"
     echo "isp" | sudo tee "$MODEFILE" > /dev/null
+    gp-dns-upstream isp 2>/dev/null || true
     echo "Mode: ISP (LAN -> eth0). Tailscale: management."
     ;;
   zerotrust)
@@ -154,6 +154,7 @@ case "$MODE" in
     stop_wg0
     apply_profile "$RULEDIR/zerotrust.nft"
     echo "zerotrust" | sudo tee "$MODEFILE" > /dev/null
+    gp-dns-upstream zerotrust 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
     echo "Mode: ZeroTrust (LAN -> eth0, DNS locked). Tailscale: management."
     ;;
@@ -166,6 +167,7 @@ case "$MODE" in
     iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
     fix_wg_routing
     echo "doublehop" | sudo tee "$MODEFILE" > /dev/null
+    gp-dns-upstream doublehop 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
     echo "Mode: DoubleHop (LAN -> wg0). Tailscale: management."
     ;;
@@ -178,6 +180,7 @@ case "$MODE" in
     iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
     fix_wg_routing
     echo "zhop" | sudo tee "$MODEFILE" > /dev/null
+    gp-dns-upstream zhop 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
     echo "Mode: ZHop (LAN -> wg0, DNS locked). Tailscale: management."
     ;;

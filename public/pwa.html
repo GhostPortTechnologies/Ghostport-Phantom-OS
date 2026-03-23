@@ -1112,9 +1112,9 @@
     // Show summary
     const modeNames = { isp:'ISP — Open Waters', zerotrust:'Zero Trust — Ghost Cloak', doublehop:'Double Hop — Dead Man\'s Route', zhop:'Z-HOP — Davy Jones' };
     document.getElementById('summary-details').innerHTML = `
-      <div class="detail-row"><span class="detail-key">Ship Name</span><span class="detail-val">${name}</span></div>
-      <div class="detail-row"><span class="detail-key">Serial</span><span class="detail-val">${serialParam}</span></div>
-      <div class="detail-row"><span class="detail-key">Captain</span><span class="detail-val">${email}</span></div>
+      <div class="detail-row"><span class="detail-key">Ship Name</span><span class="detail-val">${esc(name)}</span></div>
+      <div class="detail-row"><span class="detail-key">Serial</span><span class="detail-val">${esc(serialParam)}</span></div>
+      <div class="detail-row"><span class="detail-key">Captain</span><span class="detail-val">${esc(email)}</span></div>
       <div class="detail-row"><span class="detail-key">Default Mode</span><span class="detail-val">${modeNames[selectedMode]}</span></div>
       <div class="detail-row"><span class="detail-key">Status</span><span class="detail-val">☠ ACTIVE</span></div>
     `;
@@ -1282,7 +1282,7 @@
     const box = document.getElementById('log-box');
     if (!box) return;
     box.innerHTML = [...logs].reverse().map(l =>
-      `<div class="log-entry"><span class="log-time">${l.time}</span><span class="log-msg ${l.type}">${l.msg}</span></div>`
+      `<div class="log-entry"><span class="log-time">${l.time}</span><span class="log-msg ${l.type}">${esc(l.msg)}</span></div>`
     ).join('');
   }
 </script>

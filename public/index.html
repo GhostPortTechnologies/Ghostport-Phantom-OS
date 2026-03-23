@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#060A06">
   <title>GhostPort — Command Deck</title>
-  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+  <!-- Google Fonts removed to prevent privacy leak -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -17,6 +17,9 @@
       --green: #39ff8f;
       --green-dim: #1a6a3a;
       --green-glow: #39ff8f44;
+      --green-20: #39ff8f33;
+      --green-33: #39ff8f55;
+      --green-13: #39ff8f22;
       --bg: #060a06;
       --bg2: #0a140a;
       --bg3: #0d1f0d;
@@ -28,10 +31,43 @@
       --amber: #ffaa00;
     }
 
+    .theme-swatches {
+      display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center;
+    }
+    .theme-swatch {
+      width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent;
+      cursor: pointer; transition: all 0.2s; padding: 0;
+    }
+    .theme-swatch:hover { transform: scale(1.15); }
+    .theme-swatch.active { border-color: #fff; box-shadow: 0 0 10px currentColor; }
+    .theme-rgb-btn {
+      width: 28px; height: 28px; border-radius: 50%; border: 2px solid transparent;
+      background: conic-gradient(#ff4466, #ffb300, #39ff8f, #00e5ff, #44aaff, #b44aff, #ff4466);
+      cursor: pointer; transition: all 0.2s; padding: 0;
+    }
+    .theme-rgb-btn:hover { transform: scale(1.15); }
+    .theme-rgb-btn.active { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.5); }
+    .theme-picker-row {
+      display: flex; align-items: center; gap: 8px; margin-top: 8px;
+    }
+    .theme-color-input {
+      -webkit-appearance: none; appearance: none;
+      width: 28px; height: 28px; border: 2px solid var(--border); border-radius: 50%;
+      background: transparent; cursor: pointer; padding: 0; overflow: hidden;
+    }
+    .theme-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+    .theme-color-input::-webkit-color-swatch { border: none; border-radius: 50%; }
+    .theme-color-input::-moz-color-swatch { border: none; border-radius: 50%; }
+    .theme-color-input:hover { transform: scale(1.15); transition: transform 0.2s; }
+    .theme-color-label {
+      font-size: 9px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase;
+    }
+
+
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       min-height: 100vh;
       overflow-x: hidden;
     }
@@ -49,7 +85,7 @@
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.6;transform:scale(0.97)} }
     @keyframes flicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.6} 94%{opacity:1} 97%{opacity:0.8} 98%{opacity:1} }
     @keyframes glitch {
-      0% { transform: translate(0); text-shadow: 0 0 20px #39ff8f66; }
+      0% { transform: translate(0); text-shadow: 0 0 20px var(--green-glow); }
       10% { transform: translate(-3px, 1px); text-shadow: 3px 0 #ff4444, -3px 0 #00f0ff; }
       20% { transform: translate(3px, -1px); text-shadow: -3px 0 #ff4444, 3px 0 #00f0ff; }
       30% { transform: translate(-2px, 2px); text-shadow: 2px 0 #ff4444, -2px 0 #00f0ff; }
@@ -59,10 +95,10 @@
       70% { transform: translate(-3px, -1px); text-shadow: 3px 0 #ff4444, -3px 0 #00f0ff; }
       80% { transform: translate(1px, 2px); text-shadow: -1px 0 #ff4444, 1px 0 #00f0ff; opacity: 0.9; }
       90% { transform: translate(-2px, 0); text-shadow: 2px 0 #ff4444, -2px 0 #00f0ff; }
-      100% { transform: translate(0); text-shadow: 0 0 20px #39ff8f66; }
+      100% { transform: translate(0); text-shadow: 0 0 20px var(--green-glow); }
     }
     .brand-name.glitch { animation: glitch 0.6s linear; }
-    @keyframes glow { 0%,100%{box-shadow:0 0 8px var(--green-glow)} 50%{box-shadow:0 0 24px #39ff8f66} }
+    @keyframes glow { 0%,100%{box-shadow:0 0 8px var(--green-glow)} 50%{box-shadow:0 0 24px var(--green-glow)} }
     @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
     @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
@@ -89,12 +125,12 @@
     }
 
     .brand-name {
-      font-family: 'Cinzel', serif;
+      font-family: 'Georgia', 'Times New Roman', serif;
       font-size: 28px;
       font-weight: 900;
       color: var(--green);
       letter-spacing: 4px;
-      text-shadow: 0 0 20px #39ff8f66;
+      text-shadow: 0 0 20px var(--green-glow);
       animation: flicker 8s infinite;
     }
 
@@ -118,7 +154,7 @@
     /* Active mode banner */
     .banner {
       background: linear-gradient(90deg, var(--bg3), var(--bg2));
-      border: 1px solid #39ff8f33;
+      border: 1px solid var(--green-20);
       border-left: 3px solid var(--green);
       border-radius: 4px;
       padding: 14px 20px;
@@ -131,7 +167,7 @@
 
     .banner-icon { font-size: 24px; }
     .banner-label { font-size: 10px; color: var(--text-dim); letter-spacing: 2px; }
-    .banner-mode { font-family: 'Cinzel', serif; font-size: 16px; color: var(--green); }
+    .banner-mode { font-family: 'Georgia', 'Times New Roman', serif; font-size: 16px; color: var(--green); }
     .banner-ip { margin-left: auto; text-align: right; }
     .banner-ip-label { font-size: 10px; color: var(--text-dim); }
     .banner-ip-val { font-size: 13px; color: var(--green); font-weight: bold; }
@@ -156,7 +192,7 @@
     .rollback-title { font-size: 12px; color: var(--amber); letter-spacing: 1px; font-weight: bold; }
     .rollback-desc { font-size: 10px; color: #aa8833; margin-top: 4px; }
     .rollback-countdown {
-      font-family: 'Cinzel', serif;
+      font-family: 'Georgia', 'Times New Roman', serif;
       font-size: 22px;
       color: var(--amber);
       min-width: 40px;
@@ -166,7 +202,7 @@
     .rollback-actions { display: flex; gap: 8px; }
 
     .btn {
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       font-size: 11px;
       padding: 8px 16px;
       border-radius: 3px;
@@ -176,11 +212,11 @@
     }
 
     .btn-confirm {
-      background: #0d2a1a;
+      background: var(--bg3);
       border: 1px solid var(--green);
       color: var(--green);
     }
-    .btn-confirm:hover { background: #1a3a2a; box-shadow: 0 0 10px var(--green-glow); }
+    .btn-confirm:hover { background: var(--green-dim); box-shadow: 0 0 10px var(--green-glow); }
 
     .btn-rollback {
       background: #2a1a0a;
@@ -216,7 +252,7 @@
       transition: all 0.3s cubic-bezier(.4,0,.2,1);
       user-select: none;
     }
-    .mode-card:hover { border-color: #39ff8f55; background: #0d1a0d; transform: translateY(-2px); }
+    .mode-card:hover { border-color: var(--green-33); background: var(--bg2); transform: translateY(-2px); }
     .mode-card.active { border-color: var(--green); background: var(--bg3); animation: glow 2s ease-in-out infinite; }
     .mode-card.switching { opacity: 0.5; pointer-events: none; }
     .mode-card.disabled { opacity: 0.3; pointer-events: none; cursor: not-allowed; }
@@ -224,13 +260,13 @@
     .active-badge {
       position: absolute; top: 8px; right: 8px;
       font-size: 8px; color: var(--green); letter-spacing: 2px;
-      background: #39ff8f22; padding: 2px 6px; border-radius: 2px;
+      background: var(--green-13); padding: 2px 6px; border-radius: 2px;
     }
 
     .mode-icon { font-size: 26px; margin-bottom: 8px; }
-    .mode-name { font-family: 'Cinzel', serif; font-size: 14px; color: var(--green); margin-bottom: 2px; letter-spacing: 1px; }
+    .mode-name { font-family: 'Georgia', 'Times New Roman', serif; font-size: 14px; color: var(--green); margin-bottom: 2px; letter-spacing: 1px; }
     .mode-subtitle { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px; }
-    .mode-desc { font-size: 11px; color: #6a9a6a; line-height: 1.5; }
+    .mode-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
 
     .privacy-bar-wrap { margin-top: 12px; }
     .privacy-bar-label { font-size: 9px; color: var(--text-faint); margin-bottom: 4px; letter-spacing: 1px; }
@@ -281,7 +317,7 @@
     }
     .log-entry { display: flex; gap: 10px; font-size: 11px; animation: fadeIn 0.3s ease; }
     .log-time { color: var(--text-faint); min-width: 58px; flex-shrink: 0; }
-    .log-msg.info { color: #5a8a5a; }
+    .log-msg.info { color: var(--text-dim); }
     .log-msg.success { color: var(--green); }
     .log-msg.warn { color: #ffaa44; }
     .log-msg.error { color: var(--red); }
@@ -323,7 +359,7 @@
     .toggle-switch input { display: none; }
     .toggle-track {
       position: absolute; inset: 0;
-      background: #1a2e1a; border: 1px solid var(--border);
+      background: var(--border); border: 1px solid var(--border);
       border-radius: 11px; transition: all 0.3s;
     }
     .toggle-thumb {
@@ -332,7 +368,7 @@
       background: #3a5a3a; transition: all 0.3s;
     }
     .toggle-switch.on .toggle-track {
-      background: #0d2a1a; border-color: var(--green);
+      background: var(--bg3); border-color: var(--green);
       box-shadow: 0 0 10px var(--green-glow);
     }
     .toggle-switch.on .toggle-thumb {
@@ -344,7 +380,7 @@
 
     /* Support section */
     .btn-support {
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       font-size: 11px; padding: 8px 16px; border-radius: 3px;
       cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
       background: var(--bg2); border: 1px solid var(--border); color: var(--text);
@@ -372,7 +408,7 @@
     .diag-fix { font-size: 10px; color: var(--amber); margin-top: 4px; padding: 4px 8px; background: #1a1400; border-radius: 2px; }
 
     .ticket-form { background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; padding: 14px; margin-top: 10px; }
-    .ticket-field { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-family: 'Share Tech Mono', monospace; font-size: 11px; padding: 8px 10px; margin-bottom: 8px; resize: vertical; }
+    .ticket-field { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; color: var(--text); font-family: 'Courier New', 'Consolas', monospace; font-size: 11px; padding: 8px 10px; margin-bottom: 8px; resize: vertical; }
     .ticket-field:focus { outline: none; border-color: var(--green); }
     .ticket-field::placeholder { color: var(--text-faint); }
     .ticket-status { font-size: 11px; margin-top: 8px; }
@@ -433,15 +469,15 @@
       position: relative;
       transition: all 0.3s;
     }
-    .arsenal-card:hover { border-color: #39ff8f33; }
+    .arsenal-card:hover { border-color: var(--green-20); }
     .arsenal-card-wide { grid-column: 1 / -1; }
 
     .arsenal-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .arsenal-icon { font-size: 20px; }
-    .arsenal-name { font-family: 'Cinzel', serif; font-size: 13px; color: var(--green); letter-spacing: 1px; }
+    .arsenal-name { font-family: 'Georgia', 'Times New Roman', serif; font-size: 13px; color: var(--green); letter-spacing: 1px; }
     .arsenal-toggle { margin-left: auto; }
 
-    .arsenal-desc { font-size: 11px; color: #6a9a6a; line-height: 1.5; margin-bottom: 8px; }
+    .arsenal-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; margin-bottom: 8px; }
     .arsenal-protect {
       font-size: 10px; color: var(--text-dim); padding: 6px 8px;
       background: #060a06; border-radius: 3px; border-left: 2px solid var(--green-dim);
@@ -452,12 +488,12 @@
       display: inline-block; font-size: 9px; letter-spacing: 1px;
       padding: 2px 6px; border-radius: 2px; margin-top: 6px;
     }
-    .arsenal-status.on { background: #39ff8f22; color: var(--green); }
+    .arsenal-status.on { background: var(--green-13); color: var(--green); }
     .arsenal-status.off { background: #1a1a1a; color: var(--text-faint); }
     .arsenal-status.tripped { background: #ff444422; color: var(--red); animation: blink 1s infinite; }
 
     .arsenal-btn {
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 6px 12px; border-radius: 3px;
       cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
       background: var(--bg); border: 1px solid var(--border); color: var(--text);
@@ -476,7 +512,7 @@
     .client-list { max-height: 160px; overflow-y: auto; margin-top: 8px; }
     .client-row {
       display: flex; gap: 12px; font-size: 10px; padding: 4px 0;
-      border-bottom: 1px solid #0d1f0d;
+      border-bottom: 1px solid var(--bg3);
     }
     .client-row span { flex: 1; }
     .client-ip { color: var(--green); }
@@ -487,7 +523,7 @@
     .schedule-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
     .schedule-form input, .schedule-form select {
       background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
-      color: var(--text); font-family: 'Share Tech Mono', monospace;
+      color: var(--text); font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 6px 8px;
     }
     .schedule-form input:focus, .schedule-form select:focus { outline: none; border-color: var(--green); }
@@ -496,9 +532,9 @@
     .day-btn {
       width: 26px; height: 24px; font-size: 9px; border: 1px solid var(--border);
       background: var(--bg); color: var(--text-dim); border-radius: 2px;
-      cursor: pointer; font-family: 'Share Tech Mono', monospace;
+      cursor: pointer; font-family: 'Courier New', 'Consolas', monospace;
     }
-    .day-btn.active { background: #0d2a1a; border-color: var(--green); color: var(--green); }
+    .day-btn.active { background: var(--bg3); border-color: var(--green); color: var(--green); }
 
     .schedule-list { margin-top: 8px; }
     .schedule-item {
@@ -508,13 +544,13 @@
     }
     .schedule-item .schedule-del {
       background: none; border: none; color: var(--red); cursor: pointer;
-      font-size: 12px; font-family: 'Share Tech Mono', monospace;
+      font-size: 12px; font-family: 'Courier New', 'Consolas', monospace;
     }
 
     /* Blocklist freq select */
     .freq-select {
       background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
-      color: var(--text); font-family: 'Share Tech Mono', monospace;
+      color: var(--text); font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 4px 6px;
     }
     .freq-select:focus { outline: none; border-color: var(--green); }
@@ -556,7 +592,7 @@
       display: inline-flex; align-items: center; justify-content: center;
       width: 80px; height: 80px; border-radius: 50%;
       border: 3px solid var(--green); font-size: 28px; font-weight: bold;
-      color: var(--green); font-family: 'Cinzel', serif; margin-right: 16px;
+      color: var(--green); font-family: 'Georgia', 'Times New Roman', serif; margin-right: 16px;
     }
     .scan-score-ring.grade-A { border-color: var(--green); color: var(--green); }
     .scan-score-ring.grade-B { border-color: #88cc44; color: #88cc44; }
@@ -568,7 +604,7 @@
     .scan-stats .label { color: var(--text-dim); }
     .scan-section { margin-top: 12px; }
     .scan-section-title {
-      font-family: 'Cinzel', serif; font-size: 11px; color: var(--green);
+      font-family: 'Georgia', 'Times New Roman', serif; font-size: 11px; color: var(--green);
       letter-spacing: 1px; margin-bottom: 6px; padding-bottom: 4px;
       border-bottom: 1px solid var(--border);
     }
@@ -593,7 +629,7 @@
     .pwa-install-bar {
       display: none;
       background: linear-gradient(90deg, var(--bg3), var(--bg2));
-      border: 1px solid #39ff8f33;
+      border: 1px solid var(--green-20);
       border-left: 3px solid var(--green);
       border-radius: 4px;
       padding: 12px 16px;
@@ -607,21 +643,21 @@
     .pwa-install-bar .pwa-title { font-size: 11px; color: var(--green); letter-spacing: 1px; }
     .pwa-install-bar .pwa-desc { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
     .pwa-install-bar .btn-install {
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 6px 14px; border-radius: 3px;
       cursor: pointer; letter-spacing: 1px;
-      background: #0d2a1a; border: 1px solid var(--green); color: var(--green);
+      background: var(--bg3); border: 1px solid var(--green); color: var(--green);
     }
-    .pwa-install-bar .btn-install:hover { background: #1a3a2a; box-shadow: 0 0 10px var(--green-glow); }
+    .pwa-install-bar .btn-install:hover { background: var(--green-dim); box-shadow: 0 0 10px var(--green-glow); }
     .pwa-install-bar .btn-dismiss {
       background: none; border: none; color: var(--text-faint);
-      cursor: pointer; font-size: 14px; font-family: 'Share Tech Mono', monospace;
+      cursor: pointer; font-size: 14px; font-family: 'Courier New', 'Consolas', monospace;
     }
 
 
     /* Exit button */
     .btn-exit {
-      font-family: 'Share Tech Mono', monospace;
+      font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 4px 10px; border-radius: 3px;
       cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
       background: transparent; border: 1px solid #ff444466; color: #ff8888;
@@ -629,6 +665,182 @@
     }
     .btn-exit:hover { background: #1a0a0a; border-color: var(--red); color: var(--red); box-shadow: 0 0 8px #ff444444; }
 
+
+    /* Family Shield */
+    .fs-section { margin-top: 20px; }
+
+    .fs-header-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .fs-master-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .fs-master-icon { font-size: 24px; }
+    .fs-master-title {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      font-size: 14px;
+      color: var(--green);
+      letter-spacing: 1px;
+      flex: 1;
+    }
+    .fs-master-subtitle {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      letter-spacing: 1px;
+    }
+
+    .fs-categories {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    @media(max-width: 600px) {
+      .fs-categories { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .fs-cat-card { padding: 10px; }
+      .fs-cat-name { font-size: 10px; }
+      .fs-cat-icon { font-size: 16px; }
+    }
+
+    .fs-cat-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.3s;
+    }
+    .fs-cat-card:hover { border-color: var(--green-20); }
+    .fs-cat-card.disabled {
+      opacity: 0.35;
+    }
+    .fs-cat-card.disabled .toggle-switch,
+    .fs-cat-card.disabled .fs-cat-info {
+      pointer-events: none;
+    }
+
+    .fs-cat-icon { font-size: 20px; flex-shrink: 0; }
+    .fs-cat-info { flex: 1; min-width: 0; }
+    .fs-cat-name {
+      font-size: 11px;
+      color: var(--text);
+      letter-spacing: 1px;
+    }
+    .fs-cat-status {
+      font-size: 9px;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+    .fs-cat-status.blocked { color: var(--red); }
+    .fs-cat-status.allowed { color: var(--text-faint); }
+    .fs-cat-sub { font-size: 8px; color: var(--text-faint); margin-top: 1px; letter-spacing: 0.5px; }
+
+    .fs-devices-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 16px;
+    }
+
+    .fs-devices-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .fs-devices-title {
+      font-family: 'Georgia', 'Times New Roman', serif;
+      font-size: 13px;
+      color: var(--green);
+      letter-spacing: 1px;
+      flex: 1;
+    }
+
+    .fs-device-list {
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    .fs-device-list::-webkit-scrollbar { width: 3px; }
+    .fs-device-list::-webkit-scrollbar-track { background: var(--bg); }
+    .fs-device-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .fs-device-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--bg3);
+      font-size: 10px;
+    }
+    .fs-device-row:last-child { border-bottom: none; }
+
+    .fs-device-info { flex: 1; min-width: 0; }
+    .fs-device-name {
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fs-device-detail {
+      color: var(--text-faint);
+      font-size: 9px;
+      margin-top: 1px;
+    }
+
+    .fs-badge {
+      display: inline-block;
+      font-size: 8px;
+      letter-spacing: 1px;
+      padding: 2px 6px;
+      border-radius: 2px;
+      margin-right: 6px;
+      flex-shrink: 0;
+    }
+    .fs-badge.shielded {
+      background: var(--green-13);
+      color: var(--green);
+    }
+    .fs-badge.unshielded {
+      background: #1a1a1a;
+      color: var(--text-faint);
+    }
+
+    .fs-device-btn {
+      font-family: 'Courier New', 'Consolas', monospace;
+      font-size: 9px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      cursor: pointer;
+      letter-spacing: 1px;
+      transition: all 0.2s;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      flex-shrink: 0;
+    }
+    .fs-device-btn:hover { border-color: var(--green); color: var(--green); }
+    .fs-device-btn.shielded { border-color: var(--green-dim); color: var(--green); }
+    .fs-device-btn:disabled { opacity: 0.4; pointer-events: none; }
+
+    .fs-gravity-indicator {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 8px;
+    }
+    .fs-gravity-indicator.visible { display: flex; }
   </style>
 </head>
 <body>
@@ -651,7 +863,7 @@
         </div>
         <div class="header-uptime">UPTIME: <span id="uptime">--</span></div>
       </div>
-      <button class="btn-exit" onclick="exitApp()" title="Exit application">EXIT</button>
+      <a href="/install.html" class="btn-exit" style="text-decoration:none;margin-right:6px;background:var(--bg3);border-color:var(--green);color:var(--green)" title="Install GhostPort app">GET APP</a><button class="btn-exit" onclick="exitApp()" title="Exit application">EXIT</button>
     </div>
   </header>
 
@@ -829,7 +1041,7 @@
         </div>
         <div class="arsenal-desc">Connect the Command Deck to Pi-hole to manage blocklists, domain filtering, and ad blocking stats. Enter your Pi-hole admin password below.</div>
         <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-          <input type="password" id="pihole-pw" placeholder="Pi-hole password" style="background:#0a0a0a;border:1px solid #333;color:var(--green);padding:6px 10px;font-family:'Share Tech Mono',monospace;font-size:12px;flex:1;border-radius:3px">
+          <input type="password" id="pihole-pw" placeholder="Pi-hole password" style="background:#0a0a0a;border:1px solid #333;color:var(--green);padding:6px 10px;font-family:'Courier New','Consolas',monospace;font-size:12px;flex:1;border-radius:3px">
           <button class="arsenal-btn" onclick="setupPihole()" id="btn-pihole-setup">CONNECT</button>
         </div>
         <div id="pihole-setup-status" style="font-size:11px;margin-top:6px"></div>
@@ -958,7 +1170,7 @@
           <div style="margin-top:10px;border-top:1px solid #1a2a1a;padding-top:10px">
             <div style="font-size:11px;color:var(--green);margin-bottom:6px">Block or Allow a Domain</div>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <input type="text" id="domain-input" placeholder="example.com" style="flex:1;min-width:150px;background:var(--bg2);border:1px solid #1a3a1a;color:var(--text);padding:6px 8px;font-family:Share Tech Mono;font-size:11px;border-radius:4px">
+              <input type="text" id="domain-input" placeholder="example.com" style="flex:1;min-width:150px;background:var(--bg2);border:1px solid #1a3a1a;color:var(--text);padding:6px 8px;font-family:'Courier New','Consolas',monospace;font-size:11px;border-radius:4px">
               <button class="arsenal-btn" onclick="submitDomain('deny')" style="font-size:10px">BLOCK</button>
               <button class="arsenal-btn" onclick="submitDomain('allow')" style="font-size:10px;background:#1a1a0a;border-color:#3a3a1a">ALLOW</button>
             </div>
@@ -1140,6 +1352,61 @@
 
       </div>
 
+
+      <!-- Family Shield -->
+      <div class="section-label" style="margin-top:20px">▸ FAMILY SHIELD</div>
+      <div class="arsenal-card" style="padding:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+          <span style="font-size:24px">🛡️</span>
+          <div style="flex:1">
+            <div style="font-family:'Georgia','Times New Roman',serif;font-size:14px;color:var(--green);letter-spacing:1px">Family Shield</div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px;letter-spacing:1px">PARENTAL CONTROLS</div>
+          </div>
+          <div class="toggle-switch" id="tog-family-shield" onclick="window._fsToggleMaster()">
+            <div class="toggle-track"></div>
+            <div class="toggle-thumb"></div>
+          </div>
+        </div>
+
+        <div id="fs-categories" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+          <div class="fs-cat" id="fs-cat-adult" onclick="window._fsToggleCat('adult')" style="opacity:0.35;pointer-events:none">
+            <span>⚠️</span>
+            <div style="flex:1"><div class="fs-cat-name">Adult Content</div><div class="fs-cat-status" id="fs-st-adult">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-adult"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+          <div class="fs-cat" id="fs-cat-gambling" onclick="window._fsToggleCat('gambling')" style="opacity:0.35;pointer-events:none">
+            <span>🎰</span>
+            <div style="flex:1"><div class="fs-cat-name">Gambling</div><div class="fs-cat-status" id="fs-st-gambling">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-gambling"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+          <div class="fs-cat" id="fs-cat-facebook" onclick="window._fsToggleCat('facebook')" style="opacity:0.35;pointer-events:none">
+            <span>Ⓜ</span>
+            <div style="flex:1"><div class="fs-cat-name">Meta Apps</div><div class="fs-cat-sub">FB / IG / WhatsApp</div><div class="fs-cat-status" id="fs-st-facebook">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-facebook"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+          <div class="fs-cat" id="fs-cat-tiktok" onclick="window._fsToggleCat('tiktok')" style="opacity:0.35;pointer-events:none">
+            <span>🎵</span>
+            <div style="flex:1"><div class="fs-cat-name">TikTok</div><div class="fs-cat-status" id="fs-st-tiktok">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-tiktok"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+          <div class="fs-cat" id="fs-cat-x" onclick="window._fsToggleCat('twitter')" style="opacity:0.35;pointer-events:none">
+            <span>𝕏</span>
+            <div style="flex:1"><div class="fs-cat-name">X</div><div class="fs-cat-status" id="fs-st-twitter">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-twitter"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:16px">📡</span>
+          <div style="font-family:'Georgia','Times New Roman',serif;font-size:13px;color:var(--green);letter-spacing:1px;flex:1">Shielded Devices</div>
+          <button class="arsenal-btn" id="btn-fs-discover" onclick="window._fsDiscover()">DISCOVER</button>
+        </div>
+        <div id="fs-device-list" style="max-height:200px;overflow-y:auto;font-size:10px;color:var(--text-faint)">Loading...</div>
+        <div id="fs-gravity" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--text-dim)">
+          <span class="spinner"></span><span>Updating blocklists...</span>
+        </div>
+      </div>
+
       <!-- WireGuard Setup -->
       <div class="section-label" style="margin-top:20px">▸ WIREGUARD VPN</div>
       <div class="arsenal-card">
@@ -1188,7 +1455,7 @@
           <!-- Easy Form -->
           <div id="wg-tab-form" class="wg-tab-content" style="display:none">
             <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">Fill in the fields from your VPN provider. All fields required.</div>
-            <input class="ticket-field" id="wg-private-key" placeholder="Your Private Key" style="font-family:'Share Tech Mono',monospace;font-size:11px"/>
+            <input class="ticket-field" id="wg-private-key" placeholder="Your Private Key" style="font-family:'Courier New','Consolas',monospace;font-size:11px"/>
             <input class="ticket-field" id="wg-address" placeholder="Your VPN Address (e.g. 10.66.0.2/32)"/>
             <input class="ticket-field" id="wg-dns" placeholder="DNS Server (e.g. 10.64.0.1)" value="10.64.0.1"/>
             <div style="font-size:10px;color:var(--green);margin:8px 0 4px">Server / Peer</div>
@@ -1268,10 +1535,34 @@ AllowedIPs = 0.0.0.0/0"></textarea>
           <input type="text" class="ticket-field" id="wifi-ssid" placeholder="Network name (SSID)" maxlength="32"/>
           <div style="position:relative">
             <input type="password" class="ticket-field" id="wifi-pass" placeholder="WiFi password (8-63 characters)" maxlength="63" style="padding-right:40px"/>
-            <button onclick="toggleWifiPassVisibility()" style="position:absolute;right:8px;top:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:'Share Tech Mono',monospace" id="wifi-pass-eye">SHOW</button>
+            <button onclick="toggleWifiPassVisibility()" style="position:absolute;right:8px;top:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:'Courier New','Consolas',monospace" id="wifi-pass-eye">SHOW</button>
           </div>
           <button class="arsenal-btn" onclick="saveWifiConfig()">SAVE &amp; RESTART AP</button>
           <div id="wifi-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:20px">▸ THEME COLOR</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🎨</span>
+          <span class="arsenal-name">Neon Accent</span>
+        </div>
+        <div class="arsenal-desc">Change the UI accent color. Choice is saved locally.</div>
+        <div class="theme-swatches">
+          <button class="theme-swatch active" onclick="setColorTheme('#39ff8f')" data-color="#39ff8f" style="background:#39ff8f" title="Green"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#b44aff')" data-color="#b44aff" style="background:#b44aff" title="Purple"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#44aaff')" data-color="#44aaff" style="background:#44aaff" title="Blue"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#ff4466')" data-color="#ff4466" style="background:#ff4466" title="Red"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#e0e0e0')" data-color="#e0e0e0" style="background:#e0e0e0" title="White"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#00e5ff')" data-color="#00e5ff" style="background:#00e5ff" title="Cyan"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#ffb300')" data-color="#ffb300" style="background:#ffb300" title="Amber"></button>
+          <button class="theme-swatch" onclick="setColorTheme('#8a9099')" data-color="#8a9099" style="background:#8a9099" title="Gunmetal"></button>
+          <button class="theme-rgb-btn" id="rgb-btn" onclick="toggleRainbow()" title="RGB Cycle"></button>
+        </div>
+        <div class="theme-picker-row">
+          <input type="color" id="theme-picker" class="theme-color-input" value="#39ff8f" title="Custom color"/>
+          <span class="theme-color-label" id="theme-label">NEON GREEN</span>
         </div>
       </div>
     </div>
@@ -1285,16 +1576,14 @@ AllowedIPs = 0.0.0.0/0"></textarea>
             <div>
               <div class="ship-stat-label" style="display:flex;align-items:center;gap:6px">
                 Ads Plundered
-                <select id="ads-range" onchange="fetchAdsRange()" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Share Tech Mono',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
-                  <option value="today">Today</option>
-                  <option value="thisMonth">This Month</option>
-                  <option value="thisYear">This Year</option>
+                <select id="ads-range" onchange="fetchAdsRange()" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
+                  <option value="session">Session</option>
                   <option value="allTime">All Time</option>
                 </select>
               </div>
               <div class="ship-stat-val" id="stat-ads">---</div>
             </div>
-            <div class="ship-stat-unit" id="stat-ads-label">blocked today</div>
+            <div class="ship-stat-unit" id="stat-ads-label">blocked this session</div>
           </div>
           <div class="ship-stat">
             <div><div class="ship-stat-label">Current IP</div><div class="ship-stat-val" id="stat-ip">---</div></div>
@@ -1329,6 +1618,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   </div>
 </div>
 
+<script src="arsenal.js"></script>
 <script>
   const API = "";
 
@@ -1350,12 +1640,15 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   let switching = false;
   let rollbackCountdownInterval = null;
 
+  function esc(s) { return s == null ? "" : String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+
   function log(msg, type = "info") {
     const box = document.getElementById("log-box");
     const now = new Date().toTimeString().slice(0, 8);
+    const safe = String(msg).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     const entry = document.createElement("div");
     entry.className = "log-entry";
-    entry.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${type}">${msg}</span>`;
+    entry.innerHTML = `<span class="log-time">${now}</span><span class="log-msg ${type}">${safe}</span>`;
     box.appendChild(entry);
     box.scrollTop = box.scrollHeight;
     // Keep log trimmed
@@ -1438,10 +1731,10 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     document.getElementById("role-ts").textContent = roles.ts;
 
     // Stats
-    adsCache.today = data.adsBlocked || 0;
-    if (document.getElementById("ads-range").value === "today") {
-      document.getElementById("stat-ads").textContent = adsCache.today.toLocaleString();
-    }
+    adsCache.session = data.adsBlocked || 0;
+    adsCache.allTime = data.adsBlockedAllTime || adsCache.session;
+    const currentRange = document.getElementById("ads-range").value;
+    document.getElementById("stat-ads").textContent = (adsCache[currentRange] || 0).toLocaleString();
     document.getElementById("stat-ip").textContent = data.ip;
     document.getElementById("stat-ip-label").textContent = mode === "isp" ? "your ISP IP" : "VPN/tunnel IP";
     document.getElementById("stat-enc").textContent = info.enc;
@@ -1456,12 +1749,12 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   let adsCache = {};
   async function fetchAdsRange() {
     const range = document.getElementById("ads-range").value;
-    const labels = { today: "blocked today", thisMonth: "blocked this month", thisYear: "blocked this year", allTime: "blocked all time" };
+    const labels = { session: "blocked this session", allTime: "blocked all time" };
     document.getElementById("stat-ads-label").textContent = labels[range];
 
-    // Use cached data if available
-    if (adsCache[range] !== undefined) {
-      document.getElementById("stat-ads").textContent = adsCache[range].toLocaleString();
+    // Use cached data if available (session updates every poll, allTime on demand)
+    if (range === "session" && adsCache.session !== undefined) {
+      document.getElementById("stat-ads").textContent = adsCache.session.toLocaleString();
       return;
     }
 
@@ -1469,12 +1762,8 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       const res = await fetch(API + "/api/pihole/stats");
       const data = await res.json();
       if (data.ok) {
-        adsCache = {
-          today: data.today.blocked,
-          thisMonth: data.thisMonth.blocked,
-          thisYear: data.thisYear.blocked,
-          allTime: data.allTime.blocked,
-        };
+        adsCache.session = data.session.blocked;
+        adsCache.allTime = data.allTime.blocked;
         document.getElementById("stat-ads").textContent = (adsCache[range] || 0).toLocaleString();
       }
     } catch (e) { /* silent */ }
@@ -1620,13 +1909,13 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       for (const c of data.checks) {
         const cls = c.ok ? (c.warn ? "warn" : "pass") : "fail";
         const icon = c.ok ? (c.warn ? "&#9888;" : "&#10004;") : "&#10008;";
-        html += `<div class="diag-item ${cls}"><span class="diag-icon">${icon}</span><span class="diag-name">${c.name}</span><span class="diag-detail">${c.detail}</span></div>`;
-        if (c.fix) html += `<div class="diag-fix">${c.fix}</div>`;
+        html += `<div class="diag-item ${cls}"><span class="diag-icon">${icon}</span><span class="diag-name">${esc(c.name)}</span><span class="diag-detail">${esc(c.detail)}</span></div>`;
+        if (c.fix) html += `<div class="diag-fix">${esc(c.fix)}</div>`;
       }
       box.innerHTML = html;
       log(`Diagnostics: ${s.passed}/${s.total} passed`, s.allGood ? "success" : "warn");
     } catch (e) {
-      box.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px">Error: ${e.message}</div>`;
+      box.innerHTML = `<div style="color:var(--red);font-size:11px;padding:8px">Error: ${esc(e.message)}</div>`;
       log("Diagnostics failed: " + e.message, "error");
     }
     btn.disabled = false;
@@ -1764,7 +2053,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
 
   let deferredInstallPrompt = null;
 
-  // Register SW once to clear stale caches, then it self-unregisters
+  // Register service worker for PWA installability (network-only, no caching)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
@@ -1823,6 +2112,153 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   // Boot sequence
   log("GhostPort Command Deck v1.1 initializing...", "info");
   log("Establishing connection to Pi...", "info");
+  // ── Theme color engine ────────────────────────────────
+  let rainbowRAF = null;
+
+  // Old named theme → hex migration
+  const THEME_MIGRATE = {
+    green: "#39ff8f", purple: "#b44aff", blue: "#44aaff", red: "#ff4466",
+    white: "#e0e0e0", cyan: "#00e5ff", amber: "#ffb300", gunmetal: "#8a9099",
+  };
+
+  function hsl2hex(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    s /= 100; l /= 100;
+    const k = n => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = n => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
+    return "#" + [f(0), f(8), f(4)].map(v => v.toString(16).padStart(2, "0")).join("");
+  }
+
+  function hex2hsl(hex) {
+    let r = parseInt(hex.slice(1,3), 16) / 255;
+    let g = parseInt(hex.slice(3,5), 16) / 255;
+    let b = parseInt(hex.slice(5,7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) { h = 0; s = 0; }
+    else {
+      const d = max - min;
+      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+      if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+      else if (max === g) h = ((b - r) / d + 2) / 6;
+      else h = ((r - g) / d + 4) / 6;
+    }
+    return [h * 360, s * 100, l * 100];
+  }
+
+  // Derive full theme from hue + saturation + optional breathing phase
+  function hueToTheme(hue, breath, sat) {
+    const bri = breath !== undefined ? (0.92 + breath * 0.08) : 1;
+    const s = sat !== undefined ? sat : 100;
+    const accent = hsl2hex(hue, s, 60 * bri);
+    const dim = hsl2hex(hue, s * 0.5, 22 * bri);
+    const bgSat = Math.min(s, 30);
+    const txtSat = Math.min(s, 20);
+    return {
+      accent, dim, glow: accent + "44", a20: accent + "33", a33: accent + "55", a13: accent + "22",
+      bg: hsl2hex(hue, bgSat, 2.5), bg2: hsl2hex(hue, bgSat * 0.83, 4.5), bg3: hsl2hex(hue, bgSat * 0.67, 7),
+      border: hsl2hex(hue, txtSat, 12),
+      text: hsl2hex(hue, txtSat, 80 * bri), textDim: hsl2hex(hue, txtSat * 0.9, 35 * bri), textFaint: hsl2hex(hue, txtSat * 0.75, 20),
+    };
+  }
+
+  function colorToTheme(hex) {
+    const [h, s] = hex2hsl(hex);
+    return hueToTheme(h, undefined, s);
+  }
+
+  function applyThemeVars(t) {
+    const r = document.documentElement.style;
+    r.setProperty("--green", t.accent); r.setProperty("--green-dim", t.dim);
+    r.setProperty("--green-glow", t.glow); r.setProperty("--green-20", t.a20);
+    r.setProperty("--green-33", t.a33); r.setProperty("--green-13", t.a13);
+    r.setProperty("--bg", t.bg); r.setProperty("--bg2", t.bg2); r.setProperty("--bg3", t.bg3);
+    r.setProperty("--border", t.border); r.setProperty("--text", t.text);
+    r.setProperty("--text-dim", t.textDim); r.setProperty("--text-faint", t.textFaint);
+  }
+
+  function setColorTheme(hex) {
+    stopRainbow();
+    if (hex === "#39ff8f") {
+      // Default green — clear overrides so hand-tuned :root values show
+      ["--green","--green-dim","--green-glow","--green-20","--green-33","--green-13",
+       "--bg","--bg2","--bg3","--border","--text","--text-dim","--text-faint"
+      ].forEach(v => document.documentElement.style.removeProperty(v));
+    } else {
+      applyThemeVars(colorToTheme(hex));
+    }
+    localStorage.setItem("gp-theme", hex);
+    const picker = document.getElementById("theme-picker");
+    if (picker) picker.value = hex;
+    const label = document.getElementById("theme-label");
+    if (label) label.textContent = hex.toUpperCase();
+    const btn = document.getElementById("rgb-btn");
+    if (btn) btn.classList.remove("active");
+    // Update swatch active states
+    document.querySelectorAll(".theme-swatch").forEach(s => {
+      s.classList.toggle("active", s.dataset.color === hex);
+    });
+  }
+
+  // ── RGB breathing engine ──────────────────────────────
+  function startRainbow() {
+    if (rainbowRAF) return;
+    localStorage.setItem("gp-theme", "rainbow");
+    const btn = document.getElementById("rgb-btn");
+    if (btn) btn.classList.add("active");
+    const label = document.getElementById("theme-label");
+    if (label) label.textContent = "RGB CYCLE";
+    document.querySelectorAll(".theme-swatch").forEach(s => s.classList.remove("active"));
+    const speed = 0.015, breathSpeed = 0.002;
+    let hue = 0, breathPhase = 0, last = 0;
+    function frame(ts) {
+      if (ts - last < 33) { rainbowRAF = requestAnimationFrame(frame); return; }
+      last = ts;
+      hue = (hue + speed * 33) % 360;
+      breathPhase += breathSpeed * 33;
+      const breath = (Math.sin(breathPhase) + 1) / 2;
+      applyThemeVars(hueToTheme(hue, breath));
+      const picker = document.getElementById("theme-picker");
+      if (picker) picker.value = hsl2hex(hue, 100, 60);
+      rainbowRAF = requestAnimationFrame(frame);
+    }
+    rainbowRAF = requestAnimationFrame(frame);
+  }
+
+  function stopRainbow() {
+    if (rainbowRAF) { cancelAnimationFrame(rainbowRAF); rainbowRAF = null; }
+  }
+
+  function toggleRainbow() {
+    if (rainbowRAF) {
+      const picker = document.getElementById("theme-picker");
+      stopRainbow();
+      if (picker) setColorTheme(picker.value);
+    } else {
+      startRainbow();
+    }
+  }
+
+  // Wire up color picker
+  const picker = document.getElementById("theme-picker");
+  if (picker) {
+    picker.addEventListener("input", (e) => setColorTheme(e.target.value));
+  }
+
+  // Apply saved theme on load (with migration from old named themes)
+  let savedTheme = localStorage.getItem("gp-theme") || "#39ff8f";
+  if (THEME_MIGRATE[savedTheme]) {
+    savedTheme = THEME_MIGRATE[savedTheme];
+    localStorage.setItem("gp-theme", savedTheme);
+  }
+  if (savedTheme === "rainbow") {
+    startRainbow();
+  } else {
+    const hex = savedTheme.startsWith("#") ? savedTheme : "#39ff8f";
+    setColorTheme(hex);
+  }
+
   fetchStatus().then(() => {
     log("All systems nominal. Welcome aboard, Captain.", "success");
   });
@@ -1902,8 +2338,192 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     }
   }
 
+
+  // ── Family Shield ──────────────────────────────────────
+  // All functions on window.* so onclick handlers always find them
+
+  (function() {
+    var fs = { on: false, cats: {}, devs: [], busy: false };
+
+    function tog(id, on) {
+      var el = document.getElementById(id);
+      if (el) { if (on) el.classList.add('on'); else el.classList.remove('on'); }
+      console.log('[FS] tog', id, on);
+    }
+
+    function updateUI() {
+      tog('tog-family-shield', fs.on);
+      var cats = ['adult','gambling','facebook','tiktok','twitter'];
+      for (var i = 0; i < cats.length; i++) {
+        var c = cats[i];
+        var card = document.getElementById('fs-cat-' + (c === 'twitter' ? 'x' : c));
+        if (card) {
+          card.style.opacity = fs.on ? '1' : '0.35';
+          card.style.pointerEvents = fs.on ? 'auto' : 'none';
+        }
+        tog('tog-fs-' + c, !!fs.cats[c]);
+        var st = document.getElementById('fs-st-' + c);
+        if (st) {
+          st.textContent = fs.cats[c] ? 'BLOCKED' : 'ALLOWED';
+          st.className = 'fs-cat-status' + (fs.cats[c] ? ' blocked' : '');
+        }
+      }
+      renderDevs();
+    }
+
+    function renderDevs() {
+      var list = document.getElementById('fs-device-list');
+      if (!list) return;
+      if (!fs.devs || !fs.devs.length) {
+        list.innerHTML = '<div style="font-size:10px;color:var(--text-faint)">No devices — click DISCOVER</div>';
+        return;
+      }
+      var h = '';
+      for (var i = 0; i < fs.devs.length; i++) {
+        var d = fs.devs[i];
+        var name = esc(d.name || d.hostname || 'Unknown');
+        var ip = esc(d.ip);
+        var shielded = !!d.shielded;
+        var dis = fs.on ? '' : ' disabled';
+        h += '<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--bg3,#1a1a1a);font-size:10px">';
+        h += '<div style="flex:1"><div style="color:var(--text)">' + name + '</div><div style="color:var(--text-faint)">' + ip + '</div></div>';
+        h += '<span style="font-size:8px;padding:2px 6px;border-radius:8px;background:' + (shielded ? 'rgba(0,200,83,0.15);color:#0c3' : 'rgba(255,68,68,0.15);color:#f44') + '">' + (shielded ? 'SHIELDED' : 'EXPOSED') + '</span>';
+        h += '<button class="arsenal-btn" style="font-size:9px;padding:3px 8px"' + dis + ' onclick="window._fsToggleDev(\'' + esc(d.ip) + '\', ' + (!shielded) + ')">' + (shielded ? 'UNSHIELD' : 'SHIELD') + '</button>';
+        h += '</div>';
+      }
+      list.innerHTML = h;
+    }
+
+    async function load() {
+      if (fs.busy) { console.log('[FS] load() skipped — busy'); return; }
+      try {
+        var res = await fetch('/api/family-shield');
+        var data = await res.json();
+        console.log('[FS] load() response:', JSON.stringify(data).substring(0, 200));
+        if (data.ok) {
+          fs.on = !!data.enabled;
+          fs.cats = data.categories || {};
+          fs.devs = data.devices || [];
+          updateUI();
+        }
+      } catch(e) { console.error('[FS] load() error:', e); }
+    }
+
+    window._fsToggleMaster = async function() {
+      console.log('[FS] _fsToggleMaster called, fs.on =', fs.on);
+      fs.busy = true;
+      var newState = !fs.on;
+      tog('tog-family-shield', newState);
+      log('Family Shield ' + (newState ? 'enabling' : 'disabling') + '...', 'warn');
+      try {
+        var res = await fetch('/api/family-shield/toggle', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled: newState})
+        });
+        var data = await res.json();
+        console.log('[FS] toggle response:', JSON.stringify(data));
+        if (data.ok) {
+          fs.on = newState;
+          log('Family Shield ' + (newState ? 'enabled' : 'disabled'), 'success');
+          updateUI();
+        } else {
+          tog('tog-family-shield', fs.on);
+          log('Family Shield failed: ' + (data.error || 'unknown'), 'error');
+        }
+      } catch(e) {
+        console.error('[FS] toggle error:', e);
+        tog('tog-family-shield', fs.on);
+        log('Family Shield error: ' + e.message, 'error');
+      }
+      fs.busy = false;
+    };
+
+    window._fsToggleCat = async function(cat) {
+      console.log('[FS] _fsToggleCat called, cat =', cat, 'fs.on =', fs.on);
+      if (!fs.on) return;
+      fs.busy = true;
+      var newState = !fs.cats[cat];
+      tog('tog-fs-' + cat, newState);
+      var cats = Object.assign({}, fs.cats);
+      cats[cat] = newState;
+      log(cat + ' ' + (newState ? 'blocking' : 'allowing') + '...', 'warn');
+      try {
+        var res = await fetch('/api/family-shield/categories', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(cats)
+        });
+        var data = await res.json();
+        if (data.ok) {
+          fs.cats = cats;
+          log(cat + ' ' + (newState ? 'blocked' : 'allowed'), 'success');
+          updateUI();
+        } else {
+          tog('tog-fs-' + cat, fs.cats[cat]); // revert
+          log('Failed: ' + (data.error || 'unknown'), 'error');
+        }
+      } catch(e) {
+        tog('tog-fs-' + cat, fs.cats[cat]); // revert
+        log('Error: ' + e.message, 'error');
+      }
+      fs.busy = false;
+    };
+
+    window._fsToggleDev = async function(ip, shielded) {
+      if (!fs.on) return;
+      log((shielded ? 'Shielding' : 'Unshielding') + ' ' + ip + '...', 'warn');
+      try {
+        var res = await fetch('/api/family-shield/devices', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ip: ip, shielded: shielded})
+        });
+        var data = await res.json();
+        if (data.ok) {
+          for (var i = 0; i < fs.devs.length; i++) {
+            if (fs.devs[i].ip === ip) fs.devs[i].shielded = shielded;
+          }
+          log(ip + ' ' + (shielded ? 'shielded' : 'unshielded'), 'success');
+          renderDevs();
+        } else {
+          log('Failed: ' + (data.error || 'unknown'), 'error');
+        }
+      } catch(e) {
+        log('Error: ' + e.message, 'error');
+      }
+    };
+
+    window._fsDiscover = async function() {
+      var btn = document.getElementById('btn-fs-discover');
+      if (btn) { btn.disabled = true; btn.textContent = 'SCANNING...'; }
+      log('Scanning network...', 'info');
+      try {
+        var res = await fetch('/api/family-shield/discover');
+        var data = await res.json();
+        if (data.ok && data.devices) {
+          // Merge discovered into existing
+          for (var i = 0; i < data.devices.length; i++) {
+            var d = data.devices[i];
+            if (!fs.devs.find(function(x) { return x.ip === d.ip; })) {
+              fs.devs.push(d);
+            }
+          }
+          log('Found ' + data.devices.length + ' device(s)', 'success');
+          renderDevs();
+        }
+      } catch(e) {
+        log('Scan failed: ' + e.message, 'error');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = 'DISCOVER'; }
+    };
+
+    // Init
+    load();
+    setInterval(load, 30000);
+  })();
+
   loadWifiConfig();
 </script>
-<script src="arsenal.js"></script>
 </body>
 </html>

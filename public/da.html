@@ -280,6 +280,8 @@ function startSessionTimer(seconds) {
   }, 1000);
 }
 
+function esc(s) { return s == null ? "" : String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
 async function fetchDeviceInfo() {
   try {
     const res = await fetch(DA_API + "/da/api/device-info");
@@ -293,7 +295,7 @@ async function fetchDeviceInfo() {
       ["WiFi MAC", d.wifiMac], ["Ethernet MAC", d.ethMac],
     ];
     document.getElementById("device-info").innerHTML = rows.map(([l,v]) =>
-      `<div class="info-row"><span class="info-label">${l}</span><span class="info-value ${v&&v!=="N/A"?"green":"amber"}">${v||"N/A"}</span></div>`
+      `<div class="info-row"><span class="info-label">${esc(l)}</span><span class="info-value ${v&&v!=="N/A"?"green":"amber"}">${esc(v||"N/A")}</span></div>`
     ).join("");
   } catch {}
 }
@@ -380,13 +382,13 @@ async function runQA() {
         const icon = c.status === "pass" ? "&#10003;" : c.status === "warn" ? "&#9888;" : "&#10007;";
         const color = c.status === "pass" ? "green" : c.status === "warn" ? "amber" : "red";
         if (c.status === "fail") allPass = false;
-        html += `<div class="qa-item"><span class="qa-icon" style="color:var(--${color})">${icon}</span><span class="qa-name">${c.name}</span><span class="qa-status ${c.status}">${c.detail||c.status.toUpperCase()}</span></div>`;
+        html += `<div class="qa-item"><span class="qa-icon" style="color:var(--${color})">${icon}</span><span class="qa-name">${esc(c.name)}</span><span class="qa-status ${c.status}">${esc(c.detail||c.status.toUpperCase())}</span></div>`;
       }
       html += `<div class="qa-verdict ${allPass?'ship':'no-ship'}">${allPass?'READY TO SHIP':'DO NOT SHIP'}</div>`;
       results.innerHTML = html;
       fetchLogs();
     }
-  } catch (e) { results.innerHTML = `<div style="color:var(--red)">${e.message}</div>`; }
+  } catch (e) { results.innerHTML = `<div style="color:var(--red)">${esc(e.message)}</div>`; }
   btn.disabled = false; btn.textContent = "RUN QA CHECKLIST";
 }
 
@@ -400,7 +402,7 @@ async function fetchLogs() {
     const c = document.getElementById("log-entries");
     if (!data.logs || !data.logs.length) { c.innerHTML = '<div style="font-size:10px;color:var(--text-dim);padding:8px">No entries.</div>'; return; }
     c.innerHTML = data.logs.slice().reverse().map(l =>
-      `<div class="log-entry ${l.type||""}"><span class="ts">${l.timestamp}</span>${l.message}</div>`
+      `<div class="log-entry ${l.type||""}"><span class="ts">${esc(l.timestamp)}</span>${esc(l.message)}</div>`
     ).join("");
   } catch {}
 }

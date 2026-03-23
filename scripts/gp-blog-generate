@@ -1,0 +1,55 @@
+#!/bin/bash
+# gp-blog-generate — Update blog HTML with new bug hunt results
+# Usage: gp-blog-generate <round-number> <results-file>
+#
+# Results file format (one per line):
+#   SEVERITY|CATEGORY|FILE|DESCRIPTION
+set -euo pipefail
+
+ROUND="${1:-}"
+RESULTS_FILE="${2:-}"
+BLOG_DIR="$HOME"
+BLOG_FILE="$BLOG_DIR/ghostport-blog-latest.html"
+
+if [[ -z "$ROUND" || -z "$RESULTS_FILE" ]]; then
+  echo "Usage: gp-blog-generate <round-number> <results-file>" >&2
+  exit 1
+fi
+
+[[ -f "$RESULTS_FILE" ]] || { echo "ERROR: Results file not found: $RESULTS_FILE" >&2; exit 1; }
+
+CRITICAL=$(grep -c "^CRITICAL|" "$RESULTS_FILE" 2>/dev/null || echo 0)
+HIGH=$(grep -c "^HIGH|" "$RESULTS_FILE" 2>/dev/null || echo 0)
+MEDIUM=$(grep -c "^MEDIUM|" "$RESULTS_FILE" 2>/dev/null || echo 0)
+LOW=$(grep -c "^LOW|" "$RESULTS_FILE" 2>/dev/null || echo 0)
+TOTAL=$((CRITICAL + HIGH + MEDIUM + LOW))
+
+echo "Round $ROUND: $TOTAL bugs ($CRITICAL critical, $HIGH high, $MEDIUM medium, $LOW low)"
+
+LATEST_BLOG=$(ls -t "$BLOG_DIR"/ghostport-blog-*.html 2>/dev/null | head -1)
+
+if [[ -z "$LATEST_BLOG" ]]; then
+  echo "ERROR: No existing blog file found in $BLOG_DIR" >&2
+  exit 1
+fi
+
+echo "Updating from: $LATEST_BLOG"
+[[ "$LATEST_BLOG" != "$BLOG_FILE" ]] && cp "$LATEST_BLOG" "$BLOG_FILE"
+
+ROUND_HTML_FILE="/tmp/blog-round-${ROUND}.html"
+{
+  echo "<h3>Round ${ROUND} — $(date +'%B %d, %Y')</h3>"
+  echo "<p><strong>${TOTAL} bugs found</strong> — ${CRITICAL} Critical, ${HIGH} High, ${MEDIUM} Medium, ${LOW} Low</p>"
+  echo "<table>"
+  echo "<tr><th>Severity</th><th>Category</th><th>File</th><th>Description</th></tr>"
+  while IFS='|' read -r sev cat file desc; do
+    [[ -z "$sev" ]] && continue
+    sev_lower=$(echo "$sev" | tr '[:upper:]' '[:lower:]')
+    echo "<tr class=\"${sev_lower}\"><td>${sev}</td><td>${cat}</td><td>${file}</td><td>${desc}</td></tr>"
+  done < "$RESULTS_FILE"
+  echo "</table>"
+} > "$ROUND_HTML_FILE"
+
+echo "Round HTML generated: $ROUND_HTML_FILE"
+echo "Blog base copied to: $BLOG_FILE"
+echo "Next: Run 'gp-blog-deploy' to push to EC2"

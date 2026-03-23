@@ -1,0 +1,39 @@
+#!/bin/bash
+# gp-blog-pipeline — Full automation: bug hunt → blog update → deploy
+# Usage: gp-blog-pipeline [round-number]
+set -euo pipefail
+
+ROUND="${1:-}"
+RESULTS_FILE="/tmp/blog-hunt-results.txt"
+
+if [[ -z "$ROUND" ]]; then
+  LAST_ROUND=$(grep -oP 'Round \K\d+' ~/ghostport-blog-latest.html 2>/dev/null | sort -n | tail -1 || echo 0)
+  ROUND=$((LAST_ROUND + 1))
+  echo "Auto-detected round: $ROUND"
+fi
+
+echo "=== GhostPort Blog Pipeline ==="
+echo "Round: $ROUND"
+echo ""
+
+if [[ ! -f "$RESULTS_FILE" ]]; then
+  echo "No results file at $RESULTS_FILE"
+  echo ""
+  echo "Format: SEVERITY|CATEGORY|FILE|DESCRIPTION"
+  echo "Save to: $RESULTS_FILE"
+  echo "Then re-run: gp-blog-pipeline $ROUND"
+  exit 1
+fi
+
+echo "Step 1: Generating blog update..."
+gp-blog-generate "$ROUND" "$RESULTS_FILE"
+echo ""
+
+echo "Step 2: Deploying to EC2..."
+gp-blog-deploy "$HOME/ghostport-blog-latest.html"
+echo ""
+
+mv "$RESULTS_FILE" "$HOME/blog-hunt-round-${ROUND}-results.txt" 2>/dev/null || true
+
+echo "=== Pipeline complete ==="
+echo "Blog live at: https://api.ghostporttechnologies.com/blog"

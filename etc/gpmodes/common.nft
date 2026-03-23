@@ -10,10 +10,8 @@ table inet management {
         iifname "lo" accept
         ct state established,related accept
         ct state invalid drop
-        tcp dport 22 accept
-        tcp dport 80 accept
-        tcp dport 443 accept
-        iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201 } accept
+        iifname { $LAN_IF, $TS_IF } tcp dport 22 accept
+        iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201, 4202 } accept
         udp dport 41641 accept
         iifname $LAN_IF accept
         iifname $TS_IF accept

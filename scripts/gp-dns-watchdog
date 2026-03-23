@@ -1,0 +1,37 @@
+#!/bin/bash
+# gp-dns-watchdog — restart DNS services if DNS stops responding
+# Mode-aware: restarts the correct service based on current mode
+# Installed as a cron job: */5 * * * *
+
+# Test DNS resolution via Pi-hole (port 53)
+if dig +short +timeout=3 +tries=1 cloudflare.com @127.0.0.1 > /dev/null 2>&1; then
+  exit 0
+fi
+
+# DNS failed — check current mode to restart the right service
+MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
+
+logger -t gp-dns-watchdog "DNS unresponsive on 127.0.0.1:53 (mode=$MODE)"
+
+case "$MODE" in
+  doublehop|zhop)
+    # DNS upstream is EC2 unbound via WireGuard — check if tunnel is up
+    if ! ip link show wg0 2>/dev/null | grep -q "UP"; then
+      logger -t gp-dns-watchdog "wg0 is down — restarting WireGuard"
+      systemctl restart wg-quick@wg0 || true
+      sleep 3
+    fi
+    ;;
+  *)
+    # DNS upstream is cloudflared (DoH)
+    logger -t gp-dns-watchdog "Restarting cloudflared"
+    systemctl restart cloudflared
+    sleep 2
+    ;;
+esac
+
+# Always restart Pi-hole FTL (it owns port 53)
+logger -t gp-dns-watchdog "Restarting pihole-FTL"
+systemctl restart pihole-FTL
+
+logger -t gp-dns-watchdog "Services restarted"

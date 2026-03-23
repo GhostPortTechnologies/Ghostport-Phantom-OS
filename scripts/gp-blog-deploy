@@ -1,0 +1,55 @@
+#!/bin/bash
+# gp-blog-deploy — Push blog HTML to EC2 and make it live
+# Usage: gp-blog-deploy [blog-file]
+set -euo pipefail
+
+BLOG_FILE="${1:-$HOME/ghostport-blog-latest.html}"
+EC2_USER="ubuntu"
+EC2_HOST="10.66.66.1"
+SSH_KEY="$HOME/Downloads/Ghostport-vpn.pem"
+REMOTE_DIR="/var/www/blog"
+
+[[ -f "$BLOG_FILE" ]] || { echo "ERROR: Blog file not found: $BLOG_FILE" >&2; exit 1; }
+[[ -f "$SSH_KEY" ]] || { echo "ERROR: SSH key not found: $SSH_KEY" >&2; exit 1; }
+
+SSH_OPTS="-i $SSH_KEY -o ConnectTimeout=10 -o StrictHostKeyChecking=no"
+
+# Check WireGuard tunnel
+if ! ip link show wg0 2>/dev/null | grep -q "UP"; then
+  echo "ERROR: wg0 is down — need DoubleHop or ZHop mode to reach EC2" >&2
+  exit 1
+fi
+
+echo "Deploying blog to EC2..."
+
+# Ensure remote directory exists
+ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "sudo mkdir -p $REMOTE_DIR && sudo chown $EC2_USER:$EC2_USER $REMOTE_DIR"
+
+# Copy blog file
+scp $SSH_OPTS "$BLOG_FILE" "$EC2_USER@$EC2_HOST:$REMOTE_DIR/index.html"
+
+# Check if nginx blog location already exists
+if ! ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "grep -q 'location /blog' /etc/nginx/sites-enabled/ghostport-webhooks 2>/dev/null"; then
+  echo "Adding /blog route to nginx..."
+  ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "sudo sed -i '/# Reject everything else/i\\
+    # Blog\\
+    location /blog {\\
+        alias /var/www/blog/;\\
+        index index.html;\\
+        try_files \$uri \$uri/ /blog/index.html;\\
+        add_header Cache-Control \"public, max-age=300\";\\
+    }\\
+' /etc/nginx/sites-enabled/ghostport-webhooks"
+
+  # Test and reload nginx
+  if ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "sudo nginx -t 2>&1"; then
+    ssh $SSH_OPTS "$EC2_USER@$EC2_HOST" "sudo systemctl reload nginx"
+    echo "nginx reloaded with /blog route"
+  else
+    echo "ERROR: nginx config test failed — blog route not added" >&2
+    exit 1
+  fi
+fi
+
+echo "Blog deployed: https://blog.ghostporttechnologies.com"
+echo "$(date -Is)" > "$HOME/.blog-last-deploy"
