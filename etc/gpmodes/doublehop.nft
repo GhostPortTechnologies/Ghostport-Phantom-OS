@@ -8,6 +8,8 @@ table inet filter {
         meta nfproto ipv6 counter drop
         ct state established,related accept
         # LAN exits only through WireGuard
+        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
+        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
         iifname $LAN_IF oifname $WG_IF accept
         iifname $WG_IF oifname $LAN_IF ct state established,related accept
     }
@@ -18,6 +20,12 @@ table inet filter {
         iifname $LAN_IF accept
         iifname $WG_IF accept
         iifname $TS_IF accept
+    }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+        # Block Pi's own IPv6 on WAN — prevents tunnel bypass
+        oifname $WAN_IF meta nfproto ipv6 counter drop
     }
 }
 

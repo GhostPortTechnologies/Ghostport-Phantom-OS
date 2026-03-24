@@ -2,7 +2,7 @@
 // This exists solely to make the app installable as a PWA.
 // All requests go straight to the network — nothing is cached.
 
-const SW_VERSION = "1.2";
+const SW_VERSION = "1.3";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();

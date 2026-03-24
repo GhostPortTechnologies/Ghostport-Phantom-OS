@@ -5,6 +5,8 @@ table inet filter {
     chain forward {
         type filter hook forward priority 0; policy accept;
         ct state established,related accept
+        # Drop IPv6 forwarding — prevent bypass via IPv6 tunnels
+        meta nfproto ipv6 counter drop
         iifname $LAN_IF oifname $WAN_IF accept
         iifname $WAN_IF oifname $LAN_IF ct state established,related accept
     }

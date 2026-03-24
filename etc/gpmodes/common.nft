@@ -13,7 +13,11 @@ table inet management {
         iifname { $LAN_IF, $TS_IF } tcp dport 22 accept
         iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201, 4202 } accept
         udp dport 41641 accept
-        iifname $LAN_IF accept
-        iifname $TS_IF accept
+        iifname $LAN_IF udp dport { 53, 67 } accept
+        iifname $LAN_IF tcp dport { 53, 80 } accept
+        iifname $TS_IF tcp dport { 53, 80 } accept
+        iifname $TS_IF udp dport 53 accept
+        # Log dropped packets for anomaly detection (rate-limited)
+        limit rate 5/minute log prefix "[GhostPort-DROP] " level warn
     }
 }

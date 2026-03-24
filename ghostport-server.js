@@ -157,7 +157,7 @@ app.use((req, res, next) => {
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("X-XSS-Protection", "0");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   next();
 });
 
@@ -242,6 +242,9 @@ function recordFailedAttempt(ip) {
 // ── public auth routes (no session required) ──────────────
 
 app.get("/login.html", (req, res) => res.sendFile(path.join(__dirname, "public", "login.html")));
+app.get("/login.js", (req, res) => res.sendFile(path.join(__dirname, "public", "login.js")));
+app.get("/install.js", (req, res) => res.sendFile(path.join(__dirname, "public", "install.js")));
+app.get("/logo.png", (req, res) => res.sendFile(path.join(__dirname, "public", "logo.png")));
 app.get("/sw.js", (req, res) => res.sendFile(path.join(__dirname, "public", "sw.js")));
 app.get("/manifest.json", (req, res) => res.sendFile(path.join(__dirname, "public", "manifest.json")));
 app.get("/icon-192.png", (req, res) => res.sendFile(path.join(__dirname, "public", "icon-192.png")));
@@ -278,11 +281,12 @@ app.post("/api/auth/login", (req, res) => {
 
   failedAttempts.delete(ip);
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { created: Date.now(), ip, absoluteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000 });
+  const csrfToken = crypto.randomBytes(32).toString("hex");
+  sessions.set(token, { created: Date.now(), ip, absoluteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000, csrf: csrfToken });
   console.log(`[Auth] Successful login from ${ip}`);
 
   res.setHeader("Set-Cookie", `gp-session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${req.secure ? "; Secure" : ""}`);
-  res.json({ ok: true });
+  res.json({ ok: true, csrfToken });
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -469,8 +473,15 @@ app.use((req, res, next) => {
   const token = getCookie(req, "gp-session");
   if (token && sessions.has(token)) {
     const session = sessions.get(token);
-    if (Date.now() - session.created < SESSION_TTL) {
+    if (Date.now() - session.created < SESSION_TTL && (!session.absoluteExpiry || Date.now() < session.absoluteExpiry)) {
       session.created = Date.now(); // sliding window — extend on activity
+      // CSRF check on state-changing requests
+      if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method) && req.path.startsWith("/api/")) {
+        const csrfHeader = req.headers["x-csrf-token"] || "";
+        if (csrfHeader !== session.csrf) {
+          return res.status(403).json({ ok: false, error: "Invalid CSRF token" });
+        }
+      }
       return next();
     }
     sessions.delete(token);
@@ -479,6 +490,15 @@ app.use((req, res, next) => {
     return res.status(401).json({ ok: false, error: "Not authenticated" });
   }
   return res.redirect("/login.html");
+});
+
+// CSRF token endpoint — frontend fetches this after login
+app.get("/api/auth/csrf", (req, res) => {
+  const token = getCookie(req, "gp-session");
+  if (token && sessions.has(token)) {
+    return res.json({ ok: true, csrfToken: sessions.get(token).csrf });
+  }
+  res.status(401).json({ ok: false, error: "Not authenticated" });
 });
 
 app.use(express.static(path.join(__dirname, "public")));
