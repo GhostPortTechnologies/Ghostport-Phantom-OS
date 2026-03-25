@@ -1,0 +1,1 @@
+0 * * * * ghostport-admin /home/ghostport-admin/compliance/log-shipper.sh >> /tmp/gp-log-shipper/shipper.log 2>&1

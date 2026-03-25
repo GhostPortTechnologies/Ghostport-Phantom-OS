@@ -1,0 +1,5 @@
+# Weekly rootkit scan (Sunday 3am UTC)
+0 3 * * 0 root /usr/bin/rkhunter --check --skip-keypress --report-warnings-only >> /var/log/rkhunter-weekly.log 2>&1
+
+# Weekly chkrootkit scan (Sunday 4am UTC)
+0 4 * * 0 root /usr/sbin/chkrootkit >> /var/log/chkrootkit-weekly.log 2>&1

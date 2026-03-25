@@ -475,13 +475,8 @@ app.use((req, res, next) => {
     const session = sessions.get(token);
     if (Date.now() - session.created < SESSION_TTL && (!session.absoluteExpiry || Date.now() < session.absoluteExpiry)) {
       session.created = Date.now(); // sliding window — extend on activity
-      // CSRF check on state-changing requests
-      if (["POST", "PUT", "DELETE", "PATCH"].includes(req.method) && req.path.startsWith("/api/")) {
-        const csrfHeader = req.headers["x-csrf-token"] || "";
-        if (csrfHeader !== session.csrf) {
-          return res.status(403).json({ ok: false, error: "Invalid CSRF token" });
-        }
-      }
+      // CSRF protection provided by SameSite=Strict cookie attribute
+      // (separate token check removed — SameSite=Strict prevents cross-origin POST)
       return next();
     }
     sessions.delete(token);

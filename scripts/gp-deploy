@@ -1,0 +1,175 @@
+#!/bin/bash
+# GhostPort OS Deployment Script
+# Deploys a fresh GhostPort system from this repo
+# Usage: sudo ./scripts/gp-deploy [--full|--update]
+#   --full:   First-time setup (installs packages, creates users, configures everything)
+#   --update: Updates an existing installation (copies files, restarts services)
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+log() { echo -e "${GREEN}[DEPLOY]${NC} $1"; }
+warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+err() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+
+if [ "$(id -u)" -ne 0 ]; then
+    err "Must run as root (sudo)"
+fi
+
+MODE="${1:---update}"
+
+# ── FULL INSTALL ──────────────────────────────────────────────
+if [ "$MODE" = "--full" ]; then
+    log "Starting FULL deployment..."
+
+    # System packages
+    log "Installing system packages..."
+    apt-get update -qq
+    apt-get install -y -qq \
+        nodejs npm \
+        hostapd dnsmasq \
+        nftables \
+        wireguard wireguard-tools \
+        pihole \
+        fail2ban \
+        auditd audispd-plugins \
+        aide \
+        psad \
+        rkhunter chkrootkit \
+        certbot \
+        unattended-upgrades \
+        curl jq sqlite3 \
+        2>/dev/null || warn "Some packages may need manual installation (e.g., Pi-hole)"
+
+    # Create ghostport-admin user if needed
+    if ! id ghostport-admin &>/dev/null; then
+        log "Creating ghostport-admin user..."
+        useradd -m -s /bin/bash ghostport-admin
+        usermod -aG sudo ghostport-admin
+    fi
+
+    # Install Node dependencies
+    log "Installing Node.js dependencies..."
+    cd "$REPO_DIR" && npm install --production
+
+    # SSL certs directory
+    mkdir -p /opt/ghostport/ssl
+    if [ ! -f /opt/ghostport/ssl/server.key ]; then
+        log "Generating self-signed SSL cert..."
+        openssl req -x509 -newkey rsa:2048 -keyout /opt/ghostport/ssl/server.key \
+            -out /opt/ghostport/ssl/server.cert -days 365 -nodes \
+            -subj "/CN=ghostport.local" 2>/dev/null
+    fi
+
+    # Sudoers for gp-* commands
+    log "Configuring sudoers..."
+    cat > /etc/sudoers.d/ghostport << 'SUDOERS'
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-mode
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-mode-boot
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-dns-switch
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-dns-upstream
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-passcode
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-new
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/nft *
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/wg show *
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart hostapd
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ghostport
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart ghostport-discord
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/test *
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/sbin/pihole *
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client *
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/sbin/ausearch *
+SUDOERS
+    chmod 440 /etc/sudoers.d/ghostport
+
+    # Config directories
+    mkdir -p /etc/ghostport
+    mkdir -p /etc/gpmodes
+
+    # Initialize auth if needed
+    if [ ! -f /etc/ghostport/auth.json ]; then
+        log "Initializing auth config (run gp-passcode reset to set passcode)..."
+        echo '{"hash":"","salt":"","attempts":0,"lockoutUntil":0}' > /etc/ghostport/auth.json
+        chmod 600 /etc/ghostport/auth.json
+        chown ghostport-admin:ghostport-admin /etc/ghostport/auth.json
+    fi
+
+    # Initialize mode state
+    if [ ! -f /etc/ghostport/current-mode ]; then
+        echo "isp" > /etc/ghostport/current-mode
+    fi
+
+    log "Full install base complete. Continuing with file deployment..."
+fi
+
+# ── UPDATE / DEPLOY FILES ─────────────────────────────────────
+log "Deploying files from repo..."
+
+# Scripts → /usr/local/bin/
+log "Installing gp-* scripts..."
+for script in "$REPO_DIR"/scripts/gp-*; do
+    [ -f "$script" ] || continue
+    name=$(basename "$script")
+    cp "$script" "/usr/local/bin/$name"
+    chmod 755 "/usr/local/bin/$name"
+done
+
+# nftables profiles → /etc/gpmodes/
+log "Installing nftables profiles..."
+cp "$REPO_DIR"/etc/gpmodes/*.nft /etc/gpmodes/ 2>/dev/null || true
+chmod 644 /etc/gpmodes/*.nft 2>/dev/null || true
+
+# Systemd services
+log "Installing systemd services..."
+for svc in "$REPO_DIR"/systemd/*.service; do
+    [ -f "$svc" ] || continue
+    cp "$svc" /etc/systemd/system/
+done
+systemctl daemon-reload
+
+# Compliance scripts
+log "Installing compliance tools..."
+mkdir -p /home/ghostport-admin/compliance
+cp "$REPO_DIR"/compliance/*.sh /home/ghostport-admin/compliance/ 2>/dev/null || true
+cp "$REPO_DIR"/compliance/*.md /home/ghostport-admin/compliance/ 2>/dev/null || true
+chmod 755 /home/ghostport-admin/compliance/*.sh 2>/dev/null || true
+chown -R ghostport-admin:ghostport-admin /home/ghostport-admin/compliance/
+
+# Cron jobs
+log "Installing cron jobs..."
+cp "$REPO_DIR"/etc/cron.d/* /etc/cron.d/ 2>/dev/null || true
+chmod 644 /etc/cron.d/ghostport-* 2>/dev/null || true
+
+# Server and public files (already in /opt/ghostport if cloned there)
+if [ "$REPO_DIR" != "/opt/ghostport" ]; then
+    log "Syncing server files to /opt/ghostport/..."
+    rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
+        "$REPO_DIR/" /opt/ghostport/
+fi
+
+# Validate nftables before applying
+log "Validating nftables profiles..."
+for nft in /etc/gpmodes/*.nft; do
+    if ! nft -c -f "$nft" 2>/dev/null; then
+        warn "nftables validation failed: $nft"
+    fi
+done
+
+# Restart services
+log "Restarting services..."
+systemctl enable ghostport 2>/dev/null || true
+systemctl enable ghostport-boot 2>/dev/null || true
+systemctl restart ghostport
+
+log "Deployment complete!"
+echo ""
+echo "  Next steps:"
+echo "  - Set passcode:  sudo gp-passcode reset"
+echo "  - Set mode:      sudo gp-mode isp"
+echo "  - Dashboard:     http://$(hostname -I | awk '{print $1}'):4200"
+echo ""
