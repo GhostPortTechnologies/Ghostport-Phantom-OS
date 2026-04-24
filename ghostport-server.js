@@ -1159,6 +1159,47 @@ function run(cmd, timeout = 15000) {
   });
 }
 
+// Atomic nftables ruleset loader. Single entry point for "replace a
+// dedicated Phantom table from a multi-line nft script." Previously this
+// Promise-wrapped spawn was duplicated at every call site; consolidated
+// here so behaviour (timeout, stderr capture, idempotent delete) stays
+// consistent.
+//
+//   opts.deleteTable: "ip phantom_scrub" | "inet phantom_brokers" | null
+//     If given, `nft delete table <spec>` runs first (errors swallowed —
+//     absent table is the normal idempotent case).
+//
+// Rejects with the nft stderr on non-zero exit so the caller can log or
+// return a useful message to the user.
+const { spawn } = require("child_process");
+async function applyNftRuleset(ruleset, opts = {}) {
+  const deleteTable = opts.deleteTable || null;
+  if (deleteTable) {
+    await run(`sudo nft delete table ${deleteTable} 2>/dev/null || true`);
+  }
+  await new Promise((resolve, reject) => {
+    const child = spawn("sudo", ["nft", "-f", "-"]);
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(stderr.trim() || `nft load failed (exit ${code})`))));
+    child.stdin.write(ruleset);
+    child.stdin.end();
+  });
+}
+
+// Shared ruleset for the TCP/IP fingerprint scrub Arsenal toggle. Defined
+// once so the POST handler and the startup-restore block can't drift.
+const TCP_SCRUB_RULESET = [
+  "table ip phantom_scrub {",
+  "  chain scrub {",
+  "    type filter hook postrouting priority mangle; policy accept;",
+  "    ip ttl set 64",
+  "    tcp flags syn tcp option maxseg size set 1360",
+  "  }",
+  "}",
+].join("\n") + "\n";
+const TCP_SCRUB_TABLE = "ip phantom_scrub";
+
 // Fast interface state check via sysfs (no process spawn)
 function ifaceUp(name) {
   try {
@@ -2903,24 +2944,7 @@ function stopDnsLeakMonitor() {
   // Restore TCP fingerprint scrub if previously enabled
   if (arsenal.tcpScrub) {
     try {
-      const ruleset = [
-        "table ip phantom_scrub {",
-        "  chain scrub {",
-        "    type filter hook postrouting priority mangle; policy accept;",
-        "    ip ttl set 64",
-        "    tcp flags syn tcp option maxseg size set 1360",
-        "  }",
-        "}",
-      ].join("\n") + "\n";
-      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
-      await new Promise((resolve, reject) => {
-        const child = require("child_process").spawn("sudo", ["nft", "-f", "-"]);
-        let stderr = "";
-        child.stderr.on("data", d => stderr += d);
-        child.on("close", code => code === 0 ? resolve() : reject(new Error(stderr || "nft load failed")));
-        child.stdin.write(ruleset);
-        child.stdin.end();
-      });
+      await applyNftRuleset(TCP_SCRUB_RULESET, { deleteTable: TCP_SCRUB_TABLE });
       console.log("[Arsenal] TCP scrub restored on startup");
     } catch (e) {
       console.error("[Arsenal] TCP scrub restore failed:", e.message);
@@ -3333,27 +3357,9 @@ app.post("/api/arsenal/tcpscrub", async (req, res) => {
   try {
     await withArsenal(arsenal => { arsenal.tcpScrub = !!enabled; });
     if (enabled) {
-      const ruleset = [
-        "table ip phantom_scrub {",
-        "  chain scrub {",
-        "    type filter hook postrouting priority mangle; policy accept;",
-        "    ip ttl set 64",
-        "    tcp flags syn tcp option maxseg size set 1360",
-        "  }",
-        "}",
-      ].join("\n") + "\n";
-      // Delete first (idempotent), then reload atomically.
-      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
-      await new Promise((resolve, reject) => {
-        const child = require("child_process").spawn("sudo", ["nft", "-f", "-"]);
-        let stderr = "";
-        child.stderr.on("data", d => stderr += d);
-        child.on("close", code => code === 0 ? resolve() : reject(new Error(stderr || "nft load failed")));
-        child.stdin.write(ruleset);
-        child.stdin.end();
-      });
+      await applyNftRuleset(TCP_SCRUB_RULESET, { deleteTable: TCP_SCRUB_TABLE });
     } else {
-      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
+      await run(`sudo nft delete table ${TCP_SCRUB_TABLE} 2>/dev/null || true`);
     }
     console.log(`[Arsenal] TCP scrub ${enabled ? "enabled" : "disabled"}`);
     res.json({ ok: true, tcpScrub: !!enabled });

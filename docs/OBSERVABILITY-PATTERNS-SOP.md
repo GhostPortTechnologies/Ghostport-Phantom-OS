@@ -145,6 +145,14 @@ After running `git filter-repo`, `git remote` returns empty. Re-add with `git re
 
 Documented in SECRET-SAFETY-SOP §11.2.12 but worth repeating here because rewriting history is a valid response to a privacy-pattern mistake (accidental per-query data written into a committed sample file, etc.).
 
+### 4.6 nftables ruleset application — use the shared helper (Node) / inline pattern (Python)
+
+**Node (ghostport-server.js):** use `applyNftRuleset(ruleset, { deleteTable })`. Don't spawn `nft -f -` inline. The helper captures stderr and rejects with a useful message on non-zero exit. Every duplicated spawn block is drift waiting to happen.
+
+**Python (standalone scripts):** inline `subprocess.run(["nft", "-f", "-"], input=ruleset, text=True, ...)` is fine. No shared module — scripts are standalone and deploy to `/usr/local/bin/` where Python module paths aren't naturally shared. The two call sites (`gp-broker-counters`, `gp-mac-block`) use slightly different error handling (`check=True` vs explicit `returncode` check) appropriate to their script shape.
+
+**Always:** `sudo nft delete table <spec> 2>/dev/null || true` before loading to make the operation idempotent. Absent-table errors are the normal case when the script runs for the first time.
+
 ## 5. Reusable scaffolds (shipped 2026-04-24)
 
 | Need | Scaffold |
