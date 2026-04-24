@@ -38,12 +38,33 @@ rm -f /tmp/gp-sched-line /tmp/gp-current-mode
 # Clear mode state to ISP
 echo "isp" > /etc/phantom/current-mode
 
-# Reset hostapd SSID/password to defaults
+# Reset hostapd SSID + generate a FRESH RANDOM WiFi passphrase.
+# The previous behavior hardcoded 'ghostport' as the reset-time passphrase,
+# which meant every freshly-reset device was reachable by any attacker within
+# WiFi range who read the source. Now: 16-char random passphrase per reset,
+# printed to stdout and written to /boot/firmware/phantom-wifi-passphrase.txt
+# (readable from any machine that reads the SD card). User reads + changes
+# via dashboard once they're connected.
 HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
 if [ -f "$HOSTAPD_CONF" ]; then
-  echo "[Factory Reset] Resetting WiFi to defaults..."
+  echo "[Factory Reset] Resetting WiFi..."
+  NEW_PSK=$(tr -dc 'A-HJ-NP-Za-km-z2-9' </dev/urandom | head -c 16)
   sed -i 's/^ssid=.*/ssid=GhostPort Router/' "$HOSTAPD_CONF"
-  sed -i 's/^wpa_passphrase=.*/wpa_passphrase=ghostport/' "$HOSTAPD_CONF"
+  sed -i "s|^wpa_passphrase=.*|wpa_passphrase=${NEW_PSK}|" "$HOSTAPD_CONF"
+  # Persist where the user can find it — /boot/firmware is visible when the SD
+  # is mounted in any machine, and remains on-device too.
+  BOOT_FILE=""
+  for d in /boot/firmware /boot; do
+    [ -d "$d" ] && BOOT_FILE="$d/phantom-wifi-passphrase.txt" && break
+  done
+  if [ -n "$BOOT_FILE" ]; then
+    umask 077
+    printf '%s\n' "$NEW_PSK" > "$BOOT_FILE"
+    chmod 600 "$BOOT_FILE"
+  fi
+  echo "[Factory Reset] New WiFi passphrase: $NEW_PSK"
+  [ -n "$BOOT_FILE" ] && echo "[Factory Reset] Also written to $BOOT_FILE (0600)"
+  echo "[Factory Reset] Change it via the dashboard once you reconnect."
 fi
 
 # Clear dnsmasq leases
