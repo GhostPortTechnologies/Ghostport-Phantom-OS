@@ -74,6 +74,21 @@ def load_brokers() -> dict[str, list[str]]:
     return data.get("brokers", {})
 
 
+def load_bootstrap_ips() -> dict[str, list[str]]:
+    """Fallback IP set used when DNS resolution fails at init time.
+
+    Ships pre-resolved in /etc/phantom/blocklists/data-brokers.json so
+    the counter table has something to match against on first boot even
+    before phantom-broker-refresh.timer has run. Rot over time is
+    expected; refresh timer overrides with fresh resolutions every 6h.
+    """
+    try:
+        data = json.loads(BROKER_LIST.read_text())
+        return data.get("bootstrap_ips", {})
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
 def resolve_domain(domain: str, timeout: float = 1.5) -> list[str]:
     """Best-effort IPv4 resolution via `dig +short`. Honors timeout precisely.
     Uses local unbound/Pi-hole resolver (@127.0.0.1) so we see what AP clients see.
@@ -109,7 +124,12 @@ def _is_public_ipv4(ip: str) -> bool:
 
 
 def resolve_broker_ips(brokers: dict[str, list[str]], workers: int = 20) -> dict[str, list[str]]:
-    """broker_name → sorted IPv4 list. Parallel resolution with a thread pool."""
+    """broker_name → sorted IPv4 list. Parallel resolution with a thread pool.
+
+    When live resolution fails for a broker (network down, DNS not yet ready,
+    domain has no A record etc.) we fall back to the shipped bootstrap_ips
+    so the counter table populates with something plausible on first boot.
+    """
     # Flatten (broker, domain) pairs so we can parallelize across the whole set.
     pairs = [(broker, domain) for broker, ds in brokers.items() for domain in ds]
     result: dict[str, set[str]] = {b: set() for b in brokers}
@@ -124,6 +144,24 @@ def resolve_broker_ips(brokers: dict[str, list[str]], workers: int = 20) -> dict
             for ip in ips:
                 if _is_public_ipv4(ip):
                     result[broker].add(ip)
+
+    # Bootstrap fallback — for any broker that resolved to nothing, use the
+    # shipped IPs as a starting point. A later refresh cycle may discover
+    # fresher addresses and replace them.
+    bootstrap = load_bootstrap_ips()
+    bootstrap_used = 0
+    for broker in brokers:
+        if not result[broker]:
+            for ip in bootstrap.get(broker, []):
+                if _is_public_ipv4(ip):
+                    result[broker].add(ip)
+                    bootstrap_used += 1
+    if bootstrap_used:
+        print(
+            f"note: live resolution returned empty for some brokers — "
+            f"filled {bootstrap_used} IPs from bootstrap list",
+            file=sys.stderr,
+        )
     return {b: sorted(ips) for b, ips in result.items() if ips}
 
 
