@@ -365,7 +365,175 @@ If a hook bypass happens, the bypasser owes the operator an immediate Chamber / 
 
 ---
 
-## 11. Related documents
+## 11. Pre-public repo sweep playbook (MANDATORY before flipping private → public)
+
+Codified from the 2026-04-23 Phantom OS repo public-flip prep, which surfaced multiple issues the default gitleaks scan missed. Run this playbook on any repo before changing visibility from private to public. **Every bullet is a gate, not an optional check.**
+
+### 11.1 Order of operations
+
+1. **Scrub then scan**, never the reverse. If there's a known historical leak (committed secret), use `git filter-repo --replace-text` FIRST, force-push, then run audits against the rewritten history. Auditing before scrubbing wastes time — you'll re-run every scan.
+2. **Strip tokens from `.git/config` URLs before any tool that might echo them.** `git filter-repo` prints the removed origin URL to stderr — if the URL has an embedded PAT, it leaks to the transcript. Pre-strip with `git remote set-url origin <clean>`.
+3. **Untrack before you redact.** For files that will never be public-appropriate (internal runbooks, infra docs, compliance-confidential), `git rm --cached` + `.gitignore` is cleaner than rewriting content. Keeps local copy, removes from ship path.
+4. **Every automated gate is in place before the flip** — local pre-commit hook, server-side push protection, secret scanning. §10 has the full stack.
+
+### 11.2 The mandatory sweep dimensions
+
+Run each. Don't stop at one "clean" result — every dimension catches different classes of leak.
+
+#### 11.2.1 Automated secret scan
+```
+gitleaks detect --config .gitleaks.toml --redact   # full history
+gitleaks detect --config .gitleaks.toml --no-git --source . --redact   # working tree
+```
+Clean means: `"no leaks found"` in both. If any hits remain, classify each: true-positive (fix) vs allowlist candidate (add to `.gitleaks.toml [allowlist]`).
+
+#### 11.2.2 PII in tracked content
+Specifically hunt for: real names (first + last), personal emails (not `@<company>`), phone numbers, home addresses, social media handles.
+
+```
+# Real name sweep — substitute your operator's name
+for name in "$OPERATOR_FIRST_NAME" "$OPERATOR_LAST_NAME"; do
+    git ls-files | xargs grep -l "$name" 2>/dev/null
+done
+
+# Personal emails (exclude company aliases)
+git ls-files | xargs grep -hoE '[a-zA-Z0-9._+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}' 2>/dev/null \
+    | sort -u | grep -vE "^(support|licensing|noreply|no-reply|info|admin|security|legal|privacy|contact|sales|abuse)@<your-domain>"
+
+# Git author history (what email appears in commits?)
+git log --all --format='%ae %ce' | tr ' ' '\n' | sort -u
+```
+Redact to impersonal nouns ("the operator", "the maintainer") OR untrack the file entirely. Keep `@<company>` aliases as public contact channels.
+
+#### 11.2.3 Infrastructure disclosure
+Your cloud server IPs, internal subnets, SSH paths, PEM filenames, ISP gateway IPs.
+
+```
+# Specific-IP sweep — substitute your real prod IPs
+git ls-files | xargs grep -lE "44\.214\.101\.82|54\.211\.104\.73|10\.66\.6[67]\.|192\.168\.50\." 2>/dev/null
+
+# SSH key paths + PEM filenames
+git ls-files | xargs grep -hE "ssh -i [^ ]+\.pem|id_rsa|id_ed25519" 2>/dev/null
+```
+
+For each hit, decide: replace with DNS name (`api.<domain>`), replace with generic phrasing ("the control-plane endpoint"), or untrack the file. **SSH-PEM-filename references are always untrack.**
+
+#### 11.2.4 Default credentials
+Factory-reset scripts, initial-setup defaults, docker-compose example passwords, etc.
+
+```
+git ls-files | xargs grep -hnE "wpa_passphrase=|password=|admin:admin|root:root|changeme|default_secret" 2>/dev/null \
+    | grep -vE "placeholder|YOUR_|CHANGEME|EXAMPLE|<.*>"
+```
+
+Any literal string that the code uses as a default credential in production = classify as a leak. Fix: replace with random generation per-install (see `scripts/gp-factory-reset` for the pattern — 16-char Crockford-alphabet PSK generated via `/dev/urandom`, printed to stdout + persisted to `/boot/firmware/` so the user can retrieve from SD).
+
+#### 11.2.5 Binary + metadata leaks
+EXIF on images (GPS, author, device provenance), SVG metadata (title/desc/creator/author elements), PDF metadata, Office doc metadata.
+
+```
+# EXIF on tracked images
+git ls-files '*.png' '*.jpg' | while read f; do
+    # Check symlink vs regular first — git tracks symlinks as 37-byte text, not binary content
+    [ "$(git ls-tree HEAD "$f" | awk '{print $1}')" = "100644" ] || continue
+    python3 -c "
+from PIL import Image
+img = Image.open('$f')
+if img.getexif(): print('  EXIF: $f —', list(img.getexif().keys()))
+" 2>/dev/null
+done
+
+# SVG metadata
+git ls-files '*.svg' | xargs grep -lE "<(metadata|title|desc|author|creator)" 2>/dev/null
+```
+
+Strip via re-save without metadata (Pillow: `Image.new(mode, size).putdata(list(img.getdata())).save()`).
+
+#### 11.2.6 Symlink gotcha
+`grep`/`gitleaks` may flag a tracked SYMLINK as containing secrets because they follow the link to the real file on disk. **Git stores only the link text (usually 30-60 bytes), not the target's content.** Verify with:
+```
+git ls-tree HEAD <path>   # mode 120000 = symlink; 100644 = regular
+git cat-file -p HEAD:<path>   # shows what git actually tracks
+```
+If mode is 120000, the hit is a false positive — the real file's content is NOT in the repo.
+
+#### 11.2.7 npm integrity hash false-positive
+`package-lock.json` contains many 80-char base64 strings that look like secrets to naive scanners — they're `"integrity": "sha512-…"` cryptographic content hashes that npm publishes publicly for supply-chain verification. **NOT secrets.** Every public Node.js project has them. Allowlist `package-lock.json` from entropy-based rules.
+
+#### 11.2.8 Internal runbook / infrastructure docs
+Even when they don't contain explicit secrets, these reveal operational surface:
+- Disaster-recovery playbooks (EC2 restore procedures, IP addresses, PEM keys)
+- Compliance docs with full-stack architecture (risk register, asset inventory, incident response)
+- Support runbooks (customer-device Tailscale access paths)
+- Golden-image build SOPs (reveals what's stripped before ship = what an attacker finds on a stolen image)
+- Pen-testing instructions (literal attack surface map)
+- Network topology diagrams (full infrastructure reveal)
+- Session-specific internal notes (COMMIT-PLAN, TOMORROW, DOC-BACKLOG)
+- Sudoers hardening proposals (reveals sudo attack surface evolution)
+
+**Treat as untrack-unless-clearly-public.** See `.gitignore` for the canonical list of internal-only doc paths.
+
+#### 11.2.9 Stale / vestigial files
+Tracked content that is no longer current but never got cleaned up:
+- `*.bak`, `*.old`, `*.orig`, `*~` backup files
+- Binary archives duplicating already-tracked content (a zip of docs that exist unzipped)
+- Dev-only smoke test apps (`gp-app-test.py`-style) never meant to ship
+- Outdated point-in-time audit snapshots (obsolete by newer audits)
+- Redundant legacy prototypes (`public/da-app.js`, `pwa-app.js` from an earlier iteration)
+
+**Delete or untrack.** Anything an honest reviewer would flag as "why is this still here?" deserves investigation.
+
+#### 11.2.10 Filename content
+File names themselves can leak. A filename of `ISSUE-14273-customer-data-fix.md` tells the world there was an incident. Scan for names that mention:
+- Internal ticket/issue numbers
+- Customer identifiers
+- "DRAFT", "wip", "notes-for-self"
+- Developer first names ("thomas-rules.md", "alice-fixes.md")
+
+### 11.3 Commit structure for a public-prep pass
+
+One batched pre-public commit is harder to review and harder to bisect. Use discrete commits per concern:
+
+1. `security:` — secrets scrub + `.gitignore` expansion (ship-critical)
+2. `cleanup:` — stale/vestigial file removal
+3. `privacy:` — PII redaction (name → operator, personal emails → company aliases)
+4. `docs:` — brand updates, broken-ref fixes, public-facing polish (SECURITY.md reporting path, CONTRIBUTING.md license claim match)
+5. `security:` — defensive stack install (pre-commit hook, `.gitleaks.toml`, `.gitattributes`)
+
+Each commit is independently reviewable and revertible.
+
+### 11.4 Post-flip observability
+
+After flipping public:
+1. **Wait 10 minutes** for GitHub's secret-scan sweep of the newly-public repo.
+2. Check email for GitHub Security alerts. If anything triggers, rotate that credential on the issuing service + remove/rewrite the commit + re-audit.
+3. If using GitHub push protection + branch protection, confirm both are now active on `main`.
+4. Monitor the repo's Security tab for incoming vulnerability reports (per `SECURITY.md`).
+5. Watch repo analytics for first-week clones and who's cloning — anomalous early traffic (e.g. thousands of clones in the first hour) can indicate automated scrapers testing the freshly-public history for leaked secrets.
+
+### 11.5 Canonical sweep script
+
+The inline commands in §11.2 belong in a runnable script for reproducibility. Recommended path forward: package them as `scripts/audit-pre-public.sh` and include in a future commit. Until then, copy the blocks directly from this SOP.
+
+### 11.6 Rule origin
+
+2026-04-23 Phantom OS public-flip prep. The session's audit surfaced ALL of the following in a repo that had just been "fully swept" by standard tooling:
+- Committed bridge auth token in `compliance/alert-monitor.sh` (history + live)
+- Three GitHub PATs leaked via tokenized git remote URLs
+- Full legal operator name + Law Enforcement Contact role in a compliance doc
+- Factory-reset default WiFi passphrase `ghostport` hardcoded
+- SSH PEM filename + EC2 public IP in a disaster-recovery runbook
+- 7 internal ops runbooks revealing attack surface
+- EXIF metadata (benign but unnecessary) on public logo
+- 1 development smoke-test app and 1 redundant doc-zip binary
+- npm integrity hashes flagged as secrets by naive scans (false positive to document)
+- Symlink-to-system-file flagged by grep as binary leak (false positive to document)
+
+Each of these was caught by a different sweep angle. **One sweep is not enough.** This playbook codifies the angles so future public-flips don't repeat the multi-round discovery loop of 2026-04-23.
+
+---
+
+## 12. Related documents
 
 - `feedback_no_tokens_in_urls.md` (memory) — the specific 2026-04-23 incident that triggered this SOP
 - `feedback_no_passwords.md` (memory) — earlier rule about passwords in memory
