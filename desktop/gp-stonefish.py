@@ -256,14 +256,55 @@ class StonefishApp(GhostPortApp):
         ("The device table",
          "One row per (IP, MAC, interface) seen on your network. Columns:\n\n"
          "• IP Address — the logical address (192.168.50.x on your LAN).\n"
+         "• Hostname — from DHCP leases (dnsmasq / Pi-hole). Blank for static-IP "
+         "devices or ones that skipped DHCP.\n"
          "• MAC Address — the physical hardware address.\n"
+         "• Vendor — OUI lookup against the shipped map (50+ common vendors). "
+         "MACs with the locally-administered bit set show \"Random (iOS/Android "
+         "privacy)\" — modern phones rotate MACs and that's expected, not an attack.\n"
          "• Interface — which network port saw it (wlan0 = LAN WiFi, eth0 = WAN).\n"
          "• State — one of BASELINE (matches the snapshot), NEW (never seen before), "
          "CHANGED (same IP, different MAC — the attack signature).\n"
-         "• Threat — color-coded severity: LOW (amber), HIGH (red), TRUSTED (dim).\n\n"
+         "• Threat — color-coded severity: LOW (amber), HIGH (red), TRUSTED (dim).\n"
+         "• Action — plain-English guidance per threat level (\"Disconnect & "
+         "investigate\" / \"Check router, rebaseline if intended\" / \"Device "
+         "likely offline\").\n\n"
          "CHANGED + HIGH threat on your gateway IP (usually 192.168.50.1) is the "
          "\"someone is actively attacking you\" signature. Disconnect from WiFi "
-         "immediately and investigate."),
+         "immediately and investigate.\n\n"
+         "Extend the OUI map by dropping a JSON file at /etc/phantom/oui-extras.json "
+         "in the same {\"AA:BB:CC\": \"Vendor\"} format."),
+
+        ("Desktop notifications (critical alerts)",
+         "When Stonefish flags a new SPOOFING or GW CHANGED threat, it fires a "
+         "critical desktop notification via mako — even if the app window isn't "
+         "focused or the screen is locked. You'll see a red banner: "
+         "\"Phantom: ARP threat — SPOOFING: <hostname> [<vendor>] — MAC ...\"\n\n"
+         "Rate limit: the same (MAC, threat) pair won't re-fire within 5 minutes, "
+         "so a flapping gateway (common on some ISPs) won't spam your notification "
+         "stack.\n\n"
+         "If mako isn't running (headless install / mako crashed) the notification "
+         "fails silently — alerts still write to Crow's Nest's event log, so you can "
+         "still see them by opening Crow's Nest."),
+
+        ("Block MAC (right-click action)",
+         "Right-click any row to Block or Unblock the device at the MAC level. "
+         "The menu label includes hostname + vendor so you can identify what you're "
+         "about to cut off — \"Block Kids-Tablet [Apple]\" is less scary than "
+         "a bare MAC address.\n\n"
+         "What blocking does: adds the MAC to an nftables set "
+         "(inet phantom_blocklist) with a forward-hook drop rule. The device can't "
+         "reach anything through GhostPort — not even DHCP. The block is kernel-"
+         "enforced, not DNS-level.\n\n"
+         "Persistence: blocked MACs are stored in /etc/phantom/mac-blocklist.json "
+         "and restored on boot by phantom-mac-blocklist.service. Survives reboots, "
+         "updates, service restarts.\n\n"
+         "Block MAC vs Family Shield: Block MAC is TOTAL cutoff. Family Shield is "
+         "CATEGORY-selective (e.g., block social media but let homework sites "
+         "through). Pick the right tool — cutoff is the nuclear option.\n\n"
+         "A determined attacker can spoof or rotate their MAC to bypass the block. "
+         "Block MAC is decisive but not foolproof; pair with Bulkhead rules for "
+         "deeper defense."),
 
         ("What ARP is, in one paragraph",
          "ARP (Address Resolution Protocol) translates IP addresses to MAC addresses "

@@ -516,6 +516,31 @@ class CrowsNestApp(GhostPortApp):
          "identify it.\n\n"
          "Remember: a DROP means the firewall REFUSED the packet. High numbers of drops "
          "mean the firewall is doing its job, not that you've been compromised."),
+
+        ("Rate anomaly alerts (from Lookout)",
+         "Since 2026-04-24, Crow's Nest also surfaces per-device outbound-traffic "
+         "anomalies detected by gp-device-anomaly (runs every 5 min under "
+         "phantom-device-anomaly.timer).\n\n"
+         "These look like: \"RATE_ANOMALY — Pixel-10-Pro-XL sent 12.3 MB in 5min — "
+         "18× this device's 02:00 baseline (700 KB)\". Severity: WARNING.\n\n"
+         "How to interpret:\n"
+         "• A device running 10×+ over its own hour-of-day baseline is a signal that "
+         "something changed. Could be benign (new app install, software update, "
+         "you started a Netflix binge) or not (compromised IoT, firmware update "
+         "activating new telemetry, exfil).\n"
+         "• First 24h after reset: detector is learning and fires nothing. No alerts "
+         "is not \"system broken\" — it's \"baseline warm-up.\"\n"
+         "• Mobile devices with wildly variable traffic rarely hit anomaly thresholds "
+         "because their baselines are wide. Smart-home devices with predictable "
+         "patterns are where this shines.\n\n"
+         "When an anomaly fires: open Dragnet to see the specific flows, or Tide "
+         "Chart for bandwidth history. If it's your device and nothing looks wrong, "
+         "the baseline will absorb the new usage over the next week. If it's not "
+         "your device or looks malicious, right-click the device in Stonefish and "
+         "Block MAC.\n\n"
+         "Privacy note: the detector uses conntrack byte counters aggregated per-IP. "
+         "No per-flow destination or content is stored — just \"device sent N bytes "
+         "this window.\" See docs/OBSERVABILITY-PATTERNS-SOP.md §1.2."),
     ]
 
     def _on_help(self, _btn):
