@@ -1,0 +1,9 @@
+[Unit]
+Description=Phantom OS — broker counter reader (writes /etc/phantom/broker-counters.json)
+After=network-online.target ghostport.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-broker-counters read
+StandardOutput=null

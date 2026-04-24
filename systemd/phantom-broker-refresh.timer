@@ -1,0 +1,12 @@
+[Unit]
+Description=Phantom OS — broker IP re-resolver (6h cadence)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=6h
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Phantom OS — broker IP re-resolver (populates nftables sets)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStartPre=-/usr/local/bin/gp-broker-counters init
+ExecStart=/usr/local/bin/gp-broker-counters refresh

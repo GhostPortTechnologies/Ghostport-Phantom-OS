@@ -1,0 +1,11 @@
+[Unit]
+Description=Phantom OS — broker counter reader (30s cadence)
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -2078,6 +2078,153 @@ app.get("/api/tools/blocked", async (req, res) => {
   }
 });
 
+// ── Enemy List (data-broker + surveillance-partner block counts) ─────
+//
+// Maps blocked Pi-hole queries to known broker / data-harvesting orgs.
+// Broker list is editable at /etc/phantom/blocklists/data-brokers.json —
+// ships with repo seed, hot-reloaded on file change.
+
+const BROKER_MAP_PATH = "/etc/phantom/blocklists/data-brokers.json";
+let _brokerMapCache = { mtime: 0, inverse: null, meta: null };
+
+function loadBrokerMap() {
+  try {
+    const stat = fs.statSync(BROKER_MAP_PATH);
+    if (stat.mtimeMs === _brokerMapCache.mtime && _brokerMapCache.inverse) {
+      return _brokerMapCache;
+    }
+    const raw = JSON.parse(fs.readFileSync(BROKER_MAP_PATH, "utf8"));
+    const inverse = new Map(); // domain → broker
+    for (const [broker, domains] of Object.entries(raw.brokers || {})) {
+      for (const d of domains) inverse.set(String(d).toLowerCase(), broker);
+    }
+    _brokerMapCache = {
+      mtime: stat.mtimeMs,
+      inverse,
+      meta: { version: raw.version, updated: raw.updated, count: inverse.size },
+    };
+    return _brokerMapCache;
+  } catch (e) {
+    return { mtime: 0, inverse: new Map(), meta: { error: e.message } };
+  }
+}
+
+function matchBroker(domain, inverse) {
+  if (!domain || !inverse || !inverse.size) return null;
+  const d = String(domain).toLowerCase();
+  // Exact match first (fastest)
+  if (inverse.has(d)) return inverse.get(d);
+  // Suffix match: block `sub.acxiom.com` against `acxiom.com`
+  const parts = d.split(".");
+  for (let i = 1; i < parts.length; i++) {
+    const suffix = parts.slice(i).join(".");
+    if (inverse.has(suffix)) return inverse.get(suffix);
+  }
+  return null;
+}
+
+// Enemy List data source hierarchy:
+//   1. /etc/phantom/broker-counters.json  — nftables-counter-based (primary)
+//      Written every 30s by `gp-broker-counters read` via phantom-broker-counters.timer.
+//      Counts egress packets/bytes to resolved broker IPs. Privacy-preserving — no
+//      per-query or per-client data. Works regardless of Pi-hole privacy level.
+//   2. Pi-hole `/stats/top_domains`       — fallback (DNS-layer)
+//      Only populated if Pi-hole privacy level is 0–2. GhostPort ships at 3,
+//      so this path typically returns empty. Kept as a fallback for operator
+//      setups that lowered privacy level manually.
+
+const BROKER_COUNTERS_FILE = "/etc/phantom/broker-counters.json";
+
+function readBrokerCounters() {
+  try {
+    const raw = fs.readFileSync(BROKER_COUNTERS_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    // Ignore stale files (>5 min old) — timer is 30s, so >5 min means timer stopped.
+    const ageSec = Math.floor(Date.now() / 1000) - (parsed.updated || 0);
+    if (ageSec > 300) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+app.get("/api/tools/enemies", async (req, res) => {
+  try {
+    const { inverse, meta } = loadBrokerMap();
+    if (!inverse.size) {
+      return res.json({ ok: false, error: "Broker list not loaded", meta });
+    }
+
+    // Primary source: nftables counters
+    const counters = readBrokerCounters();
+    if (counters && counters.brokers) {
+      const brokers = counters.brokers
+        .filter(b => b.packets > 0)
+        .map(b => ({ name: b.name, packets: b.packets, bytes: b.bytes }))
+        .sort((a, b) => b.packets - a.packets);
+      const packetsTotal = brokers.reduce((s, b) => s + b.packets, 0);
+      const bytesTotal   = brokers.reduce((s, b) => s + b.bytes,   0);
+      return res.json({
+        ok: true,
+        source: "nftables",
+        brokers,
+        packetsTotal,
+        bytesTotal,
+        updated: counters.updated,
+        listVersion: meta.version,
+        listUpdated: meta.updated,
+      });
+    }
+
+    // Fallback: Pi-hole top_domains (only works at privacy level ≤ 2)
+    const N = 500;
+    const [rBlocked, rAll] = await Promise.all([
+      piholeApi("GET", `/stats/top_domains?blocked=true&count=${N}`),
+      piholeApi("GET", `/stats/top_domains?blocked=false&count=${N}`),
+    ]);
+    if (rBlocked.status !== 200 || rAll.status !== 200) {
+      return res.json({ ok: false, error: "Primary counter source unavailable (nftables service may be down) and Pi-hole fallback returned an error" });
+    }
+    const parseDomains = (r) => {
+      const list = r.data?.domains || r.data?.top_domains || [];
+      if (Array.isArray(list)) return list.map(x => [x.domain, x.count || 0]);
+      return Object.entries(list);
+    };
+    const blocked   = new Map();
+    const attempted = new Map();
+    let blockedTotal = 0, attemptedTotal = 0;
+    for (const [domain, count] of parseDomains(rBlocked)) {
+      const broker = matchBroker(domain, inverse);
+      if (!broker) continue;
+      blocked.set(broker, (blocked.get(broker) || 0) + count);
+      attempted.set(broker, (attempted.get(broker) || 0) + count);
+      blockedTotal += count;
+      attemptedTotal += count;
+    }
+    for (const [domain, count] of parseDomains(rAll)) {
+      const broker = matchBroker(domain, inverse);
+      if (!broker) continue;
+      attempted.set(broker, (attempted.get(broker) || 0) + count);
+      attemptedTotal += count;
+    }
+    const brokers = [...attempted.entries()]
+      .map(([name, att]) => ({ name, attempted: att, blocked: blocked.get(name) || 0 }))
+      .sort((a, b) => b.attempted - a.attempted);
+    res.json({
+      ok: true,
+      source: "pihole-fallback",
+      brokers,
+      attemptedTotal,
+      blockedTotal,
+      listVersion: meta.version,
+      listUpdated: meta.updated,
+    });
+  } catch (e) {
+    console.error("[GhostPort] Enemy list error:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
 // ── bandwidth monitor ────────────────────────────────────
 
 // DECISION: Use fs.readFileSync instead of shelling out — faster, no shell injection risk

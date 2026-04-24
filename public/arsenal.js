@@ -994,6 +994,77 @@ async function fetchBlocked() {
   btn.disabled = false;
 }
 
+// ── Enemy List (data brokers + surveillance partners) ────────────────
+
+async function fetchEnemies() {
+  const btn = document.getElementById("btn-enemies");
+  const result = document.getElementById("enemies-result");
+  const totalLbl = document.getElementById("enemies-total");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch(ARSENAL_API + "/api/tools/enemies");
+    const data = await res.json();
+    if (!data.ok) {
+      result.innerHTML = `<div style="font-size:10px;color:var(--red)">${escapeHtml(data.error || "Operation failed")}</div>`;
+      if (totalLbl) totalLbl.textContent = "—";
+      return;
+    }
+    if (!data.brokers.length) {
+      result.innerHTML = '<div style="font-size:10px;color:var(--text-faint)">No broker traffic detected. Clean house.</div>';
+      if (totalLbl) totalLbl.textContent = "0 contacts";
+      return;
+    }
+    const top = data.brokers.slice(0, 10);
+    const nft = data.source === "nftables";
+    const metric = nft ? "packets" : "attempted";
+    const maxVal = top[0][metric] || 1;
+    const fmtBytes = b => {
+      if (b < 1024) return b + " B";
+      if (b < 1048576) return (b / 1024).toFixed(1) + " KB";
+      if (b < 1073741824) return (b / 1048576).toFixed(1) + " MB";
+      return (b / 1073741824).toFixed(2) + " GB";
+    };
+    result.innerHTML = top.map(b => {
+      const val = b[metric];
+      const pct = Math.max(3, Math.round((val / maxVal) * 100));
+      let rightLabel, badge = "";
+      if (nft) {
+        rightLabel = val.toLocaleString() + " pkts";
+        badge = `<span style="font-size:9px;color:var(--text-faint)">${fmtBytes(b.bytes)}</span>`;
+      } else {
+        const pctBlocked = b.attempted ? Math.round((b.blocked / b.attempted) * 100) : 0;
+        const badgeColor = pctBlocked === 100 ? "var(--green)" : pctBlocked === 0 ? "var(--red)" : "#e8c200";
+        const badgeText = pctBlocked === 100 ? "✓ all blocked" : pctBlocked === 0 ? "⚠ none blocked" : `${pctBlocked}% blocked`;
+        badge = `<span style="font-size:9px;color:${badgeColor}">${badgeText}</span>`;
+        rightLabel = val.toLocaleString();
+      }
+      return `<div style="padding:4px 0;border-bottom:1px solid #1a1a1a">
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:3px">
+          <span style="color:var(--text)">${escapeHtml(b.name)}</span>
+          <span style="display:flex;gap:8px;align-items:center">
+            ${badge}
+            <span style="color:var(--text);font-weight:bold">${escapeHtml(rightLabel)}</span>
+          </span>
+        </div>
+        <div style="height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#d00,#f44)"></div>
+        </div>
+      </div>`;
+    }).join("");
+    if (totalLbl) {
+      if (nft) {
+        totalLbl.textContent = `${data.packetsTotal.toLocaleString()} pkts / ${fmtBytes(data.bytesTotal)}`;
+      } else {
+        totalLbl.textContent = `${data.attemptedTotal.toLocaleString()} attempts / ${data.blockedTotal.toLocaleString()} blocked`;
+      }
+    }
+  } catch (e) {
+    result.innerHTML = `<div style="font-size:10px;color:var(--red)">Error: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 // ── Backup / Restore ─────────────────────────────────────────
 
 async function downloadBackup() {
@@ -1437,6 +1508,7 @@ fetchArsenalStatus();
 fetchClients();
 fetchBandwidth();
 fetchBlocked();
+fetchEnemies();
 fetchWgStatus();
 setInterval(fetchArsenalStatus, 10000);
 setInterval(fetchClients, 15000);

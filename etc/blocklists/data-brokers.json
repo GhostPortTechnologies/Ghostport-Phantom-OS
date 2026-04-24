@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "updated": "2026-04-24",
+  "notes": "Curated list of consumer-data-broker and surveillance-partner domains. Blocked DNS queries matching these contribute to the Enemy List tile. Extend via PR or OTA update.",
+  "brokers": {
+    "Acxiom": [
+      "acxiom.com",
+      "acxiom-online.com",
+      "acxiomapac.com"
+    ],
+    "LiveRamp": [
+      "liveramp.com",
+      "rampid.liveramp.com",
+      "rlcdn.com",
+      "idsync.rlcdn.com"
+    ],
+    "Experian": [
+      "experian.com",
+      "rum.experian.com",
+      "tapad.com",
+      "marketing.experian.com"
+    ],
+    "LexisNexis": [
+      "lexisnexis.com",
+      "risk.lexisnexis.com",
+      "lnrsdata.com"
+    ],
+    "Epsilon": [
+      "epsilon.com",
+      "eccmp.com",
+      "dmtry.com"
+    ],
+    "TransUnion": [
+      "transunion.com",
+      "truvalidate.com",
+      "neustar.biz",
+      "ultradns.com"
+    ],
+    "Equifax": [
+      "equifax.com",
+      "d-3.ns.equifax.com"
+    ],
+    "Oracle Data Cloud": [
+      "bluekai.com",
+      "addthis.com",
+      "datalogix.com",
+      "oracleads.com",
+      "moatads.com"
+    ],
+    "Palantir": [
+      "palantir.com",
+      "foundry.palantir.com"
+    ],
+    "Outlogic / X-Mode": [
+      "x-mode.com",
+      "outlogic.com",
+      "xmode.io"
+    ],
+    "Babel Street": [
+      "babelstreet.com",
+      "locate.x"
+    ],
+    "Venntel": [
+      "venntel.com"
+    ],
+    "Samba TV": [
+      "samba.tv",
+      "samba-ai.com",
+      "sambatv.com",
+      "saymedia-content.com"
+    ],
+    "Inscape / Vizio ACR": [
+      "inscape-ai.com",
+      "inscape.tv",
+      "tvinteractive.tv",
+      "tvmetrix.com"
+    ],
+    "TVision": [
+      "tvisioninsights.com",
+      "tvision.tv"
+    ],
+    "Nielsen Gracenote": [
+      "nielsen.com",
+      "gracenote.com",
+      "imrworldwide.com",
+      "secure-us.imrworldwide.com"
+    ],
+    "Roku ACR": [
+      "scribe.logs.roku.com",
+      "cooper.logs.roku.com"
+    ],
+    "LG ACR / Alphonso": [
+      "alphonso.tv",
+      "lgsmartad.com"
+    ],
+    "Facebook Pixel": [
+      "connect.facebook.net",
+      "facebook.com/tr",
+      "pixel.facebook.com"
+    ],
+    "Google Analytics / Ads": [
+      "google-analytics.com",
+      "googletagmanager.com",
+      "googlesyndication.com",
+      "doubleclick.net",
+      "googleadservices.com"
+    ],
+    "TikTok Pixel": [
+      "analytics.tiktok.com",
+      "business-api.tiktok.com"
+    ],
+    "Amazon Ads": [
+      "amazon-adsystem.com",
+      "aax.amazon-adsystem.com",
+      "advertising-api.amazon.com"
+    ]
+  }
+}

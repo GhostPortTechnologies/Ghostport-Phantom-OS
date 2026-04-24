@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""gp-broker-counters — nftables-based privacy-preserving broker traffic counters.
+
+GhostPort runs Pi-hole at privacy level 3 (no per-query retention), so
+/stats/top_domains is empty by design. This tool maintains a dedicated
+nftables table `inet phantom_brokers` with per-broker IP sets + named
+counters. It resolves broker domains to IPs, populates the sets, and
+dumps the counter state as JSON for /api/tools/enemies to consume.
+
+Privacy properties:
+  - Only aggregate packet/byte counters — no per-query, per-client, or
+    per-timestamp data.
+  - Counters survive dashboard refresh but reset on nftables ruleset reload
+    or service restart. Acceptable for dashboard UX.
+  - No DNS-level logging required; works at any Pi-hole privacy level.
+
+Subcommands:
+  init      Create the nftables table (idempotent) and populate sets.
+  refresh   Re-resolve broker domains and rebuild sets. Preserves counters.
+  read      Print per-broker counter values as JSON to stdout.
+  destroy   Tear down the table.
+
+Usage (requires sudo for nft write ops):
+  sudo gp-broker-counters init
+  sudo gp-broker-counters refresh
+  sudo gp-broker-counters read      # read doesn't strictly need root if nft
+                                    # is readable, but sudoers grants all subcommands
+  sudo gp-broker-counters destroy
+"""
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BROKER_LIST = Path("/etc/phantom/blocklists/data-brokers.json")
+STATE_FILE  = Path("/etc/phantom/broker-counters.json")
+NFT_TABLE   = "inet phantom_brokers"
+CHAIN_NAME  = "broker_egress"
+
+
+def _slug(name: str) -> str:
+    """Convert broker display name to a safe nft identifier."""
+    s = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+    return s[:40] or "unknown"
+
+
+def _nft(*args: str, capture: bool = False, check: bool = True) -> str:
+    cmd = ["nft", *args]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, check=check
+        )
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        if capture:
+            return e.stdout or ""
+        raise RuntimeError(f"nft {' '.join(args)} failed: {e.stderr.strip()}") from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"nft {' '.join(args)} timed out") from e
+
+
+def load_brokers() -> dict[str, list[str]]:
+    if not BROKER_LIST.exists():
+        raise SystemExit(f"Broker list not found at {BROKER_LIST}")
+    data = json.loads(BROKER_LIST.read_text())
+    return data.get("brokers", {})
+
+
+def resolve_domain(domain: str, timeout: float = 1.5) -> list[str]:
+    """Best-effort IPv4 resolution via `dig +short`. Honors timeout precisely.
+    Uses local unbound/Pi-hole resolver (@127.0.0.1) so we see what AP clients see.
+    """
+    try:
+        result = subprocess.run(
+            ["dig", "+short", f"+time={int(timeout)}", "+tries=1", "@127.0.0.1", "A", domain],
+            capture_output=True, text=True, timeout=timeout + 1,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    except FileNotFoundError:
+        return []  # dig not installed
+    ips = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        # dig may return CNAMEs too; filter to IPv4 only
+        try:
+            addr = ipaddress.ip_address(line)
+            if isinstance(addr, ipaddress.IPv4Address):
+                ips.append(line)
+        except ValueError:
+            continue
+    return ips
+
+
+def _is_public_ipv4(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return isinstance(addr, ipaddress.IPv4Address) and addr.is_global
+
+
+def resolve_broker_ips(brokers: dict[str, list[str]], workers: int = 20) -> dict[str, list[str]]:
+    """broker_name → sorted IPv4 list. Parallel resolution with a thread pool."""
+    # Flatten (broker, domain) pairs so we can parallelize across the whole set.
+    pairs = [(broker, domain) for broker, ds in brokers.items() for domain in ds]
+    result: dict[str, set[str]] = {b: set() for b in brokers}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(resolve_domain, dom): (broker, dom) for broker, dom in pairs}
+        for fut in concurrent.futures.as_completed(futures):
+            broker, _dom = futures[fut]
+            try:
+                ips = fut.result(timeout=5)
+            except Exception:
+                ips = []
+            for ip in ips:
+                if _is_public_ipv4(ip):
+                    result[broker].add(ip)
+    return {b: sorted(ips) for b, ips in result.items() if ips}
+
+
+def table_exists() -> bool:
+    out = _nft("list", "tables", capture=True, check=False)
+    return f"table {NFT_TABLE}" in out
+
+
+def cmd_init(_args) -> None:
+    """Create table + chain + sets + counters. Idempotent."""
+    brokers = load_brokers()
+    if not brokers:
+        raise SystemExit("No brokers defined in list")
+    if table_exists():
+        _nft("delete", "table", *NFT_TABLE.split())
+    resolved = resolve_broker_ips(brokers)
+    if not resolved:
+        print(
+            "warn: no broker domains resolved (network down?) — "
+            "creating empty table anyway",
+            file=sys.stderr,
+        )
+    ruleset = build_ruleset(resolved)
+    subprocess.run(["nft", "-f", "-"], input=ruleset, text=True, check=True)
+    print(
+        f"initialized {NFT_TABLE}: {len(resolved)} brokers, "
+        f"{sum(len(v) for v in resolved.values())} IPs",
+        file=sys.stderr,
+    )
+
+
+def cmd_refresh(_args) -> None:
+    """Re-resolve + rebuild. Keeps last-known state if resolution fails."""
+    if not table_exists():
+        cmd_init(_args)
+        return
+    brokers = load_brokers()
+    resolved = resolve_broker_ips(brokers)
+    if not resolved:
+        print("warn: refresh resolved zero IPs, keeping existing state", file=sys.stderr)
+        return
+    # Update sets in place (preserves named counters)
+    for name in brokers:
+        ips = resolved.get(name, [])
+        slug = _slug(name)
+        set_name = f"{slug}_ips"
+        # flush then re-add
+        _nft("flush", "set", *NFT_TABLE.split(), set_name, check=False)
+        if ips:
+            elements = ", ".join(ips)
+            _nft("add", "element", *NFT_TABLE.split(), set_name, f"{{ {elements} }}")
+    print(f"refreshed {len(resolved)} brokers", file=sys.stderr)
+
+
+def cmd_read(_args) -> None:
+    """Dump current counter values as JSON to stdout."""
+    if not table_exists():
+        print(json.dumps({"ok": False, "error": "table not initialized"}))
+        return
+    out = _nft("-j", "list", "counters", "table", *NFT_TABLE.split(), capture=True, check=False)
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        print(json.dumps({"ok": False, "error": "nft json parse failed"}))
+        return
+    brokers: dict[str, dict[str, int]] = {}
+    for entry in data.get("nftables", []):
+        ctr = entry.get("counter")
+        if not ctr:
+            continue
+        name = ctr.get("name", "")
+        if not name.startswith("ctr_"):
+            continue
+        broker_slug = name[4:]
+        brokers[broker_slug] = {
+            "packets": ctr.get("packets", 0),
+            "bytes":   ctr.get("bytes",   0),
+        }
+    # Map slugs back to display names
+    try:
+        display = {_slug(n): n for n in load_brokers().keys()}
+    except SystemExit:
+        display = {}
+    result = []
+    for slug, vals in brokers.items():
+        result.append({
+            "name": display.get(slug, slug),
+            "packets": vals["packets"],
+            "bytes":   vals["bytes"],
+        })
+    result.sort(key=lambda r: r["packets"], reverse=True)
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    state = {"updated": int(time.time()), "brokers": result}
+    try:
+        STATE_FILE.write_text(json.dumps(state, indent=2))
+        os.chmod(STATE_FILE, 0o644)
+    except PermissionError:
+        pass  # read-only mode — still print to stdout
+    print(json.dumps(state))
+
+
+def cmd_destroy(_args) -> None:
+    if table_exists():
+        _nft("delete", "table", *NFT_TABLE.split())
+        print(f"destroyed {NFT_TABLE}", file=sys.stderr)
+    else:
+        print(f"{NFT_TABLE} not present", file=sys.stderr)
+
+
+def build_ruleset(resolved: dict[str, list[str]]) -> str:
+    """Emit the full nftables ruleset text for atomic application via `nft -f -`."""
+    lines = [f"table {NFT_TABLE} {{"]
+    # Per-broker sets
+    for name, ips in resolved.items():
+        slug = _slug(name)
+        set_line = f"    set {slug}_ips {{"
+        lines.append(set_line)
+        lines.append("        type ipv4_addr;")
+        lines.append("        flags interval;")
+        if ips:
+            lines.append(f"        elements = {{ {', '.join(ips)} }};")
+        lines.append("    }")
+    # Per-broker counters (named objects so they survive chain rebuilds)
+    for name in resolved:
+        slug = _slug(name)
+        lines.append(f"    counter ctr_{slug} {{ packets 0 bytes 0 }}")
+    # Chain with one rule per broker (counter-only, does not drop)
+    lines.append(f"    chain {CHAIN_NAME} {{")
+    lines.append("        type filter hook postrouting priority 300; policy accept;")
+    for name in resolved:
+        slug = _slug(name)
+        lines.append(f"        ip daddr @{slug}_ips counter name ctr_{slug}")
+    lines.append("    }")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def main() -> None:
+    if os.geteuid() != 0 and sys.argv[1:2] != ["read"]:
+        # read can sometimes work unprivileged; mutating ops always need root
+        print("must run as root for init/refresh/destroy", file=sys.stderr)
+        sys.exit(1)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("init").set_defaults(fn=cmd_init)
+    sp.add_parser("refresh").set_defaults(fn=cmd_refresh)
+    sp.add_parser("read").set_defaults(fn=cmd_read)
+    sp.add_parser("destroy").set_defaults(fn=cmd_destroy)
+    args = ap.parse_args()
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

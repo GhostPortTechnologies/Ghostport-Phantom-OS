@@ -1990,6 +1990,18 @@
               </div>
               <div id="blocked-result" style="margin-top:8px"></div>
             </div>
+            <div class="arsenal-card arsenal-card-wide" id="ac-enemies">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🎯</span>
+                <span class="arsenal-name">Enemy List</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--green)" id="enemies-total">—</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-enemies" onclick="fetchEnemies()">REFRESH</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Data brokers + surveillance partners seen on your network (recent Pi-hole session)</div>
+              <div id="enemies-result" style="margin-top:8px"><div style="font-size:10px;color:var(--text-faint)">Loading...</div></div>
+            </div>
             <div class="arsenal-card" id="ac-backup">
               <div class="arsenal-header">
                 <span class="arsenal-icon">💾</span>
