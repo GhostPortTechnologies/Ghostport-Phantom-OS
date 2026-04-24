@@ -6,7 +6,7 @@
 **Storage**: microSD (Class A2)
 **WiFi**: M.2 802.11ax (WiFi 6), 5GHz, channel 36, 20MHz width, 31dBm TX power
 **Test Date**: April 3, 2026 (crypto/memory), April 6, 2026 (load testing)
-**Firmware**: GhostPort OS v1.x
+**Firmware**: Phantom OS v1.x
 **ISP**: Cox Communications (cable, ~500 Mbps down / ~60 Mbps up)
 
 ---

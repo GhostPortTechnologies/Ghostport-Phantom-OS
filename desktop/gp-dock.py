@@ -127,7 +127,7 @@ class Dock(Gtk.Window):
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.LEFT, True)
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, True)
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, False)
-            GtkLayerShell.set_exclusive_zone(self, 0)
+            GtkLayerShell.set_exclusive_zone(self, DOCK_HEIGHT)
             GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
         else:
             self.set_keep_above(True)

@@ -61,8 +61,8 @@ sudo gp-mode zhop
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/GhostPortTechnologies/Ghostport-OS.git
-cd Ghostport-OS
+git clone https://github.com/GhostPortTechnologies/Ghostport-Phantom-OS.git
+cd Ghostport-Phantom-OS
 
 # 2. Run the installer
 chmod +x scripts/install.sh
@@ -71,33 +71,28 @@ sudo ./scripts/install.sh
 
 The installer handles everything: dependencies, Pi-hole, nft profiles, dashboard, and systemd services.
 
-For a full step-by-step guide see [docs/INSTALL.md](docs/INSTALL.md)
-
 ---
 
 ## Repository Structure
 
 ```
-Ghostport-OS/
-├── modes/                  # nft firewall profiles
+Ghostport-Phantom-OS/
+├── etc/gpmodes/            # nftables firewall profiles
 │   ├── common.nft          # shared variables & management rules
 │   ├── isp.nft             # ISP passthrough mode
 │   ├── zerotrust.nft       # Pi-hole + DNS lockdown mode
 │   ├── doublehop.nft       # WireGuard VPN mode
 │   └── zhop.nft            # WireGuard + DNS lockdown mode
-├── scripts/
-│   ├── gp-mode             # main mode switcher script
-│   └── install.sh          # one-shot installer
-├── dashboard/
-│   ├── server/
-│   │   └── ghostport-server.js   # Node.js API server
-│   └── public/
-│       └── index.html            # web UI
-├── docs/
-│   ├── INSTALL.md          # full installation guide
-│   ├── MODES.md            # mode documentation
-│   ├── API.md              # API reference
-│   └── TROUBLESHOOTING.md  # common issues
+├── scripts/                # system scripts installed to /usr/local/bin/gp-*
+├── systemd/                # systemd unit files
+├── ghostport-server.js     # Node.js Express API server (port 4200)
+├── public/                 # dashboard SPA (vanilla JS)
+├── desktop/                # GTK3 desktop apps (labwc/Wayland)
+├── daemons/                # background daemons (watchdogs, guards)
+├── docs/                   # engineer docs, SOPs, per-app references
+├── compliance/             # compliance docs
+├── SECURITY.md             # threat model + vulnerability reporting
+├── CONTRIBUTING.md         # how to contribute
 ├── LICENSE                 # Elastic License 2.0
 └── README.md
 ```
@@ -106,7 +101,7 @@ Ghostport-OS/
 
 ## API
 
-The GhostPort API runs on port 4200. Full documentation at [docs/API.md](docs/API.md)
+The Phantom OS API runs on port 4200. See `ghostport-server.js` for all endpoints — key ones documented inline with JSDoc.
 
 ```bash
 # Get current status

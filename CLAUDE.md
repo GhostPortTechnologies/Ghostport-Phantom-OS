@@ -29,7 +29,7 @@ results, and update the roadmap. You are the only agent that talks to the human 
 
 ### Infrastructure
 - EC2: AWS (control plane — assume this unless told otherwise)
-- GitHub: github.com/GhostPortTechnologies/Ghostport-OS
+- GitHub: github.com/GhostPortTechnologies/Ghostport-Phantom-OS
 - Domain: ghostporttechnologies.com
 
 ### Product Tiers

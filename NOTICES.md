@@ -1,11 +1,11 @@
 # NOTICES
 
-## GhostPort OS — Third Party Notices & Legal Disclosures
+## Phantom OS — Third Party Notices & Legal Disclosures
 
 Copyright (c) 2026 GhostPort Technologies
 All rights reserved.
 
-GhostPort OS is an original work of GhostPort Technologies. The GhostPort OS
+Phantom OS is an original work of GhostPort Technologies. The Phantom OS
 source code, configuration system, mode-switching architecture, web dashboard,
 and associated scripts are the exclusive intellectual property of GhostPort
 Technologies, protected under applicable copyright law.
@@ -20,7 +20,7 @@ exclusively by its own license terms.
 ## Third Party Software Notices
 
 The following third-party software components are used by or referenced in
-GhostPort OS. Their inclusion does not imply endorsement by their respective
+Phantom OS. Their inclusion does not imply endorsement by their respective
 authors of GhostPort Technologies or its products, nor does it imply any claim
 of ownership by GhostPort Technologies over said software.
 
@@ -32,7 +32,7 @@ of ownership by GhostPort Technologies over said software.
 - **License:** European Union Public License 1.2 (EUPL-1.2)
 - **License URL:** https://eupl.eu/1.2/en/
 - **Copyright:** Pi-hole LLC and contributors
-- **Usage:** GhostPort OS optionally integrates with Pi-hole as an independent,
+- **Usage:** Phantom OS optionally integrates with Pi-hole as an independent,
   separately installed DNS filtering service. GhostPort Technologies does not
   distribute, modify, or sublicense Pi-hole software. Users who install Pi-hole
   do so under Pi-hole's own license terms. GhostPort Technologies makes no
@@ -47,12 +47,12 @@ of ownership by GhostPort Technologies over said software.
 - **License URL:** https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 - **Copyright:** Jason A. Donenfeld and contributors
 - **Trademark Notice:** "WireGuard" is a registered trademark of Jason A. Donenfeld.
-- **Usage:** GhostPort OS provides configuration scripts that interact with
+- **Usage:** Phantom OS provides configuration scripts that interact with
   WireGuard as an independently installed system service. GhostPort Technologies
   does not distribute, bundle, or sublicense WireGuard software. WireGuard is
   installed and operated under its own license terms, independent of this
   software. The GPL-2.0 license governing WireGuard is available at the URL
-  above and is unaffected by the Elastic License 2.0 governing GhostPort OS.
+  above and is unaffected by the Elastic License 2.0 governing Phantom OS.
 
 ---
 
@@ -62,7 +62,7 @@ of ownership by GhostPort Technologies over said software.
 - **License:** GNU General Public License v2.0 (GPL-2.0)
 - **License URL:** https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
 - **Copyright:** The Netfilter Project and contributors
-- **Usage:** GhostPort OS includes original nftables rule configuration files
+- **Usage:** Phantom OS includes original nftables rule configuration files
   (.nft profiles) authored by GhostPort Technologies. These configuration files
   are text-based rule definitions and do not constitute a derivative work of
   nftables itself. The nftables software is a standard Linux kernel subsystem
@@ -77,11 +77,11 @@ of ownership by GhostPort Technologies over said software.
 - **License:** MIT License
 - **License URL:** https://github.com/nodejs/node/blob/main/LICENSE
 - **Copyright:** Node.js contributors
-- **Usage:** GhostPort OS includes an original Node.js application
+- **Usage:** Phantom OS includes an original Node.js application
   (ghostport-server.js) authored by GhostPort Technologies. Node.js itself is
   installed independently and governed by the MIT License. The MIT License
   governing Node.js is unaffected by the Elastic License 2.0 governing
-  GhostPort OS.
+  Phantom OS.
 
 ---
 
@@ -102,16 +102,16 @@ of ownership by GhostPort Technologies over said software.
 - **License:** Various (Debian-based, see https://www.raspberrypi.com/software/)
 - **Copyright:** Raspberry Pi Ltd and respective package authors
 - **Trademark Notice:** "Raspberry Pi" is a trademark of Raspberry Pi Ltd.
-- **Usage:** GhostPort OS is designed to run on Raspberry Pi hardware and
+- **Usage:** Phantom OS is designed to run on Raspberry Pi hardware and
   Raspberry Pi OS. GhostPort Technologies is not affiliated with, endorsed by,
   or sponsored by Raspberry Pi Ltd. The Raspberry Pi trademark is used solely
   for the purpose of hardware compatibility identification.
 
 ---
 
-## Scope of GhostPort OS License
+## Scope of Phantom OS License
 
-The Elastic License 2.0 governing GhostPort OS applies exclusively to the
+The Elastic License 2.0 governing Phantom OS applies exclusively to the
 original works authored by GhostPort Technologies, including but not limited to:
 
 - The gp-mode mode-switching script and architecture
@@ -129,7 +129,7 @@ third-party component remains governed solely by its own license.
 
 ## No Warranty
 
-GhostPort OS is provided "as is", without warranty of any kind, express or
+Phantom OS is provided "as is", without warranty of any kind, express or
 implied. GhostPort Technologies makes no warranty that the software will meet
 your requirements, operate without interruption, or be free of errors.
 GhostPort Technologies shall not be liable for any damages arising from the
@@ -140,7 +140,7 @@ special, exemplary, or consequential damages.
 
 ## Export Compliance
 
-GhostPort OS incorporates cryptographic software (WireGuard VPN). Users are
+Phantom OS incorporates cryptographic software (WireGuard VPN). Users are
 responsible for compliance with all applicable export control laws and
 regulations in their jurisdiction. GhostPort Technologies makes no
 representations regarding the export compliance of this software.

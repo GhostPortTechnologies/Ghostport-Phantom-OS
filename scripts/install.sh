@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔═══════════════════════════════════════════════════════════╗
-# ║           GhostPort OS — One Shot Installer               ║
+# ║           Phantom OS — One Shot Installer               ║
 # ║           https://github.com/ghostport-os/ghostport-os    ║
 # ╚═══════════════════════════════════════════════════════════╝
 
@@ -28,7 +28,7 @@ USER_HOME=$(eval echo "~$CURRENT_USER")
 
 echo ""
 echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
-echo "       GhostPort OS Installer v1.1"
+echo "       Phantom OS Installer v1.1"
 echo "    Your data never leaves your hands."
 echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
 echo ""
@@ -240,7 +240,7 @@ PI_IP=$(hostname -I | awk '{print $1}')
 echo ""
 echo "  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠  ☠"
 echo ""
-echo "  ✓ GhostPort OS installed successfully!"
+echo "  ✓ Phantom OS installed successfully!"
 echo ""
 echo "  Dashboard → http://$PI_IP:4200"
 echo "  Pi-hole   → http://$PI_IP/admin"

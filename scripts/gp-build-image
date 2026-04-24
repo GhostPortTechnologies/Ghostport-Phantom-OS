@@ -1,6 +1,6 @@
 #!/bin/bash
-# gp-build-image — GhostPort OS Image Builder
-# Run this on a FRESH Raspberry Pi OS Lite SD card to create GhostPort OS
+# gp-build-image — Phantom OS Image Builder
+# Run this on a FRESH Raspberry Pi OS Lite SD card to create Phantom OS
 # DO NOT run on the dev unit — use a separate card
 #
 # Usage: sudo gp-build-image [--confirm]
@@ -25,7 +25,7 @@ if [ -f /etc/phantom/fleet-auth.json ]; then
 fi
 
 if [ "${1:-}" != "--confirm" ] && [ "${1:-}" != "--force" ]; then
-    echo "GhostPort OS Image Builder"
+    echo "Phantom OS Image Builder"
     echo "=========================="
     echo ""
     echo "This script will:"
@@ -39,7 +39,7 @@ if [ "${1:-}" != "--confirm" ] && [ "${1:-}" != "--force" ]; then
     exit 0
 fi
 
-log "=== GhostPort OS Image Builder Starting ==="
+log "=== Phantom OS Image Builder Starting ==="
 
 # ─── Phase 1: Strip bloat ───────────────────────────────────
 log "Phase 1: Removing unnecessary packages..."
@@ -144,13 +144,13 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
 
 log "Phase 2 complete — dependencies installed"
 
-# ─── Phase 3: Configure GhostPort OS identity ───────────────
+# ─── Phase 3: Configure Phantom OS identity ───────────────
 log "Phase 3: Configuring OS identity..."
 
 # os-release
 cat > /etc/os-release << 'OSREL'
-PRETTY_NAME="GhostPort OS 1.0 (Phantom)"
-NAME="GhostPort OS"
+PRETTY_NAME="Phantom OS 1.0 (Phantom)"
+NAME="Phantom OS"
 VERSION_ID="1.0"
 VERSION="1.0 (Phantom)"
 VERSION_CODENAME=phantom
@@ -168,7 +168,7 @@ echo "127.0.1.1 Ghostport" >> /etc/hosts
 # MOTD
 cat > /etc/motd << 'MOTD'
 
-   ☠  GhostPort OS 1.0 (Phantom)  ☠
+   ☠  Phantom OS 1.0 (Phantom)  ☠
    ──────────────────────────────────
    Privacy router + secure workstation
    https://ghostporttechnologies.com
@@ -177,7 +177,7 @@ MOTD
 
 # Issue (login prompt banner)
 cat > /etc/issue << 'ISSUE'
-☠  GhostPort OS 1.0  ☠
+☠  Phantom OS 1.0  ☠
 \n \l
 
 ISSUE
@@ -258,7 +258,7 @@ DISK_USED=$(df -h / | awk 'NR==2{print $3}')
 DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
 PKG_COUNT=$(dpkg-query -f '.\n' -W | wc -l)
 
-log "=== GhostPort OS Image Build Complete ==="
+log "=== Phantom OS Image Build Complete ==="
 log "Disk used: $DISK_USED | Available: $DISK_AVAIL | Packages: $PKG_COUNT"
 log ""
 log "Next steps:"

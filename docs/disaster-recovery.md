@@ -155,7 +155,7 @@ The index is at:
 ### If memory is lost
 If the SD card is unrecoverable and memory files are gone:
 1. The thumb drive backup contains them (from 2026-04-09)
-2. The GitHub repo at `GhostPortTechnologies/Ghostport-OS` may have copies
+2. The GitHub repo at `GhostPortTechnologies/Ghostport-Phantom-OS` may have copies
 3. Claude Code will need to rebuild context from the codebase + CLAUDE.md files
 4. Key context: read `/home/ghostport-admin/CLAUDE.md` and `/opt/phantom/CLAUDE.md`
 
@@ -188,7 +188,7 @@ ssh ghostport-admin@<ip>
 ### Step 3: Install GhostPort software
 ```bash
 # Clone the repo
-git clone https://github.com/GhostPortTechnologies/Ghostport-OS.git /opt/phantom
+git clone https://github.com/GhostPortTechnologies/Ghostport-Phantom-OS.git /opt/phantom
 
 # Run the image builder
 sudo /opt/phantom/scripts/gp-build-image --confirm

@@ -1,5 +1,5 @@
 #!/bin/bash
-# GhostPort OS Deployment Script
+# Phantom OS Deployment Script
 # Deploys a fresh GhostPort system from this repo
 # Usage: sudo ./scripts/gp-deploy [--full|--update]
 #   --full:   First-time setup (installs packages, creates users, configures everything)

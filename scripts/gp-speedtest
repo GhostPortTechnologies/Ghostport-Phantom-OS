@@ -1,5 +1,5 @@
 #!/bin/bash
-# gp-speedtest — Native terminal speed test for GhostPort OS
+# gp-speedtest — Native terminal speed test for Phantom OS
 # No external dependencies, uses curl + ping only
 
 set -euo pipefail

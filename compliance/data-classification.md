@@ -1,10 +1,10 @@
-# GhostPort OS -- Data Classification Policy
+# Phantom OS -- Data Classification Policy
 
 **Document ID:** GP-DC-001
 **Version:** 1.0
 **Date:** 2026-03-24
 **Framework:** NIST SP 800-60 / NIST SP 800-171
-**Scope:** GhostPort OS (Raspberry Pi 5 device) and GhostPort Fleet Server (AWS EC2)
+**Scope:** Phantom OS (Raspberry Pi 5 device) and GhostPort Fleet Server (AWS EC2)
 **Owner:** GhostPort Technologies
 
 ---

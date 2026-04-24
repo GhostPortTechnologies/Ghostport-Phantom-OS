@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# gp-noise — Cover traffic generator for GhostPort OS
+# gp-noise — Cover traffic generator for Phantom OS
 # Generates random DNS queries and HTTPS HEAD requests to mask real user activity
 # Only active in doublehop or zhop modes
 
