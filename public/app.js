@@ -956,9 +956,54 @@
       fs.busy = false;
     };
 
+    // ACR first-enable warning. Stored acknowledgment means we don't
+    // re-prompt on subsequent toggles (user already knows what it breaks).
+    var ACR_ACK_KEY = "gp.acr.acknowledged";
+    window._acrPendingCat = null;
+    window.acrConfirm = function() {
+      try { localStorage.setItem(ACR_ACK_KEY, "1"); } catch(e) {}
+      var m = document.getElementById("acr-modal");
+      if (m) m.classList.remove("visible");
+      if (window._acrPendingCat) {
+        var c = window._acrPendingCat;
+        window._acrPendingCat = null;
+        window._fsApplyCat(c);
+      }
+    };
+    window.acrCancel = function() {
+      var m = document.getElementById("acr-modal");
+      if (m) m.classList.remove("visible");
+      // Revert the toggle visual to its pre-click state
+      if (window._acrPendingCat) {
+        tog('tog-fs-' + window._acrPendingCat, fs.cats[window._acrPendingCat]);
+        window._acrPendingCat = null;
+      }
+    };
+
     window._fsToggleCat = async function(cat) {
       console.log('[FS] _fsToggleCat called, cat =', cat, 'fs.on =', fs.on);
       if (!fs.on) return;
+      var newState = !fs.cats[cat];
+
+      // ACR first-enable interstitial: if user is turning ACR ON and has
+      // never acknowledged the breakage warning, show the modal and defer
+      // the actual toggle until they confirm.
+      if (cat === 'acr' && newState) {
+        var acked = false;
+        try { acked = localStorage.getItem(ACR_ACK_KEY) === "1"; } catch(e) {}
+        if (!acked) {
+          window._acrPendingCat = cat;
+          // Preview the toggle going ON so the user sees their click took effect
+          tog('tog-fs-' + cat, true);
+          var m = document.getElementById("acr-modal");
+          if (m) m.classList.add("visible");
+          return;
+        }
+      }
+      window._fsApplyCat(cat);
+    };
+
+    window._fsApplyCat = async function(cat) {
       fs.busy = true;
       var newState = !fs.cats[cat];
       tog('tog-fs-' + cat, newState);

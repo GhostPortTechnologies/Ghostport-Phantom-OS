@@ -1393,6 +1393,26 @@
   </div>
 </div>
 
+<!-- ACR first-enable warning modal — reuses dn-modal styling since same visual language -->
+<div class="dn-modal" id="acr-modal">
+  <div class="dn-modal-box">
+    <div class="dn-modal-title">⚠ BLOCK SMART TV SURVEILLANCE?</div>
+    <div class="dn-modal-body">
+      This category blocks Automated Content Recognition (<strong>ACR</strong>) — the system your smart TV uses to capture what's on your screen and sell it to data brokers.<br><br>
+      Partners blocked: <strong>Samba TV, Inscape (Vizio), TVision, Nielsen Gracenote, Roku ACR, LG Alphonso</strong>.<br><br>
+      <strong>Heads up:</strong> some smart TVs integrate ACR deeply. Turning this on may break:<br>
+      • Content recommendations ("keep watching")<br>
+      • Voice search<br>
+      • Interactive ad features<br><br>
+      If your TV starts misbehaving, you can either unshield that specific device or turn this category off. Shown once — we won't ask again.
+    </div>
+    <div class="dn-modal-actions">
+      <button class="dn-modal-btn cancel" onclick="acrCancel()">CANCEL</button>
+      <button class="dn-modal-btn confirm" onclick="acrConfirm()">BLOCK ANYWAY</button>
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <!-- Header -->
