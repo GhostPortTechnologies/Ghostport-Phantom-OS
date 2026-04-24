@@ -4,9 +4,65 @@ ssl/
 *.env
 support.json
 *.bak
-*.bak2
+*.bak*
 *.log
 .DS_Store
 *.swp
 *~
 __pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+
+# Secrets — never commit
+*.key
+*.pem
+*.token
+credentials*
+auth*.json
+fleet-auth*
+bridge-auth*
+stripe*.json
+arsenal.json
+pihole.json
+theme.json
+wan.json
+family-shield.json
+current-mode
+preflight-state.json
+health-state.json
+ads-tally.json
+activity.json
+sni-devices.json
+update-state.json
+version.json
+
+# WireGuard / hostapd / network configs with secrets
+wg0.conf
+wg1.conf
+hostapd.conf
+wpa_supplicant*
+
+# Runtime data / caches
+chamber/
+backups/
+tmp/
+.vscode/
+.idea/
+
+# OS / editor artifacts
+Thumbs.db
+.Trash*
+
+# Internal-only docs (operational runbooks, internal plans, infra-revealing compliance)
+docs/TOMORROW.md
+docs/SUDO-HARDENING-PROPOSAL.md
+docs/SUDO-TIGHTEN-TEE.md
+docs/COMMIT-PLAN.md
+docs/DOC-BACKLOG.md
+HUMAN_TASKS.md
+TASKS.md
+compliance/asset-inventory.md
+compliance/restore-runbook.md
+compliance/incident-response.md
+compliance/risk-register.md

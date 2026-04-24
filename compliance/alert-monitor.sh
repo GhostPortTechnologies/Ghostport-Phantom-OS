@@ -4,7 +4,17 @@
 # Cron: */10 * * * * /home/ghostport-admin/compliance/alert-monitor.sh
 
 BRIDGE="http://10.66.66.1:8080/messages"
-TOKEN="***REVOKED-TOKEN***"
+# Bridge auth token — loaded from gitignored config so it never lands in git history.
+# File provisioned once with: jq -n --arg t "$TOKEN" '{alert_token:$t}' | sudo tee /etc/phantom/bridge-auth.json
+# Fallback: ALERT_BRIDGE_TOKEN env var, then empty string (alerts fail loud, not silently).
+if command -v jq >/dev/null 2>&1 && [ -r /etc/phantom/bridge-auth.json ]; then
+    TOKEN=$(jq -r '.alert_token // empty' /etc/phantom/bridge-auth.json 2>/dev/null)
+fi
+TOKEN="${TOKEN:-${ALERT_BRIDGE_TOKEN:-}}"
+if [ -z "$TOKEN" ]; then
+    echo "$(date -Iseconds) [alert-monitor] missing bridge token — skipping alerts this run" >> /var/log/ghostport-alerts.log 2>/dev/null
+    exit 0
+fi
 ALERT_LOG="/var/log/ghostport-alerts.log"
 STATE_DIR="/tmp/gp-alert-state"
 mkdir -p "$STATE_DIR"
