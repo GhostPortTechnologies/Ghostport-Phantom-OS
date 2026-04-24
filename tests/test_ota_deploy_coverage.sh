@@ -62,6 +62,8 @@ check_pair "non-timer services"      'systemctl enable'       'phantom-\*\.servi
 check       "broker table init"       'gp-broker-counters init'
 check       "MAC blocklist reload"    'gp-mac-block reload'
 check       "sysctl reload"           'sysctl --system'
+check_pair  "dnsmasq.d drop-ins"      'etc/dnsmasq\.d'         '/etc/dnsmasq\.d'
+check       "pihole-FTL reload after dnsmasq"  'systemctl restart pihole-FTL'
 
 # 13. Every repo file under etc/ appears in the deploy block — catches
 # the "I added a new config directory but forgot to wire it" case.

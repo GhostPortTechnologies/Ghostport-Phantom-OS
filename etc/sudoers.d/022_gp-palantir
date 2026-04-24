@@ -3,5 +3,6 @@ ghostport-admin ALL=(root) NOPASSWD: /usr/local/bin/gp-broker-counters
 ghostport-admin ALL=(root) NOPASSWD: /usr/local/bin/gp-device-anomaly
 ghostport-admin ALL=(root) NOPASSWD: /usr/local/bin/gp-ghost-rotate
 ghostport-admin ALL=(root) NOPASSWD: /usr/local/bin/gp-mac-block
+ghostport-admin ALL=(root) NOPASSWD: /usr/local/bin/gp-dns-rules
 ghostport-admin ALL=(root) NOPASSWD: /usr/bin/systemctl enable --now phantom-ghost-rotate.timer, /usr/bin/systemctl disable --now phantom-ghost-rotate.timer, /usr/bin/systemctl enable phantom-ghost-rotate.timer, /usr/bin/systemctl disable phantom-ghost-rotate.timer, /usr/bin/systemctl start phantom-ghost-rotate.timer, /usr/bin/systemctl stop phantom-ghost-rotate.timer
 ghostport-admin ALL=(root) NOPASSWD: /usr/bin/wg set wg1 peer * endpoint *

@@ -248,6 +248,31 @@ with open(os.environ['GP_OUT'], 'w') as f:
         done
       fi
 
+      # Deploy dnsmasq drop-ins (e.g. 30-anti-fingerprint.conf). We restart
+      # pihole-FTL afterwards to load the new/changed drop-ins; dnsmasq is
+      # process-local, no atomic reload.
+      if [ -d "$EXTRACT_DIR/etc/dnsmasq.d" ]; then
+        DNSMASQ_CHANGED=0
+        for dnsfile in "$EXTRACT_DIR"/etc/dnsmasq.d/*.conf; do
+          [ -f "$dnsfile" ] || continue
+          TARGET="/etc/dnsmasq.d/$(basename "$dnsfile")"
+          # Preserve user edits: if the target exists and the user has commented
+          # out or added entries via gp-dns-rules, only overwrite when the
+          # shipped file's *active* (uncommented) rule set actually changed.
+          if [ -f "$TARGET" ] && diff -q <(grep -v '^\s*#' "$dnsfile" | sort) <(grep -v '^\s*#' "$TARGET" | sort) >/dev/null 2>&1; then
+            log "dnsmasq drop-in $(basename "$dnsfile"): active rules unchanged — keeping user edits"
+          else
+            cp "$dnsfile" "$TARGET"
+            chmod 644 "$TARGET"
+            chown root:root "$TARGET"
+            DNSMASQ_CHANGED=1
+          fi
+        done
+        if [ "$DNSMASQ_CHANGED" = "1" ]; then
+          systemctl restart pihole-FTL 2>/dev/null || true
+        fi
+      fi
+
       # Enable + start Phantom-namespaced timers (idempotent — safe on every update)
       for timer_file in "$EXTRACT_DIR"/systemd/phantom-*.timer; do
         [ -f "$timer_file" ] || continue

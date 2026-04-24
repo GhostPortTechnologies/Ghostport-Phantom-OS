@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""gp-dns-rules — toggle dnsmasq `address=` block rules on/off.
+
+GhostPort ships curated dnsmasq drop-ins (e.g. 30-anti-fingerprint.conf)
+that block fingerprinting / tracking services at DNS level. This tool
+lets the operator flip individual entries on or off without hand-editing
+the files, and is the backend for Bulkhead's DNS Rules tab.
+
+Subcommands:
+  list                 Print JSON of all address= rules found under
+                       /etc/dnsmasq.d/*.conf (enabled + disabled).
+  allow <domain>       Comment out every matching rule (domain resolves
+                       normally again).
+  block <domain>       Uncomment every matching rule (domain is blocked).
+                       Does NOT create new entries — only toggles what
+                       already exists in some .conf file.
+  reload               Restart pihole-FTL so changes take effect.
+
+Design notes:
+  - Only edits lines that already contain `address=/<domain>/<target>`.
+    Adding a brand-new block entry is out of scope (keeps the surface
+    tight; operator can edit the file by hand to add new blocks).
+  - Atomic writes (temp file + rename) so a crash mid-write can't
+    corrupt a dnsmasq drop-in.
+  - Domain comparison is case-insensitive (DNS semantics).
+  - Reload is explicit, not automatic, so a batch of allow/block calls
+    doesn't restart pihole-FTL once per call.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+DNSMASQ_DIR = Path("/etc/dnsmasq.d")
+
+# Match: optional indent, optional # prefix, address=/<domain>/<target>, optional trailing comment
+RULE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<hash>#+\s*)?address=/(?P<domain>[^/]+)/(?P<target>\S+?)(?P<tail>\s.*)?$"
+)
+
+
+def scan_rules() -> list[dict]:
+    """Walk /etc/dnsmasq.d/*.conf, return every address= rule found."""
+    rules: list[dict] = []
+    if not DNSMASQ_DIR.is_dir():
+        return rules
+    for path in sorted(DNSMASQ_DIR.glob("*.conf")):
+        try:
+            text = path.read_text()
+        except (PermissionError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            m = RULE_RE.match(line)
+            if not m:
+                continue
+            rules.append({
+                "file": str(path),
+                "lineno": lineno,
+                "domain": m.group("domain"),
+                "target": m.group("target"),
+                "blocked": m.group("hash") is None,  # uncommented == block is active
+                "raw": line,
+            })
+    return rules
+
+
+def toggle_domain(domain: str, *, block: bool) -> int:
+    """Flip every address= rule matching `domain`. Returns count changed."""
+    target_domain = domain.lower()
+    changed = 0
+    for path in sorted(DNSMASQ_DIR.glob("*.conf")):
+        try:
+            original = path.read_text()
+        except (PermissionError, OSError):
+            continue
+        new_lines: list[str] = []
+        file_dirty = False
+        for line in original.splitlines():
+            m = RULE_RE.match(line)
+            if not m or m.group("domain").lower() != target_domain:
+                new_lines.append(line)
+                continue
+            is_currently_blocking = m.group("hash") is None
+            if block and not is_currently_blocking:
+                # Strip the leading `#` + any "allowed by gp-dns-rules" annotation
+                indent = m.group("indent") or ""
+                stripped = indent + line[len(indent):].lstrip("#").lstrip()
+                stripped = re.sub(r"\s*#\s*allowed by gp-dns-rules[^\n]*$", "", stripped)
+                new_lines.append(stripped)
+                changed += 1
+                file_dirty = True
+            elif not block and is_currently_blocking:
+                indent = m.group("indent") or ""
+                content = line[len(indent):]
+                annotation = f"  # allowed by gp-dns-rules {date.today().isoformat()}"
+                new_lines.append(f"{indent}# {content}{annotation}")
+                changed += 1
+                file_dirty = True
+            else:
+                new_lines.append(line)
+        if file_dirty:
+            tmp = path.with_suffix(path.suffix + ".gpdr-tmp")
+            tmp.write_text("\n".join(new_lines) + ("\n" if original.endswith("\n") else ""))
+            os.chmod(tmp, 0o644)
+            os.rename(tmp, path)
+    return changed
+
+
+def cmd_list(_args) -> int:
+    print(json.dumps({"rules": scan_rules()}, indent=2))
+    return 0
+
+
+def cmd_allow(args) -> int:
+    n = toggle_domain(args.domain, block=False)
+    if n == 0:
+        print(f"no matching rule found for {args.domain}", file=sys.stderr)
+        return 1
+    print(f"allowed {args.domain}: {n} rule(s) commented out (run `gp-dns-rules reload` to apply)", file=sys.stderr)
+    return 0
+
+
+def cmd_block(args) -> int:
+    n = toggle_domain(args.domain, block=True)
+    if n == 0:
+        print(f"no matching rule found for {args.domain} — this tool only toggles existing entries", file=sys.stderr)
+        return 1
+    print(f"blocked {args.domain}: {n} rule(s) uncommented (run `gp-dns-rules reload` to apply)", file=sys.stderr)
+    return 0
+
+
+def cmd_reload(_args) -> int:
+    try:
+        r = subprocess.run(["systemctl", "restart", "pihole-FTL"],
+                           capture_output=True, text=True, timeout=20)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        print(f"reload error: {e}", file=sys.stderr)
+        return 1
+    if r.returncode != 0:
+        print(f"reload failed: {r.stderr.strip() or r.stdout.strip()}", file=sys.stderr)
+        return 1
+    print("pihole-FTL reloaded", file=sys.stderr)
+    return 0
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("must run as root (use sudo)", file=sys.stderr)
+        return 1
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    sp.add_parser("list", help="show all address= rules as JSON").set_defaults(fn=cmd_list)
+    p_a = sp.add_parser("allow", help="disable a block rule for a domain")
+    p_a.add_argument("domain"); p_a.set_defaults(fn=cmd_allow)
+    p_b = sp.add_parser("block", help="re-enable an existing block rule for a domain")
+    p_b.add_argument("domain"); p_b.set_defaults(fn=cmd_block)
+    sp.add_parser("reload", help="restart pihole-FTL so edits take effect").set_defaults(fn=cmd_reload)
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
