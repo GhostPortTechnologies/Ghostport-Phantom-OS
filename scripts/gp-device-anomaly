@@ -7,11 +7,20 @@ baseline per device per hour-of-day bucket. When a device exceeds 10x its
 own hour-of-day median over a 5-minute window, writes a rate_anomaly event
 to /etc/phantom/ids-events.json — Crow's Nest picks it up automatically.
 
-Storage (separate file from gp-lookout's aggregate baseline):
-  /etc/phantom/device-baselines.json — per-device samples + hourly medians
+Observe-only window (per device, 7 days from first_seen_epoch):
+During calibration, would-be anomalies are shadow-logged to
+/etc/phantom/device-anomaly-learning.json but NOT emitted as alerts. This
+prevents first-week false-positive noise from baselines that haven't yet
+absorbed the device's weekly rhythm. After 7 days live alerts engage.
 
-Designed to run every 5 minutes via systemd timer. Needs ≥24h of data for
-confident anomaly detection; earlier samples collect silently.
+Storage:
+  /etc/phantom/device-baselines.json        — per-device samples + medians
+                                              + first_seen_epoch
+  /etc/phantom/device-anomaly-learning.json — shadow log of would-be alerts
+                                              during the observe-only window
+
+Designed to run every 5 minutes via systemd timer. Needs ≥24 samples for
+confident detection; earlier samples collect silently.
 
 Privacy: only aggregate byte counts per LAN IP per 5-minute window are
 retained. No destination, no per-flow, no per-query data.
@@ -31,12 +40,23 @@ from pathlib import Path
 BASELINE_FILE = Path("/etc/phantom/device-baselines.json")
 IDS_EVENTS    = Path("/etc/phantom/ids-events.json")
 PREV_STATE    = Path("/etc/phantom/device-anomaly-prev.json")
+LEARNING_LOG  = Path("/etc/phantom/device-anomaly-learning.json")
 
 # Anomaly thresholds
 MIN_BYTES_PER_5MIN = 10 * 1024 * 1024  # 10 MB — ignore chatter under this
 MULTIPLIER         = 10                # flag if current > 10× baseline median
 MIN_SAMPLES        = 24                # need ≥24 samples before trusting median
 SAMPLE_CAP         = 2016              # 7 days at 5 min
+
+# Observe-only window per device — during this period, would-be anomalies are
+# logged to LEARNING_LOG but not emitted as alerts. Prevents first-week
+# false-positive noise (e.g., customer plugs in Friday, Netflix spikes Saturday,
+# baseline hasn't yet absorbed the weekly pattern → spurious alert).
+# Graduates to live alerts after this many days of first_seen.
+OBSERVE_ONLY_DAYS = 7
+
+# Cap learning-log entries so the shadow file doesn't grow without bound.
+LEARNING_LOG_CAP = 500
 
 LAN_NETS = [
     ipaddress.ip_network("192.168.50.0/24"),  # Phantom AP subnet
@@ -160,7 +180,37 @@ def humanize_bytes(n: int) -> str:
     return f"{n / (1024 ** 3):.2f} GB"
 
 
-def run_collect() -> None:
+def is_in_observe_window(first_seen_epoch: int, now_epoch: int) -> bool:
+    """Device still in its calibration window — anomalies log but don't alert."""
+    if not first_seen_epoch:
+        return True  # No first_seen means we haven't graduated it yet
+    return (now_epoch - first_seen_epoch) < (OBSERVE_ONLY_DAYS * 86400)
+
+
+def append_learning_log(entry: dict) -> None:
+    """Shadow-log a would-be anomaly during the observe-only window.
+
+    The operator can inspect this to see what thresholds would have fired,
+    then decide whether to tune MULTIPLIER/MIN_BYTES before devices graduate.
+    """
+    existing = []
+    try:
+        existing = json.loads(LEARNING_LOG.read_text())
+        if not isinstance(existing, list):
+            existing = []
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    existing.append(entry)
+    if len(existing) > LEARNING_LOG_CAP:
+        existing = existing[-LEARNING_LOG_CAP:]
+    try:
+        LEARNING_LOG.write_text(json.dumps(existing, separators=(",", ":")))
+        os.chmod(LEARNING_LOG, 0o644)
+    except PermissionError:
+        pass
+
+
+def run_collect(force_alerts: bool = False) -> None:
     now_ts = int(time.time())
     now_dt = dt.datetime.fromtimestamp(now_ts)
     hour = now_dt.hour
@@ -193,9 +243,18 @@ def run_collect() -> None:
     data = read_baselines()
     devices = data.setdefault("devices", {})
 
-    anomalies = []
+    anomalies = []      # will fire live events
+    shadow_anomalies = []  # would-fire, but device still calibrating
     for ip, delta in deltas.items():
-        dev = devices.setdefault(ip, {"samples": [], "hourly_medians": {}})
+        dev = devices.setdefault(ip, {"samples": [], "hourly_medians": {}, "first_seen_epoch": now_ts})
+        # Backfill first_seen_epoch on devices tracked before this feature existed.
+        # If we already have baseline samples, use the oldest sample ts (retroactive);
+        # otherwise stamp as now.
+        if "first_seen_epoch" not in dev:
+            if dev.get("samples"):
+                dev["first_seen_epoch"] = min(s.get("ts", now_ts) for s in dev["samples"])
+            else:
+                dev["first_seen_epoch"] = now_ts
         # Record this sample
         dev["samples"].append({"ts": now_ts, "hour": hour, "bytes": delta, "interval": interval_sec})
         # Prune old (>7 days) + cap
@@ -219,15 +278,46 @@ def run_collect() -> None:
         if delta < MIN_BYTES_PER_5MIN:
             continue  # too small to care
         if delta > baseline_median * MULTIPLIER:
-            anomalies.append({
+            finding = {
                 "ip": ip,
                 "delta": delta,
                 "baseline": baseline_median,
                 "multiplier": round(delta / baseline_median, 1),
                 "hour": hour,
-            })
+                "first_seen_epoch": dev["first_seen_epoch"],
+            }
+            # Observe-only window: anomaly detected but device still calibrating.
+            # Shadow-log it so the operator can see what WOULD have fired, then
+            # skip the live event path.
+            if not force_alerts and is_in_observe_window(dev["first_seen_epoch"], now_ts):
+                shadow_anomalies.append(finding)
+            else:
+                anomalies.append(finding)
 
     write_baselines(data)
+
+    # Shadow-log entries for observe-only devices (no ids-events, no notify)
+    for a in shadow_anomalies:
+        label = hostname_for_ip(a["ip"])
+        days_in = (now_ts - a["first_seen_epoch"]) // 86400
+        append_learning_log({
+            "ts": now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "epoch": now_ts,
+            "source": a["ip"],
+            "device": label,
+            "would_have_fired": True,
+            "delta_bytes": a["delta"],
+            "baseline_bytes": a["baseline"],
+            "multiplier": a["multiplier"],
+            "hour": a["hour"],
+            "days_since_first_seen": days_in,
+            "observe_only_days_remaining": max(0, OBSERVE_ONLY_DAYS - days_in),
+            "detail": (
+                f"[OBSERVE-ONLY] {label} would have fired: {humanize_bytes(a['delta'])} "
+                f"vs baseline {humanize_bytes(a['baseline'])} ({a['multiplier']}×). "
+                f"Device is {days_in}d into {OBSERVE_ONLY_DAYS}d calibration window."
+            ),
+        })
 
     # Emit events
     for a in anomalies:
@@ -260,43 +350,67 @@ def run_collect() -> None:
              f"{label}: {humanize_bytes(a['delta'])} in {interval_sec//60}min ({a['multiplier']}×)"],
             check=False, capture_output=True,
         )
-    print(f"processed {len(current)} devices, {len(anomalies)} anomalies", file=sys.stderr)
+    print(
+        f"processed {len(current)} devices, "
+        f"{len(anomalies)} live anomalies, "
+        f"{len(shadow_anomalies)} observe-only",
+        file=sys.stderr,
+    )
 
 
 def run_status() -> None:
-    """Print JSON summary of per-device baselines."""
+    """Print JSON summary of per-device baselines + calibration state."""
+    now_ts = int(time.time())
     data = read_baselines()
     devices = data.get("devices", {})
     out = []
     for ip, dev in devices.items():
         samples = dev.get("samples", [])
+        first_seen = dev.get("first_seen_epoch", 0)
+        days_in = (now_ts - first_seen) // 86400 if first_seen else 0
+        in_observe = is_in_observe_window(first_seen, now_ts)
         out.append({
             "ip": ip,
             "label": hostname_for_ip(ip),
             "samples": len(samples),
+            "first_seen_epoch": first_seen,
+            "days_since_first_seen": days_in,
+            "observe_only": in_observe,
+            "observe_only_days_remaining": max(0, OBSERVE_ONLY_DAYS - days_in) if in_observe else 0,
+            "alerts_live": not in_observe and len(samples) >= MIN_SAMPLES,
             "hourly_medians": dev.get("hourly_medians", {}),
         })
-    print(json.dumps({"devices": out}, indent=2))
+    print(json.dumps({
+        "observe_only_window_days": OBSERVE_ONLY_DAYS,
+        "devices": out,
+    }, indent=2))
 
 
 def run_reset() -> None:
-    for p in (BASELINE_FILE, PREV_STATE):
+    for p in (BASELINE_FILE, PREV_STATE, LEARNING_LOG):
         try:
             p.unlink()
         except FileNotFoundError:
             pass
-    print("baselines cleared", file=sys.stderr)
+    print("baselines + learning log cleared", file=sys.stderr)
 
 
 def main() -> int:
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "collect"
-    if cmd in ("-h", "--help"):
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
         print(__doc__)
-        print("Subcommands: collect | status | reset")
+        print("\nSubcommands:")
+        print("  collect [--force-alerts]  collect one sample + detect anomalies")
+        print("                            --force-alerts skips the observe-only window")
+        print("                            (for dev/test only; timer should never use this)")
+        print("  status                    per-device baseline + calibration JSON")
+        print("  reset                     clear baselines, prev-state, and learning log")
         return 0
+    cmd = args[0]
+    force_alerts = "--force-alerts" in args[1:]
     try:
         if cmd == "collect":
-            run_collect()
+            run_collect(force_alerts=force_alerts)
         elif cmd == "status":
             run_status()
         elif cmd == "reset":
