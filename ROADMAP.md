@@ -110,6 +110,30 @@
 - [ ] Security Hall of Fame page (responsible disclosure)
 - [ ] OS Demo VM (live browser-streamed Phantom OS on demo.ghostporttechnologies.com — ARM64 Graviton + KasmVNC, ~2 weeks, see `docs/OS-DEMO-VM-PLAN.md`)
 
+### Palantir Countermeasures (2026-04-24)
+
+Feature wave targeting the at-home data-broker / surveillance-partner pipeline. Integrated into existing apps per `docs/FEATURE-INTEGRATION-SOP.md` (no new apps spawned).
+
+- [x] Enemy List — named data-broker block counters on the dashboard (nftables counters, privacy-preserving)
+- [x] Smart TV Surveillance category (Family Shield) — blocks Samba TV, Inscape, TVision, Nielsen, Roku ACR, LG Alphonso
+- [x] Data Brokers category (Family Shield) — blocks Acxiom, LiveRamp, Experian, LexisNexis, Palantir, Outlogic, Venntel, etc.
+- [x] TCP/IP fingerprint scrub (Arsenal toggle) — normalizes TTL + MSS so passive observers can't tell iOS from Windows
+- [x] Per-device outbound rate anomaly (Lookout+Crow's Nest) — catches silent telemetry activations and compromised-device phone-home
+- [x] Ghost Mode (Arsenal + mode card) — rotates WG data-plane exit IP every 4h on DoubleHop/ZHop
+- [ ] EC2 fleet multi-IP provisioning (Ghost Mode prerequisite — coordinating with ops)
+- [ ] Data-broker opt-out concierge (generate CCPA/GDPR deletion requests on behalf of the user)
+- [ ] Bluetooth beacon scanner (detect AirTag-class presence trackers in the home)
+
+### Stonefish (ARP Guard) upgrades (2026-04-24)
+
+- [x] Vendor + hostname in device table (OUI lookup + DHCP lease hostname)
+- [x] mako critical notifications on SPOOFING / GW CHANGED (5 min per-MAC rate limit)
+- [x] One-click Block MAC (right-click → Block; persists across reboot via nftables + systemd restore service)
+- [ ] Timeline tab (ARP anomalies over time, like Tide Chart for bandwidth)
+- [ ] Trust / whitelist right-click action (suppress alerts for known-good devices)
+- [ ] More attack patterns: gratuitous ARP, ARP scans, ARP flood, MAC flapping
+- [ ] Waybar module for live Stonefish alert count
+
 ---
 
 ## Phase 7 — Future (Unscheduled)
