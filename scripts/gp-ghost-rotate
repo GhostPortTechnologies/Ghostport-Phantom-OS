@@ -76,22 +76,108 @@ def get_wg1_peer_pubkey() -> str | None:
         return None
 
 
-def apply_endpoint(ep: dict) -> tuple[bool, str]:
-    """Live-update wg1 peer endpoint. Returns (ok, message)."""
-    pubkey = get_wg1_peer_pubkey()
-    if not pubkey:
-        return False, f"{WG_IFACE} not up or has no peer"
-    endpoint_str = f"{ep['host']}:{ep.get('port', 51820)}"
+def get_wg1_current_endpoint() -> str | None:
+    """Read the current peer endpoint (ip:port) so we can restore it on rollback."""
+    try:
+        out = subprocess.run(
+            ["sudo", "wg", "show", WG_IFACE, "endpoints"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+        if not out:
+            return None
+        # Format: "<pubkey>\t<ip>:<port>" — one peer per line. wg1 has exactly one peer.
+        parts = out.split()
+        # Guard against "(none)" placeholder that wg prints when no endpoint is set.
+        if len(parts) >= 2 and parts[1] != "(none)":
+            return parts[1]
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def get_latest_handshake_epoch() -> int:
+    """Seconds-since-epoch of the most recent successful WG handshake, 0 if none."""
+    try:
+        out = subprocess.run(
+            ["sudo", "wg", "show", WG_IFACE, "latest-handshakes"],
+            capture_output=True, text=True, timeout=5, check=False,
+        ).stdout.strip()
+        if not out:
+            return 0
+        parts = out.split()
+        return int(parts[1]) if len(parts) >= 2 else 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, ValueError):
+        return 0
+
+
+def _wg_set_endpoint(pubkey: str, endpoint_str: str) -> tuple[bool, str]:
+    """Bare `wg set` call. Returns (ok, stderr or empty)."""
     try:
         result = subprocess.run(
             ["sudo", "wg", "set", WG_IFACE, "peer", pubkey, "endpoint", endpoint_str],
             capture_output=True, text=True, timeout=10, check=False,
         )
         if result.returncode != 0:
-            return False, f"wg set failed: {result.stderr.strip()}"
+            return False, result.stderr.strip()
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return False, f"wg set error: {e}"
-    return True, f"rotated to {endpoint_str} ({ep.get('label', '')})"
+        return False, str(e)
+    return True, ""
+
+
+def apply_endpoint(ep: dict, health_timeout_sec: int = 15) -> tuple[bool, str]:
+    """Live-update wg1 peer endpoint with rollback-on-failure.
+
+    Flow:
+      1. Capture the current endpoint + latest-handshake epoch (pre-state).
+      2. `wg set` the new endpoint. If the command itself fails, abort — no
+         rollback needed because the tunnel state never actually changed.
+      3. Wait up to `health_timeout_sec` for a fresh handshake. WG peers
+         negotiate a new handshake whenever the endpoint changes and the
+         far side is reachable, so a fresh handshake = the new exit works.
+      4. If no fresh handshake arrives in time, revert to the captured
+         endpoint. Customer connectivity stays on the working path even if
+         a fleet relay IP turns out to be dead at rotation time.
+
+    Returns (ok, message). On rollback, ok=False and message explains.
+    """
+    pubkey = get_wg1_peer_pubkey()
+    if not pubkey:
+        return False, f"{WG_IFACE} not up or has no peer"
+
+    endpoint_str = f"{ep['host']}:{ep.get('port', 51820)}"
+    pre_endpoint  = get_wg1_current_endpoint()
+    pre_handshake = get_latest_handshake_epoch()
+
+    ok, err = _wg_set_endpoint(pubkey, endpoint_str)
+    if not ok:
+        return False, f"wg set failed: {err}"
+
+    # Health check: wait for a fresh handshake. A stable latest-handshake
+    # timestamp across the whole window means the new endpoint isn't
+    # responding. Tolerance: if the tunnel had no prior handshake either,
+    # the 0→anything transition counts as success (fresh install path).
+    deadline = time.time() + health_timeout_sec
+    while time.time() < deadline:
+        if get_latest_handshake_epoch() > pre_handshake:
+            return True, f"rotated to {endpoint_str} ({ep.get('label', '')}) — handshake confirmed"
+        time.sleep(1)
+
+    # No fresh handshake in window → new endpoint looks dead. Roll back.
+    if pre_endpoint:
+        revert_ok, revert_err = _wg_set_endpoint(pubkey, pre_endpoint)
+        if revert_ok:
+            return False, (
+                f"new endpoint {endpoint_str} did not handshake within {health_timeout_sec}s — "
+                f"rolled back to {pre_endpoint}"
+            )
+        return False, (
+            f"new endpoint {endpoint_str} did not handshake AND rollback to {pre_endpoint} "
+            f"failed ({revert_err}) — tunnel may be broken, investigate manually"
+        )
+    return False, (
+        f"new endpoint {endpoint_str} did not handshake within {health_timeout_sec}s "
+        f"and no previous endpoint was captured — tunnel may be broken"
+    )
 
 
 def cmd_next(_args) -> int:
