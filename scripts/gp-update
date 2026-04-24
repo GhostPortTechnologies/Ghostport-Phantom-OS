@@ -210,6 +210,71 @@ with open(os.environ['GP_OUT'], 'w') as f:
       done
       systemctl daemon-reload
 
+      # Deploy sysctl drop-ins (e.g., conntrack accounting for rate anomaly)
+      if [ -d "$EXTRACT_DIR/etc/sysctl.d" ]; then
+        cp "$EXTRACT_DIR"/etc/sysctl.d/*.conf /etc/sysctl.d/ 2>/dev/null || true
+        sysctl --system >/dev/null 2>&1 || true
+      fi
+
+      # Deploy sudoers drop-ins with visudo validation (corrupt sudoers = system lockout)
+      if [ -d "$EXTRACT_DIR/etc/sudoers.d" ]; then
+        for so in "$EXTRACT_DIR"/etc/sudoers.d/*; do
+          [ -f "$so" ] || continue
+          so_name=$(basename "$so")
+          if visudo -c -f "$so" >/dev/null 2>&1; then
+            cp "$so" "/etc/sudoers.d/$so_name"
+            chmod 440 "/etc/sudoers.d/$so_name"
+          else
+            log "WARNING: sudoers drop-in $so_name failed visudo -c — skipping deploy"
+          fi
+        done
+      fi
+
+      # Deploy blocklists (broker lists, ACR hosts, etc.)
+      if [ -d "$EXTRACT_DIR/etc/blocklists" ]; then
+        mkdir -p /etc/phantom/blocklists
+        cp "$EXTRACT_DIR"/etc/blocklists/*.json /etc/phantom/blocklists/ 2>/dev/null || true
+        cp "$EXTRACT_DIR"/etc/blocklists/*.txt /etc/phantom/blocklists/ 2>/dev/null || true
+        chmod 644 /etc/phantom/blocklists/* 2>/dev/null || true
+      fi
+
+      # Deploy cron.d drop-ins (weekly rootkit scans, hourly log shipper)
+      if [ -d "$EXTRACT_DIR/etc/cron.d" ]; then
+        for cf in "$EXTRACT_DIR"/etc/cron.d/*; do
+          [ -f "$cf" ] || continue
+          cp "$cf" "/etc/cron.d/$(basename "$cf")"
+          chmod 644 "/etc/cron.d/$(basename "$cf")"
+          chown root:root "/etc/cron.d/$(basename "$cf")"
+        done
+      fi
+
+      # Enable + start Phantom-namespaced timers (idempotent — safe on every update)
+      for timer_file in "$EXTRACT_DIR"/systemd/phantom-*.timer; do
+        [ -f "$timer_file" ] || continue
+        systemctl enable --now "$(basename "$timer_file")" 2>/dev/null || true
+      done
+
+      # Enable non-timer Phantom services (boot-restore services like
+      # phantom-mac-blocklist.service — these have [Install] WantedBy= but
+      # no paired timer).
+      for service_file in "$EXTRACT_DIR"/systemd/phantom-*.service; do
+        [ -f "$service_file" ] || continue
+        service_name=$(basename "$service_file")
+        timer_pair="${service_name%.service}.timer"
+        if [ ! -f "$EXTRACT_DIR/systemd/$timer_pair" ]; then
+          systemctl enable "$service_name" 2>/dev/null || true
+        fi
+      done
+
+      # Initialize nftables tables that helpers maintain (idempotent — init
+      # tears down + rebuilds; reload restores persisted state from JSON).
+      if [ -x /usr/local/bin/gp-broker-counters ]; then
+        /usr/local/bin/gp-broker-counters init 2>/dev/null || true
+      fi
+      if [ -x /usr/local/bin/gp-mac-block ]; then
+        /usr/local/bin/gp-mac-block reload 2>/dev/null || true
+      fi
+
     # Write version.json
     GP_UPDATE_VER="$UPDATE_VERSION" GP_PREV_VER="$(get_current_version)" GP_VFILE="$VERSION_FILE" python3 -c "
 import json, datetime, os
