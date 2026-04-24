@@ -93,6 +93,8 @@ function updateArsenalUI(data) {
 
   // Dreadnought checkbox state (mode section row)
   updateDreadnought(data);
+  // Ghost Mode checkbox state (mirrors Dreadnought pattern, tunnel modes only)
+  updateGhostMode(data);
 
   // MAC Randomization
   setToggle("tog-macrandom", data.macRandomization);
@@ -203,6 +205,53 @@ function updateDreadnought(data) {
   const warn = document.getElementById("dn-warn");
   if (installBtn) installBtn.style.display = ready ? "none" : "inline-block";
   if (warn) warn.style.display = (ready && on) ? "inline" : "none";
+}
+
+// Ghost Mode — mirrors updateDreadnought / toggleDreadnought but for WG exit rotation.
+// Applicable in tunnel modes (opposite of Dreadnought). "Ready" means ≥2 endpoints configured.
+function updateGhostMode(data) {
+  const row = document.getElementById("gm-row");
+  if (!row) return;
+  // Show only in doublehop/zhop (tunnel modes). data.mode is the current mode string.
+  const applicable = data.mode === "doublehop" || data.mode === "zhop";
+  row.style.display = applicable ? "flex" : "none";
+  if (!applicable) return;
+
+  const on = !!data.ghostMode;
+  const ready = !!data.ghostReady;
+  row.classList.toggle("on", on);
+  row.classList.toggle("disabled", !ready);
+  const check = document.getElementById("gm-check");
+  if (check) check.setAttribute("aria-checked", on ? "true" : "false");
+  const warn = document.getElementById("gm-warn");
+  if (warn) warn.style.display = ready ? "none" : "inline";
+}
+
+function toggleGhostMode() {
+  const row = document.getElementById("gm-row");
+  if (!row || row.classList.contains("disabled") || row.style.display === "none") return;
+  const isOn = row.classList.contains("on");
+  setGhostMode(!isOn);
+}
+
+async function setGhostMode(enabled) {
+  log(`Ghost Mode: ${enabled ? "engaging rotation..." : "disabling rotation..."}`, "warn");
+  try {
+    const res = await fetch(ARSENAL_API + "/api/arsenal/ghostmode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      log(`Ghost Mode ${enabled ? "active — WG exit rotates every 4h" : "disabled"}`, enabled ? "success" : "info");
+      await fetchArsenalStatus();
+    } else {
+      log(`Ghost Mode: ${data.error || "failed"}`, "error");
+    }
+  } catch (e) {
+    log(`Ghost Mode error: ${e.message}`, "error");
+  }
 }
 
 function toggleDreadnought() {

@@ -1539,6 +1539,13 @@
         <button class="dn-install" id="dn-install" onclick="installDreadnought()" style="display:none" type="button">INSTALL</button>
       </div>
 
+      <!-- Ghost Mode — only applicable in DoubleHop / ZHop (tunnel modes). Rotates WG exit IP on schedule. -->
+      <div class="dreadnought-row" id="gm-row" style="display:none">
+        <div class="dn-check" id="gm-check" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle Ghost Mode exit-IP rotation"></div>
+        <div class="dn-label">GHOST MODE <span style="color:var(--text-dim);font-weight:normal;font-size:9px;letter-spacing:0.5px">— rotates tunnel exit IP every 4h</span></div>
+        <span class="dn-warn" id="gm-warn" style="display:none">⚠ needs ≥2 endpoints</span>
+      </div>
+
       <div class="modes" id="modes-grid">
 
         <!-- ISP -->

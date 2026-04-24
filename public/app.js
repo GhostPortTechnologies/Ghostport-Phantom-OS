@@ -1100,6 +1100,10 @@
   if (e) e.addEventListener("click", function() { arsenalToggle('encrypteddns'); });
   var e = document.getElementById("tog-quicblock");
   if (e) e.addEventListener("click", function() { arsenalToggle('quicblock'); });
+  var e = document.getElementById("tog-tcpscrub");
+  if (e) e.addEventListener("click", function() { arsenalToggle('tcpscrub'); });
+  var e = document.getElementById("gm-check");
+  if (e) e.addEventListener("click", function() { if (typeof toggleGhostMode === 'function') toggleGhostMode(); });
   var e = document.getElementById("btn-dnstest");
   if (e) e.addEventListener("click", function() { runDnsTest(); });
   var e = document.getElementById("tog-macrandom");
@@ -1144,6 +1148,10 @@
   if (e) e.addEventListener("click", function() { window._fsToggleCat('tiktok'); });
   var e = document.getElementById("fs-cat-x");
   if (e) e.addEventListener("click", function() { window._fsToggleCat('twitter'); });
+  var e = document.getElementById("fs-cat-acr");
+  if (e) e.addEventListener("click", function() { window._fsToggleCat('acr'); });
+  var e = document.getElementById("fs-cat-dataBrokers");
+  if (e) e.addEventListener("click", function() { window._fsToggleCat('dataBrokers'); });
   var e = document.getElementById("btn-fs-discover");
   if (e) e.addEventListener("click", function() { window._fsDiscover(); });
   var e = document.getElementById("btn-14");

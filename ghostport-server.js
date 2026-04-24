@@ -3056,6 +3056,12 @@ app.get("/api/arsenal/status", async (req, res) => {
       quicBlock: arsenal.quicBlock !== false, // default true
       tcpScrub:  !!arsenal.tcpScrub,          // default false
       ghostMode: !!arsenal.ghostMode,         // default false
+      ghostReady: (() => {
+        try {
+          const cfg = JSON.parse(fs.readFileSync("/etc/phantom/ghost-endpoints.json", "utf8"));
+          return (cfg.endpoints || []).length >= 2;
+        } catch { return false; }
+      })(),
       piholeConnected: piholeSid !== null,
       blocklistFreq: arsenal.blocklistFreq,
       schedules: arsenal.schedules || [],
@@ -3251,6 +3257,65 @@ app.post("/api/arsenal/encrypteddns", async (req, res) => {
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * GET /api/arsenal/ghostmode/status
+ * Returns Ghost Mode config — endpoint count, current index, last rotation.
+ * Used by UI to decide between [ENABLE], [CONFIGURE], [INSTALL] states.
+ */
+app.get("/api/arsenal/ghostmode/status", async (req, res) => {
+  try {
+    const result = await run("sudo gp-ghost-rotate status", 5000);
+    try {
+      const parsed = JSON.parse(result.out);
+      const arsenal = readArsenal();
+      res.json({ ok: true, enabled: !!arsenal.ghostMode, ...parsed });
+    } catch {
+      res.json({ ok: false, error: "ghost-rotate status parse failed" });
+    }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message.slice(0, 300) });
+  }
+});
+
+/**
+ * POST /api/arsenal/ghostmode — { enabled: true|false }
+ * Enabling: turns on phantom-ghost-rotate.timer (rotates wg1 endpoint every 4h).
+ * Requires ≥2 endpoints in /etc/phantom/ghost-endpoints.json. If fewer,
+ * returns 400 with a clear message so the UI can prompt the operator.
+ * Sticky: state persists in arsenal.json. Timer runs regardless of mode;
+ * the rotator itself no-ops in non-tunnel modes.
+ */
+app.post("/api/arsenal/ghostmode", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    if (enabled) {
+      // Gate on endpoint count so we don't enable a no-op timer.
+      const status = await run("sudo gp-ghost-rotate status", 5000);
+      try {
+        const parsed = JSON.parse(status.out);
+        if (!parsed.ready) {
+          return res.status(400).json({
+            ok: false,
+            error: `Ghost Mode needs ≥2 endpoints (${parsed.configured_endpoints} configured). See /etc/phantom/ghost-endpoints.json`,
+            status: parsed,
+          });
+        }
+      } catch {
+        return res.status(500).json({ ok: false, error: "ghost-rotate status parse failed" });
+      }
+      await run("sudo systemctl enable --now phantom-ghost-rotate.timer", 10000);
+    } else {
+      await run("sudo systemctl disable --now phantom-ghost-rotate.timer 2>/dev/null || true", 10000);
+    }
+    await withArsenal(arsenal => { arsenal.ghostMode = !!enabled; });
+    console.log(`[Arsenal] Ghost Mode ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, ghostMode: !!enabled });
+  } catch (e) {
+    console.error("[GhostPort] Ghost Mode error:", e.message);
+    res.status(500).json({ ok: false, error: e.message.slice(0, 500) });
   }
 });
 

@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""gp-ghost-rotate — WireGuard exit-IP rotator for Ghost Mode.
+
+Cycles wg1 (data-plane) Endpoint= through a curated list of relay IPs
+so upstream observers can't aggregate a stable IP → household mapping.
+Uses `wg set` to switch without flapping the tunnel.
+
+Config file:
+  /etc/phantom/ghost-endpoints.json
+  {
+    "endpoints": [
+      {"host": "a.b.c.d", "port": 51820, "label": "us-east-1a"},
+      {"host": "e.f.g.h", "port": 51820, "label": "us-west-2c"}
+    ],
+    "current_index": 0,
+    "last_rotation_epoch": 0,
+    "rotation_interval_hours": 4
+  }
+
+Subcommands:
+  next     Rotate to next endpoint (called by timer).
+  status   Print JSON current state.
+  set N    Force index to N (no rotation).
+  list     Print the configured endpoints.
+
+Safety:
+  - Tunnel modes only (doublehop/zhop). ISP/Zero Trust → no-op exit 0.
+  - Rotation requires ≥2 endpoints. With 1, no-ops with a warning.
+  - On wg set failure, reverts current_index to previous.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+CONFIG_FILE = Path("/etc/phantom/ghost-endpoints.json")
+CURRENT_MODE = Path("/etc/phantom/current-mode")
+WG_IFACE = "wg1"
+
+
+def read_config() -> dict:
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"endpoints": [], "current_index": 0, "last_rotation_epoch": 0, "rotation_interval_hours": 4}
+
+
+def write_config(data: dict) -> None:
+    CONFIG_FILE.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(CONFIG_FILE, 0o644)
+    except PermissionError:
+        pass
+
+
+def current_mode() -> str:
+    try:
+        return CURRENT_MODE.read_text().strip()
+    except FileNotFoundError:
+        return "isp"
+
+
+def get_wg1_peer_pubkey() -> str | None:
+    """Extract the peer pubkey from wg show wg1."""
+    try:
+        out = subprocess.run(
+            ["sudo", "wg", "show", WG_IFACE, "peers"],
+            capture_output=True, text=True, timeout=10, check=False,
+        ).stdout.strip()
+        return out.splitlines()[0] if out else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
+def apply_endpoint(ep: dict) -> tuple[bool, str]:
+    """Live-update wg1 peer endpoint. Returns (ok, message)."""
+    pubkey = get_wg1_peer_pubkey()
+    if not pubkey:
+        return False, f"{WG_IFACE} not up or has no peer"
+    endpoint_str = f"{ep['host']}:{ep.get('port', 51820)}"
+    try:
+        result = subprocess.run(
+            ["sudo", "wg", "set", WG_IFACE, "peer", pubkey, "endpoint", endpoint_str],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if result.returncode != 0:
+            return False, f"wg set failed: {result.stderr.strip()}"
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return False, f"wg set error: {e}"
+    return True, f"rotated to {endpoint_str} ({ep.get('label', '')})"
+
+
+def cmd_next(_args) -> int:
+    mode = current_mode()
+    if mode not in ("doublehop", "zhop"):
+        print(f"mode={mode}: Ghost rotation is tunnel-only. No-op.", file=sys.stderr)
+        return 0
+    cfg = read_config()
+    endpoints = cfg.get("endpoints", [])
+    if len(endpoints) < 2:
+        print(f"only {len(endpoints)} endpoint(s) configured — rotation needs ≥2. No-op.", file=sys.stderr)
+        return 0
+    idx_before = cfg.get("current_index", 0)
+    idx_next = (idx_before + 1) % len(endpoints)
+    ok, msg = apply_endpoint(endpoints[idx_next])
+    if not ok:
+        print(f"rotation failed: {msg}", file=sys.stderr)
+        return 1
+    cfg["current_index"] = idx_next
+    cfg["last_rotation_epoch"] = int(time.time())
+    write_config(cfg)
+    print(msg, file=sys.stderr)
+    return 0
+
+
+def cmd_status(_args) -> int:
+    cfg = read_config()
+    endpoints = cfg.get("endpoints", [])
+    idx = cfg.get("current_index", 0)
+    status = {
+        "configured_endpoints": len(endpoints),
+        "current_index": idx,
+        "current_endpoint": endpoints[idx] if 0 <= idx < len(endpoints) else None,
+        "last_rotation_epoch": cfg.get("last_rotation_epoch", 0),
+        "rotation_interval_hours": cfg.get("rotation_interval_hours", 4),
+        "mode": current_mode(),
+        "ready": len(endpoints) >= 2,
+    }
+    print(json.dumps(status, indent=2))
+    return 0
+
+
+def cmd_set(args) -> int:
+    try:
+        n = int(args[0])
+    except (IndexError, ValueError):
+        print("set requires integer index", file=sys.stderr)
+        return 2
+    cfg = read_config()
+    endpoints = cfg.get("endpoints", [])
+    if not (0 <= n < len(endpoints)):
+        print(f"index {n} out of range (0..{len(endpoints)-1})", file=sys.stderr)
+        return 2
+    ok, msg = apply_endpoint(endpoints[n])
+    if not ok:
+        print(f"set failed: {msg}", file=sys.stderr)
+        return 1
+    cfg["current_index"] = n
+    cfg["last_rotation_epoch"] = int(time.time())
+    write_config(cfg)
+    print(msg, file=sys.stderr)
+    return 0
+
+
+def cmd_list(_args) -> int:
+    cfg = read_config()
+    for i, ep in enumerate(cfg.get("endpoints", [])):
+        marker = "→" if i == cfg.get("current_index") else " "
+        print(f"  {marker} [{i}] {ep.get('host')}:{ep.get('port', 51820)} ({ep.get('label', '')})")
+    return 0
+
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "next"
+    args = sys.argv[2:]
+    if cmd in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    handlers = {"next": cmd_next, "status": cmd_status, "set": cmd_set, "list": cmd_list}
+    h = handlers.get(cmd)
+    if not h:
+        print(f"unknown subcommand: {cmd}", file=sys.stderr)
+        return 2
+    return h(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

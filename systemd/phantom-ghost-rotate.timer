@@ -1,0 +1,12 @@
+[Unit]
+Description=Phantom OS — Ghost Mode rotation schedule
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=4h
+RandomizedDelaySec=15min
+AccuracySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
