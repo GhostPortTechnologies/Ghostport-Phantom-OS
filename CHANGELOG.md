@@ -1,8 +1,8 @@
 # CHANGELOG.md — Append Only
 [2026-04-13] [DOCS] Manager system initialized — CLAUDE.md constitution established
 [2026-04-14] [DOCS] ROADMAP.md rewritten to reflect actual system state — 7 phases, 70+ items marked [x], old stale roadmap replaced
-[2026-04-14] [DOCS] TASKS.md populated with real queue (9 items) + 4 blocked items requiring Thomas
-[2026-04-14] [DOCS] HUMAN_TASKS.md populated — 5 decisions pending from Thomas
+[2026-04-14] [DOCS] TASKS.md populated with real queue (9 items) + 4 blocked items requiring the operator
+[2026-04-14] [DOCS] HUMAN_TASKS.md populated — 5 decisions pending from the operator
 [2026-04-14] [FEAT] Real-time traffic monitoring — backend (/api/tools/bandwidth/rate), frontend panel, OS waybar module (gp-bar-traffic)
 [2026-04-14] [FIX] Health guard bash octal bug — fixed (Opus-Prime-II)
 [2026-04-14] [FIX] Change-passcode TOTP drop — fixed (Opus-Prime-II)
