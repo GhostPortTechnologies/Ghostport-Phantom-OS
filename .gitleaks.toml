@@ -9,12 +9,14 @@ title = "Phantom OS gitleaks config"
 useDefault = true
 
 # ── Project-specific rules ──────────────────────────────────
-
-[[rules]]
-id = "phantom-bridge-token-known"
-description = "Known-historical leaked bridge/fleet token values — must never reappear"
-regex = '''(***REVOKED-TOKEN***|***REVOKED-TOKEN***|***REVOKED-TOKEN***|***REVOKED-TOKEN***)'''
-tags = ["phantom-os", "historical-leak"]
+#
+# NOTE: the historical 2026-04-23 token values are intentionally NOT listed here
+# as literal regexes. All four were revoked at the issuing service and cannot be
+# reissued. The shape-based rule below covers any future bridge/fleet token, and
+# GitHub's server-side push protection + secret scanning (enabled on this repo)
+# cover any ghp_* or github_pat_* that might slip through. Embedding revoked
+# values in a public repo only exposes them to scrollback / scraping without
+# adding defense.
 
 [[rules]]
 id = "phantom-bridge-token-shape"

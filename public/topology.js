@@ -488,21 +488,21 @@
       this.nodes.wg1 = new TopoNode(this.nodeLayer, "wg1", ICONS.lock, "DATA PLANE", colPi - 115, rowTunnels, {
         w: 130, active: wg1Active,
         detail: wg1Active ? "wg1 \u2022 10.66.67.x" : "wg1 \u2022 inactive",
-        tooltipLines: ["*WireGuard Data Plane (wg1)", `Status: ${wg1Active ? "UP" : "DOWN"}`, "Peer: 54.211.104.73", "Subnet: 10.66.67.0/24"]
+        tooltipLines: ["*WireGuard Data Plane (wg1)", `Status: ${wg1Active ? "UP" : "DOWN"}`, "Peer: GhostPort data relay", "Subnet: 10.66.67.0/24"]
       });
 
       // wg0 control plane (right of Pi)
       this.nodes.wg0 = new TopoNode(this.nodeLayer, "wg0", ICONS.lock, "CONTROL PLANE", colPi + 115, rowTunnels, {
         w: 130, active: wg0Active,
         detail: wg0Active ? "wg0 \u2022 10.66.66.x" : "wg0 \u2022 inactive",
-        tooltipLines: ["*WireGuard Control Plane (wg0)", `Status: ${wg0Active ? "UP" : "DOWN"}`, "Peer: 44.214.101.82", "Subnet: 10.66.66.0/24"]
+        tooltipLines: ["*WireGuard Control Plane (wg0)", `Status: ${wg0Active ? "UP" : "DOWN"}`, "Peer: GhostPort control relay", "Subnet: 10.66.66.0/24"]
       });
 
-      // EC2 Relay (centered below both wg nodes)
-      this.nodes.ec2 = new TopoNode(this.nodeLayer, "ec2", ICONS.server, "EC2 RELAY", colPi, rowEc2, {
+      // Fleet relay (centered below both wg nodes)
+      this.nodes.ec2 = new TopoNode(this.nodeLayer, "ec2", ICONS.server, "FLEET RELAY", colPi, rowEc2, {
         active: wg0Active || wg1Active,
-        detail: tunnelActive ? "AWS us-east-1" : "standby",
-        tooltipLines: ["*EC2 Relay Server", "Region: us-east-1", "wg0: 44.214.101.82", "wg1: 54.211.104.73"]
+        detail: tunnelActive ? "GhostPort fleet" : "standby",
+        tooltipLines: ["*Fleet Relay Server", "Control plane + data plane", "Managed by GhostPort"]
       });
 
       // Tailscale (above Pi, centered — visual counterweight to EC2)
