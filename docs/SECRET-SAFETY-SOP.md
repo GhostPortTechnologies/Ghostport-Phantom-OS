@@ -387,6 +387,15 @@ gitleaks detect --config .gitleaks.toml --no-git --source . --redact   # working
 ```
 Clean means: `"no leaks found"` in both. If any hits remain, classify each: true-positive (fix) vs allowlist candidate (add to `.gitleaks.toml [allowlist]`).
 
+**Gitleaks scans HEAD-state of each commit object but doesn't catch strings that appear *only in diffs* (added and later removed in a follow-up commit). Always run the raw-history check below alongside gitleaks — they cover different surfaces.**
+
+```
+# Raw-history check — catches strings that lived in diff context even if HEAD is clean now.
+# Substitute the list of strings that must never appear anywhere in history.
+git log --all -p 2>/dev/null | grep -cE "<token1>|<token2>|<token3>|<token4>"
+```
+Expected: `0`. Any non-zero count = rewrite history (`git filter-repo --replace-text`) before flipping.
+
 #### 11.2.2 PII in tracked content
 Specifically hunt for: real names (first + last), personal emails (not `@<company>`), phone numbers, home addresses, social media handles.
 
@@ -490,6 +499,54 @@ File names themselves can leak. A filename of `ISSUE-14273-customer-data-fix.md`
 - "DRAFT", "wip", "notes-for-self"
 - Developer first names ("thomas-rules.md", "alice-fixes.md")
 
+#### 11.2.11 Detection-rule hygiene (don't embed what you're detecting)
+
+A `.gitleaks.toml` rule that lists known-leaked tokens as literal regex alternations *publishes those tokens*. The file becomes a secrets list, and every future edit of that file preserves those tokens in the commit diff forever. Even after the tokens are revoked, this creates:
+
+- GitHub push-protection blocks on the public flip (server-side scanner still matches the `ghp_*` / `github_pat_*` shape in the rule itself)
+- `git log -p` output that exposes the revoked values to anyone who clones
+- A false sense that the rule is defending something, when the shape-based rule already covers all future leaks of the same class
+
+**Rule:** detection rules catch by *shape*, not by *literal value*. If you need a defense-in-depth tripwire against specific known-leaked values, use SHA-256 fingerprints in a custom checker — not the literal string.
+
+```
+# DON'T — publishes the token values themselves
+regex = '''(ghp_ZZqa2EX...|Pa6wXsV4...)'''
+
+# DO — catches any new token of the same shape
+regex = '''(?i)(bridge_token|fleet_token)\s*[:=]\s*["']([A-Za-z0-9+/_-]{40,60})["']'''
+```
+
+#### 11.2.12 History-diff scan (gitleaks misses diff-only bleed)
+
+Gitleaks checks each commit's *state at that commit*. A string that was added in commit A and removed in commit B lives in the diffs of both — but at the HEAD of the rewritten rule-file it's gone, so gitleaks reports clean. GitHub's server-side scanner indexes diffs.
+
+```
+# Run BEFORE every force-push and BEFORE every visibility flip
+git log --all -p 2>/dev/null | grep -cE "<string that must never appear>"
+# Expected: 0. Any non-zero = filter-repo rewrite required.
+```
+
+If non-zero: write the sensitive values into a gitignored file (never argv, never env), then `git filter-repo --replace-text <file>`, force-push, shred the file. See §5 for the rotation pattern and §11.4 for post-rewrite cleanup.
+
+#### 11.2.13 Pre-commit hook live-fire test
+
+The hook is only defense if it actually blocks. Test it at least once per major config change:
+
+```
+# Should BLOCK (PAT)
+echo "ghp_$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 36)" > leaktest.txt
+git add leaktest.txt && git commit -m test   # must fail with "BLOCKED"
+git reset HEAD leaktest.txt && rm leaktest.txt
+
+# Should BLOCK (bare PEM header — gitleaks default rule requires body)
+echo "-----BEGIN OPENSSH PRIVATE KEY-----" > keytest.txt
+git add keytest.txt && git commit -m test   # must fail with "BLOCKED"
+git reset HEAD keytest.txt && rm keytest.txt
+```
+
+If either test commits successfully, your hook has a gap. The second test failed on 2026-04-23; fix was adding a `private-key-header-only` rule to `.gitleaks.toml`.
+
 ### 11.3 Commit structure for a public-prep pass
 
 One batched pre-public commit is harder to review and harder to bisect. Use discrete commits per concern:
@@ -528,6 +585,14 @@ The inline commands in §11.2 belong in a runnable script for reproducibility. R
 - 1 development smoke-test app and 1 redundant doc-zip binary
 - npm integrity hashes flagged as secrets by naive scans (false positive to document)
 - Symlink-to-system-file flagged by grep as binary leak (false positive to document)
+
+**Final-sweep discoveries (added 2026-04-23, after the initial §11 playbook was written):**
+- Hardcoded EC2 fleet relay public IPs in `public/topology.js` tooltip strings — infrastructure disclosure (→ §11.2.3)
+- Revoked-but-literal token values embedded in `.gitleaks.toml` detection regex — the rule file itself was a secrets list (→ §11.2.11)
+- Broken external URLs in `README.md` (`<apex>/docs` 404'd, apex was down) and `SECURITY.md` (broken `/report-vulnerability` path)
+- `package.json` license mismatch (`ISC` claim vs `Elastic 2.0` LICENSE file) and missing `"private": true` (accidental `npm publish` risk for both root + desktop sub-app)
+- Pre-commit hook gap: gitleaks default private-key rule didn't catch a bare `-----BEGIN OPENSSH PRIVATE KEY-----` line without a body (→ §11.2.13, fixed with `private-key-header-only` custom rule)
+- `git log --all -p` still exposed the four revoked tokens in diff context even though gitleaks HEAD scan was clean — required a second `git filter-repo --replace-text` pass (→ §11.2.12)
 
 Each of these was caught by a different sweep angle. **One sweep is not enough.** This playbook codifies the angles so future public-flips don't repeat the multi-round discovery loop of 2026-04-23.
 
