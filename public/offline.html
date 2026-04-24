@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#060A06">
+<title>GhostPort — Offline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #060a06;
+    color: #c8f0c8;
+    font-family: 'Courier New', 'Consolas', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    text-align: center;
+  }
+  .skull { font-size: 64px; margin-bottom: 16px; opacity: 0.6; }
+  h1 { font-size: 20px; color: #39ff8f; letter-spacing: 2px; margin-bottom: 8px; }
+  p { font-size: 13px; color: #4a7a4a; max-width: 300px; line-height: 1.6; }
+  .retry {
+    margin-top: 24px; padding: 12px 32px;
+    background: none; border: 1px solid #39ff8f; color: #39ff8f;
+    font-family: inherit; font-size: 13px; letter-spacing: 1px;
+    border-radius: 4px; cursor: pointer; min-height: 44px;
+  }
+  .retry:active { background: #39ff8f22; }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:0.6} 50%{opacity:0.3} }
+</style>
+</head>
+<body>
+  <div class="skull pulse">☠</div>
+  <h1>RECONNECTING...</h1>
+  <p>Unable to reach your GhostPort. Make sure you're connected to the GhostPort WiFi network.</p>
+  <button class="retry" onclick="location.reload()">RETRY</button>
+</body>
+</html>

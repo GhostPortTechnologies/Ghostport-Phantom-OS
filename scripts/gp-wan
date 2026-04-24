@@ -1,0 +1,416 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CMD="${1:-}"
+WAN_CONF="/etc/phantom/wan.json"
+COMMON_NFT="/etc/gpmodes/common.nft"
+HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
+HOSTAPD_BACKUP="/etc/hostapd/hostapd.conf.pre-wan"
+WPA_CONF="/run/ghostport/gp-wlan1-wpa.conf"
+WPA_PID="/run/ghostport/gp-wlan1-wpa.pid"
+MODEFILE="/etc/phantom/current-mode"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+json_val() {
+  python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2],sys.argv[3]))" "$WAN_CONF" "$1" "$2" 2>/dev/null || echo "$2"
+}
+
+set_wan_type() {
+  python3 -c "
+import json, sys
+with open(sys.argv[1]) as f: d = json.load(f)
+d['type'] = sys.argv[2]
+with open(sys.argv[1],'w') as f: json.dump(d, f, indent=2)
+" "$WAN_CONF" "$1"
+}
+
+current_wan_if() {
+  sed -n 's/^define WAN_IF = "\(.*\)"/\1/p' "$COMMON_NFT"
+}
+
+current_mode() {
+  cat "$MODEFILE" 2>/dev/null || echo "isp"
+}
+
+# ── Teardown wlan1 (safe to call even if not up) ──────────
+teardown_wlan1() {
+  # Stop wpa_supplicant
+  if [[ -f "$WPA_PID" ]]; then
+    local pid
+    pid=$(cat "$WPA_PID" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+      sleep 1
+    fi
+    rm -f "$WPA_PID"
+  fi
+  # Kill any leftover wpa_supplicant on wlan1
+  pkill -f "wpa_supplicant.*wlan1" 2>/dev/null || true
+  # Release DHCP
+  dhcpcd -k wlan1 2>/dev/null || dhclient -r wlan1 2>/dev/null || true
+  # Remove interface
+  iw dev wlan1 del 2>/dev/null || true
+  rm -f "$WPA_CONF"
+}
+
+# ── Restore hostapd to original channel ──────────────────
+restore_hostapd() {
+  if [[ -f "$HOSTAPD_BACKUP" ]]; then
+    cp "$HOSTAPD_BACKUP" "$HOSTAPD_CONF"
+    systemctl restart hostapd 2>/dev/null || true
+    echo "Hostapd restored to original config"
+  fi
+}
+
+# ── Set WAN_IF in common.nft ─────────────────────────────
+set_nft_wan() {
+  local iface="$1"
+  sed -i "s/^define WAN_IF = .*/define WAN_IF = \"$iface\"/" "$COMMON_NFT"
+}
+
+# ── Reapply current privacy mode ─────────────────────────
+reapply_mode() {
+  local mode
+  mode=$(current_mode)
+  echo "Reapplying mode: $mode"
+  /usr/local/bin/gp-mode "$mode" --no-rollback 2>/dev/null || true
+}
+
+# ── Internet connectivity check ──────────────────────────
+check_internet() {
+  curl -s --max-time 10 -o /dev/null -w "%{http_code}" https://icanhazip.com 2>/dev/null | grep -q "200"
+}
+
+# ── Frequency to channel mapping ─────────────────────────
+freq_to_channel() {
+  local freq="$1"
+  if (( freq >= 2412 && freq <= 2484 )); then
+    if (( freq == 2484 )); then echo 14
+    else echo $(( (freq - 2407) / 5 ))
+    fi
+  elif (( freq >= 5180 && freq <= 5825 )); then
+    echo $(( (freq - 5000) / 5 ))
+  else
+    echo 0
+  fi
+}
+
+# ── STATUS ────────────────────────────────────────────────
+do_status() {
+  local wan_if wan_type ssid
+  wan_if=$(current_wan_if)
+  wan_type=$(json_val type ethernet)
+  ssid=$(json_val ssid "")
+
+  echo "wan_type=$wan_type"
+  echo "wan_interface=$wan_if"
+  echo "saved_ssid=$ssid"
+
+  if [[ "$wan_type" == "wireless" ]] && ip link show wlan1 &>/dev/null; then
+    local wlan1_ip
+    wlan1_ip=$(ip -4 addr show wlan1 2>/dev/null | grep -oP 'inet \K[0-9.]+' || echo "none")
+    echo "wlan1_state=up"
+    echo "wlan1_ip=$wlan1_ip"
+    local connected_ssid
+    connected_ssid=$(iw dev wlan1 link 2>/dev/null | grep -oP 'SSID: \K.*' || echo "none")
+    echo "connected_ssid=$connected_ssid"
+  else
+    echo "wlan1_state=down"
+  fi
+
+  if ip link show eth0 &>/dev/null; then
+    local eth0_ip
+    eth0_ip=$(ip -4 addr show eth0 2>/dev/null | grep -oP 'inet \K[0-9.]+' || echo "none")
+    echo "eth0_ip=$eth0_ip"
+  fi
+}
+
+# ── SCAN ──────────────────────────────────────────────────
+do_scan() {
+  local scan_if="wlan0"
+
+  # Use wlan1 if it exists
+  if ip link show wlan1 &>/dev/null; then
+    scan_if="wlan1"
+  fi
+
+  local tmpfile
+  tmpfile=$(mktemp /tmp/gp-scan.XXXXXX)
+  iw dev "$scan_if" scan 2>/dev/null > "$tmpfile" || true
+
+  if [[ ! -s "$tmpfile" ]]; then
+    rm -f "$tmpfile"
+    echo "[]"
+    return
+  fi
+
+  # Parse scan results into JSON
+  python3 - "$tmpfile" << 'PYEOF'
+import json, sys
+
+output = open(sys.argv[1]).read()
+networks = []
+current = {}
+
+for line in output.split('\n'):
+    line = line.strip()
+    if line.startswith('BSS '):
+        if current.get('ssid'):
+            networks.append(current)
+        current = {'bssid': line.split()[1].rstrip('('), 'signal': -100, 'channel': 0, 'security': 'open'}
+    elif line.startswith('freq:'):
+        freq = int(line.split(':')[1].strip())
+        current['freq'] = freq
+        if 2412 <= freq <= 2484:
+            current['channel'] = (freq - 2407) // 5 if freq != 2484 else 14
+        elif 5180 <= freq <= 5825:
+            current['channel'] = (freq - 5000) // 5
+    elif line.startswith('signal:'):
+        try: current['signal'] = float(line.split(':')[1].strip().split()[0])
+        except: pass
+    elif line.startswith('SSID:'):
+        current['ssid'] = line.split(':', 1)[1].strip()
+    elif 'WPA' in line or 'RSN' in line:
+        current['security'] = 'wpa'
+    elif 'WEP' in line:
+        current['security'] = 'wep'
+
+if current.get('ssid'):
+    networks.append(current)
+
+seen = {}
+for n in networks:
+    ssid = n.get('ssid', '')
+    if not ssid:
+        continue
+    if ssid not in seen or n['signal'] > seen[ssid]['signal']:
+        seen[ssid] = n
+
+result = sorted(seen.values(), key=lambda x: x.get('signal', -100), reverse=True)
+for r in result:
+    r.pop('bssid', None)
+    r.pop('freq', None)
+
+print(json.dumps(result))
+PYEOF
+  rm -f "$tmpfile"
+}
+
+# ── ETHERNET (fallback/restore) ──────────────────────────
+do_ethernet() {
+  echo "Switching to Ethernet WAN..."
+
+  teardown_wlan1
+  restore_hostapd
+  set_nft_wan "eth0"
+  set_wan_type "ethernet"
+  reapply_mode
+
+  local eth0_ip
+  eth0_ip=$(ip -4 addr show eth0 2>/dev/null | grep -oP 'inet \K[0-9.]+' || true)
+  if [[ -n "$eth0_ip" ]]; then
+    echo "Ethernet WAN active: $eth0_ip"
+  else
+    echo "WARNING: eth0 has no IP — check cable"
+  fi
+}
+
+# ── WIRELESS ─────────────────────────────────────────────
+do_wireless() {
+  local ssid password
+  ssid=$(json_val ssid "")
+  password=$(json_val password "")
+
+  [[ -z "$ssid" ]] && die "No SSID configured in $WAN_CONF"
+  [[ -z "$password" ]] && die "No password configured in $WAN_CONF"
+
+  echo "Connecting to upstream WiFi: $ssid"
+
+  # Step 1: Scan for the target network to find its channel/frequency
+  echo "Scanning for upstream network..."
+  local scan_output target_freq target_channel target_band
+  scan_output=$(iw dev wlan0 scan 2>/dev/null || true)
+
+  target_freq=$(GP_SSID="$ssid" python3 -c "
+import sys, os
+lines = sys.stdin.readlines()
+freq = ''
+target = os.environ.get('GP_SSID', '')
+for line in lines:
+    line = line.strip()
+    if line.startswith('freq:'):
+        freq = line.split(':')[1].strip()
+    if line.startswith('SSID:') and line.split(':',1)[1].strip() == target:
+        print(freq)
+        sys.exit(0)
+print('')
+" <<< "$scan_output" 2>/dev/null || true)
+
+  if [[ -z "$target_freq" ]]; then
+    die "Could not find network '$ssid' in scan results"
+  fi
+
+  target_channel=$(freq_to_channel "$target_freq")
+  if (( target_freq >= 5000 )); then
+    target_band="a"
+  else
+    target_band="g"
+  fi
+
+  echo "Found '$ssid' on channel $target_channel (${target_freq}MHz, hw_mode=$target_band)"
+
+  # Step 2: Backup hostapd and adjust channel to match upstream
+  if [[ ! -f "$HOSTAPD_BACKUP" ]]; then
+    cp "$HOSTAPD_CONF" "$HOSTAPD_BACKUP"
+    echo "Hostapd config backed up"
+  fi
+
+  # Save original channel info
+  local orig_channel orig_band
+  orig_channel=$(grep -oP '^channel=\K\d+' "$HOSTAPD_BACKUP")
+  orig_band=$(grep -oP '^hw_mode=\K\w' "$HOSTAPD_BACKUP")
+  GP_WAN_CONF="$WAN_CONF" GP_ORIG_CH="${orig_channel:-36}" GP_ORIG_BAND="${orig_band:-a}" GP_TARGET_CH="$target_channel" GP_TARGET_BAND="$target_band" python3 -c "
+import json, os
+conf = os.environ['GP_WAN_CONF']
+with open(conf) as f: d = json.load(f)
+d['originalChannel'] = int(os.environ['GP_ORIG_CH'])
+d['originalBand'] = '5g' if os.environ['GP_ORIG_BAND'] == 'a' else '2.4g'
+d['channel'] = int(os.environ['GP_TARGET_CH'])
+d['band'] = '5g' if os.environ['GP_TARGET_BAND'] == 'a' else '2.4g'
+with open(conf, 'w') as f: json.dump(d, f, indent=2)
+"
+
+  local current_channel
+  current_channel=$(grep -oP '^channel=\K\d+' "$HOSTAPD_CONF" || echo "0")
+
+  if [[ "$current_channel" != "$target_channel" ]] || [[ "$(grep -oP '^hw_mode=\K\w' "$HOSTAPD_CONF")" != "$target_band" ]]; then
+    echo "Adjusting hostapd: channel $current_channel -> $target_channel, hw_mode -> $target_band"
+    sed -i "s/^channel=.*/channel=$target_channel/" "$HOSTAPD_CONF"
+    sed -i "s/^hw_mode=.*/hw_mode=$target_band/" "$HOSTAPD_CONF"
+
+    echo "Restarting hostapd (AP clients will briefly disconnect)..."
+    systemctl restart hostapd
+    sleep 2
+  fi
+
+  # Step 3: Teardown any existing wlan1
+  teardown_wlan1
+
+  # Step 4: Create wlan1 managed interface
+  echo "Creating wlan1 station interface..."
+  iw dev wlan0 interface add wlan1 type managed || die "Failed to create wlan1"
+  ip link set wlan1 up || die "Failed to bring up wlan1"
+  sleep 1
+
+  # Step 5: Connect via wpa_supplicant
+  echo "Connecting to '$ssid' via wpa_supplicant..."
+  echo "$password" | wpa_passphrase "$ssid" > "$WPA_CONF" 2>/dev/null || die "Failed to generate WPA config"
+  # Remove plaintext password from config
+  sed -i '/#psk=/d' "$WPA_CONF"
+
+  wpa_supplicant -B -i wlan1 -c "$WPA_CONF" -P "$WPA_PID" -D nl80211 2>/dev/null \
+    || die "wpa_supplicant failed to start"
+
+  # Wait for association (up to 15 seconds)
+  echo "Waiting for association..."
+  local attempts=0
+  while (( attempts < 15 )); do
+    if iw dev wlan1 link 2>/dev/null | grep -q "Connected"; then
+      break
+    fi
+    sleep 1
+    (( attempts++ ))
+  done
+
+  if ! iw dev wlan1 link 2>/dev/null | grep -q "Connected"; then
+    echo "Failed to associate with '$ssid' — reverting to ethernet"
+    teardown_wlan1
+    restore_hostapd
+    set_wan_type "ethernet"
+    die "WiFi association failed"
+  fi
+
+  echo "Associated with '$ssid'"
+
+  # Step 6: Get IP via dhcpcd
+  echo "Requesting IP address..."
+  if command -v dhcpcd &>/dev/null; then
+    dhcpcd -w -t 15 wlan1 2>/dev/null || true
+  else
+    dhclient -timeout 15 wlan1 2>/dev/null || true
+  fi
+
+  sleep 2
+
+  local wlan1_ip
+  wlan1_ip=$(ip -4 addr show wlan1 2>/dev/null | grep -oP 'inet \K[0-9.]+' || true)
+
+  if [[ -z "$wlan1_ip" ]]; then
+    echo "No IP obtained — reverting to ethernet"
+    teardown_wlan1
+    restore_hostapd
+    set_wan_type "ethernet"
+    die "DHCP failed on wlan1"
+  fi
+
+  echo "Got IP: $wlan1_ip"
+
+  # Step 7: Update nftables WAN_IF and reapply mode
+  set_nft_wan "wlan1"
+  set_wan_type "wireless"
+  reapply_mode
+
+  # Step 8: Verify internet
+  echo "Verifying internet connectivity..."
+  sleep 2
+  if check_internet; then
+    echo "WiFi WAN active: $ssid ($wlan1_ip) on channel $target_channel"
+  else
+    echo "WARNING: Internet check failed — connectivity may be limited"
+    echo "Use 'gp-wan ethernet' to revert if needed"
+  fi
+}
+
+# ── MAIN ─────────────────────────────────────────────────
+case "$CMD" in
+  status)
+    do_status
+    ;;
+  scan)
+    do_scan
+    ;;
+  ethernet)
+    do_ethernet
+    ;;
+  wireless|reconnect)
+    do_wireless
+    ;;
+  connect)
+    # gp-wan connect "SSID" "password"
+    [[ -z "${2:-}" ]] && die "Usage: gp-wan connect SSID password"
+    [[ -z "${3:-}" ]] && die "Usage: gp-wan connect SSID password"
+    mkdir -p /run/ghostport 2>/dev/null || true
+    sudo python3 -c "
+import json, sys
+conf = '/etc/phantom/wan.json'
+try:
+    data = json.load(open(conf))
+except:
+    data = {}
+data['type'] = 'wireless'
+data['ssid'] = sys.argv[1]
+data['password'] = sys.argv[2]
+with open(conf, 'w') as f:
+    json.dump(data, f, indent=2)
+" "$2" "$3"
+    do_wireless
+    ;;
+  disconnect)
+    do_ethernet
+    ;;
+  *)
+    echo "Usage: gp-wan {status|scan|connect|disconnect|ethernet|wireless|reconnect}" >&2
+    exit 1
+    ;;
+esac

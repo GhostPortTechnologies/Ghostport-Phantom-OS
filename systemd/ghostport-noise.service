@@ -1,0 +1,16 @@
+[Unit]
+Description=GhostPort Cover Traffic Generator
+After=network-online.target ghostport.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+ExecStart=/usr/local/bin/gp-noise
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#060A06">
-  <title>GhostPort — Command Deck</title>
+  <title>Phantom OS — Command Deck</title>
   <!-- Google Fonts removed to prevent privacy leak -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -47,6 +47,78 @@
     }
     .theme-rgb-btn:hover { transform: scale(1.15); }
     .theme-rgb-btn.active { border-color: #fff; box-shadow: 0 0 12px rgba(255,255,255,0.5); }
+
+    /* Theme pack buttons */
+    .theme-pack-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 8px; }
+    .theme-pack-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      padding: 6px 4px; border-radius: 6px; cursor: pointer;
+      background: var(--bg); border: 1px solid var(--border); transition: all 0.2s;
+    }
+    .theme-pack-btn:hover { border-color: var(--text-dim); }
+    .theme-pack-btn.active { border-color: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.3); }
+    .theme-pack-dot { width: 16px; height: 16px; border-radius: 50%; }
+    .theme-pack-name { font-size: 7px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase; }
+
+    /* FAB panel tabs */
+    .fab-tabs { display: flex; gap: 2px; margin-bottom: 10px; }
+    .fab-tab {
+      flex: 1; padding: 5px 0; text-align: center; font-size: 8px;
+      letter-spacing: 1px; color: var(--text-dim); cursor: pointer;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      transition: all 0.2s;
+    }
+    .fab-tab:hover { color: var(--text); }
+    .fab-tab.active { color: var(--green); border-color: var(--green); background: var(--bg3); }
+    .fab-tab-content { display: none; }
+    .fab-tab-content.active { display: block; }
+
+    /* Animation slider */
+    .anim-slider { width: 100%; -webkit-appearance: none; appearance: none; height: 4px; background: var(--border); border-radius: 2px; outline: none; }
+    .anim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--green); cursor: pointer; box-shadow: 0 0 6px var(--green); }
+    .anim-slider::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--green); cursor: pointer; border: none; }
+    .anim-labels { display: flex; justify-content: space-between; font-size: 7px; color: var(--text-dim); letter-spacing: 0.5px; margin-top: 2px; }
+
+    /* Animation intensity overrides */
+    body[data-animation="minimal"]::before { display: none !important; }
+    body[data-animation="minimal"] .brand-name { animation: none !important; }
+    body[data-animation="minimal"] .status-dot { animation: none !important; }
+    body[data-animation="minimal"] .mode-card.active { animation: none !important; }
+    body[data-animation="minimal"] .tunnel-dot.up { animation: none !important; }
+    body[data-animation="minimal"] .toggle-switch.on .toggle-track { box-shadow: none !important; }
+    body[data-animation="minimal"] .toggle-switch.on .toggle-thumb { box-shadow: none !important; }
+
+    body[data-animation="standard"]::before { display: none !important; }
+    body[data-animation="standard"] .brand-name { animation: none !important; }
+
+    /* Glassmorphism (subtle default, stronger with bg effects) */
+    .mode-card, .stat-box, .arsenal-card, .ship-stat {
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    }
+    body.has-bg-effect .mode-card, body.has-bg-effect .stat-box,
+    body.has-bg-effect .arsenal-card, body.has-bg-effect .ship-stat,
+    body.has-bg-effect .banner, body.has-bg-effect .log-box,
+    body.has-bg-effect .ticket-form, body.has-bg-effect #mode-panel {
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      background: rgba(10, 20, 10, 0.65);
+    }
+    /* Background effect button active state */
+    .bg-btn.active { border-color: var(--green) !important; color: var(--green) !important; }
+
+    /* Arsenal categories */
+    .arsenal-category { margin-bottom: 8px; }
+    .arsenal-cat-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; cursor: pointer;
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 6px; transition: all 0.2s;
+      user-select: none;
+    }
+    .arsenal-cat-header:hover { background: var(--bg3); border-color: var(--green-20); }
+    .arsenal-cat-icon { font-size: 16px; }
+    .arsenal-cat-name { font-size: 11px; color: var(--green); letter-spacing: 1px; flex: 1; }
+    .arsenal-cat-chevron { font-size: 10px; color: var(--text-dim); transition: transform 0.2s; }
+    .arsenal-cat-grid { margin-top: 8px; margin-bottom: 4px; }
     .theme-picker-row {
       display: flex; align-items: center; gap: 8px; margin-top: 8px;
     }
@@ -63,6 +135,93 @@
       font-size: 9px; color: var(--text-dim); letter-spacing: 1px; text-transform: uppercase;
     }
 
+    #mode-fab {
+      position: fixed; bottom: 20px; left: 20px; z-index: 9999;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: var(--bg2); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      cursor: grab; font-size: 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+      transition: box-shadow 0.2s;
+      touch-action: none; user-select: none; -webkit-user-select: none;
+    }
+    #mode-fab:hover { box-shadow: 0 2px 20px rgba(0,0,0,0.6); }
+    #mode-fab.dragging { cursor: grabbing; box-shadow: 0 4px 24px rgba(0,0,0,0.7); opacity: 0.85; }
+
+    #mode-panel {
+      position: fixed; z-index: 9998;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px 16px; box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+      opacity: 0; pointer-events: none; transform: scale(0.95);
+      transition: opacity 0.2s, transform 0.2s;
+      width: 220px;
+    }
+    #mode-panel.open {
+      opacity: 1; pointer-events: auto; transform: scale(1);
+    }
+    .mode-slot {
+      display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+      border-radius: 6px; cursor: pointer; transition: background 0.15s;
+      border: 1px solid transparent; margin-bottom: 4px;
+    }
+    .mode-slot:last-child { margin-bottom: 0; }
+    .mode-slot:hover { background: var(--bg3); }
+    .mode-slot.active { border-color: var(--green); background: rgba(57,255,143,0.06); }
+    .mode-slot.switching { opacity: 0.5; pointer-events: none; }
+    .mode-slot-icon { font-size: 18px; width: 24px; text-align: center; }
+    .mode-slot-name { font-size: 12px; font-weight: 600; letter-spacing: 1px; color: var(--text); }
+    .mode-slot-sub { font-size: 9px; color: var(--text-dim); letter-spacing: 0.5px; }
+    .mode-slot.active .mode-slot-name { color: var(--green); }
+
+    #mode-fab-tip {
+      position: absolute; left: 54px; top: 50%; transform: translateY(-50%);
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 12px; font-size: 11px; color: var(--green); white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity 0.4s;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.4); font-family: 'Share Tech Mono', monospace;
+    }
+    #mode-fab-tip::after {
+      content: ''; position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+      border: 6px solid transparent; border-right-color: var(--border);
+    }
+    #mode-fab-tip.show { opacity: 1; }
+    #mode-fab-tip.gone { display: none; }
+
+    #toast-container {
+      position: fixed; top: 16px; right: 16px; z-index: 10000;
+      display: flex; flex-direction: column; gap: 8px;
+      pointer-events: none; max-width: 340px;
+    }
+    .toast {
+      pointer-events: auto;
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 14px; font-size: 12px; color: var(--text);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      display: flex; align-items: center; gap: 10px;
+      animation: toastIn 0.3s ease;
+      cursor: pointer; transition: opacity 0.3s;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    .toast.out { opacity: 0; transform: translateX(20px); transition: all 0.3s; }
+    .toast-icon { font-size: 16px; flex-shrink: 0; }
+    .toast-msg { flex: 1; line-height: 1.4; }
+    .toast.success { border-color: var(--green); }
+    .toast.warn { border-color: #ffaa44; }
+    .toast.error { border-color: var(--red); }
+    .toast.info { border-color: var(--text-dim); }
+    @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+
+    @media(max-width: 480px) {
+      #toast-container { right: 8px; left: 8px; max-width: none; }
+      #mode-fab { width: 40px; height: 40px; font-size: 18px; bottom: 12px; left: 12px; }
+      #mode-panel { width: 180px; padding: 10px 12px; }
+      .mode-slot { padding: 6px 8px; }
+      .mode-slot-icon { font-size: 16px; }
+      .mode-slot-name { font-size: 11px; }
+      .theme-swatch { width: 24px; height: 24px; }
+      .theme-rgb-btn { width: 24px; height: 24px; }
+      .theme-color-input { width: 24px; height: 24px; }
+    }
 
     body {
       background: var(--bg);
@@ -268,10 +427,21 @@
     .mode-subtitle { font-size: 10px; color: var(--text-dim); margin-bottom: 8px; letter-spacing: 1px; }
     .mode-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
 
-    .privacy-bar-wrap { margin-top: 12px; }
+    .privacy-bar-wrap { margin-top: 12px; display: flex; align-items: center; gap: 10px; }
+    .privacy-bar-inner { flex: 1; }
     .privacy-bar-label { font-size: 9px; color: var(--text-faint); margin-bottom: 4px; letter-spacing: 1px; }
-    .privacy-bar-bg { height: 3px; background: var(--border); border-radius: 2px; }
-    .privacy-bar-fill { height: 100%; border-radius: 2px; background: var(--green); box-shadow: 0 0 6px var(--green); transition: width 0.6s ease; }
+    .privacy-bar-bg { height: 6px; background: var(--border); border-radius: 3px; }
+    .privacy-bar-fill { height: 100%; border-radius: 3px; background: var(--green); box-shadow: 0 0 6px var(--green); transition: width 0.6s ease; }
+    .privacy-bar-fill.low { background: var(--red); box-shadow: 0 0 6px var(--red); }
+    .privacy-bar-fill.mid { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+    .privacy-pct { font-size: 12px; font-weight: bold; color: var(--green); min-width: 32px; text-align: right; letter-spacing: 1px; }
+    .privacy-pct.low { color: var(--red); }
+    .privacy-pct.mid { color: var(--amber); }
+    .mode-details { margin-top: 8px; }
+    .mode-details summary { font-size: 9px; color: var(--text-dim); cursor: pointer; letter-spacing: 1px; list-style: none; }
+    .mode-details summary::before { content: "▸ "; }
+    .mode-details[open] summary::before { content: "▾ "; }
+    .mode-details-content { font-size: 10px; color: var(--text-faint); margin-top: 6px; line-height: 1.5; }
 
     /* Tunnel status */
     .tunnels { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
@@ -377,6 +547,15 @@
     }
     .toggle-switch.loading .toggle-track { opacity: 0.5; }
     .toggle-switch.loading { pointer-events: none; }
+    /* Keyboard-focus ring for custom switches — .toggle-switch and .dn-check
+       are both divs, so browsers don't draw focus outlines by default. */
+    .toggle-switch:focus, .toggle-switch:focus-visible,
+    .dn-check:focus, .dn-check:focus-visible {
+      outline: 2px solid var(--green);
+      outline-offset: 2px;
+    }
+    .toggle-switch:focus:not(:focus-visible),
+    .dn-check:focus:not(:focus-visible) { outline: none; }
 
     /* Support section */
     .btn-support {
@@ -415,6 +594,45 @@
     .ticket-status.ok { color: var(--green); }
     .ticket-status.err { color: var(--red); }
 
+    /* Traffic Monitor */
+    .tm-panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: 'Courier New', 'Consolas', monospace; }
+    .tm-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .tm-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+    .tm-dot.live { animation: tm-pulse 2s ease-in-out infinite; }
+    .tm-dot.offline { background: var(--text-faint); animation: none; }
+    @keyframes tm-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .tm-title { font-size: 10px; letter-spacing: 2px; color: var(--green); }
+    .tm-totals { display: flex; gap: 16px; margin-bottom: 12px; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+    .tm-total-col { flex: 1; }
+    .tm-total-label { font-size: 8px; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 2px; }
+    .tm-total-val { font-size: 20px; color: var(--green); font-weight: bold; line-height: 1.1; }
+    .tm-total-unit { font-size: 9px; color: var(--text-dim); margin-left: 2px; font-weight: normal; }
+    .tm-iface-row { display: grid; grid-template-columns: 90px 1fr 80px 80px; align-items: center; gap: 6px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+    .tm-iface-row:last-child { border-bottom: none; }
+    .tm-iface-name { font-size: 10px; color: var(--text); letter-spacing: 0.5px; }
+    .tm-iface-label { font-size: 8px; color: var(--text-dim); }
+    .tm-iface-name.dim { color: var(--text-faint); }
+    .tm-iface-name.dim .tm-iface-label { color: var(--text-faint); }
+    .tm-bar-wrap { height: 4px; background: var(--bg); border-radius: 2px; overflow: hidden; }
+    .tm-bar { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.8s ease; min-width: 0; }
+    .tm-bar.dim { background: var(--text-faint); }
+    .tm-rate { font-size: 10px; text-align: right; white-space: nowrap; }
+    .tm-rate-rx { color: var(--green); }
+    .tm-rate-tx { color: var(--text); }
+    .tm-rate.dim { color: var(--text-faint); }
+    .tm-arrow { font-size: 8px; margin-right: 2px; }
+    .tm-errors { margin-top: 8px; font-size: 9px; color: var(--text-faint); }
+    .tm-errors span { margin-right: 10px; }
+    .tm-errors .has-errors { color: var(--amber); }
+    .tm-offline { text-align: center; padding: 16px; color: var(--text-faint); font-size: 11px; letter-spacing: 1px; }
+    @media(max-width: 600px) {
+      .tm-totals { gap: 10px; padding: 6px 8px; }
+      .tm-total-val { font-size: 16px; }
+      .tm-iface-row { grid-template-columns: 70px 1fr 65px 65px; gap: 4px; }
+      .tm-iface-name { font-size: 9px; }
+      .tm-rate { font-size: 9px; }
+    }
+
     /* Arsenal section */
     .arsenal-grid {
       display: grid;
@@ -445,6 +663,7 @@
       .log-entry { font-size: 10px; gap: 6px; }
       .log-time { min-width: 48px; font-size: 9px; }
       #bandwidth-result { padding: 8px; }
+      .tm-panel { padding: 8px; }
 
       .mode-card { padding: 12px; }
       .mode-icon { font-size: 20px; margin-bottom: 4px; }
@@ -841,9 +1060,339 @@
       margin-top: 8px;
     }
     .fs-gravity-indicator.visible { display: flex; }
+
+    /* ── Mobile Hero (hidden on desktop) ─────────── */
+    .mobile-hero { display: none; }
+
+    /* ── Mobile Bottom Nav ─────────────────────────── */
+    .mobile-nav {
+      display: none;
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      z-index: 900;
+      padding: 0 0 env(safe-area-inset-bottom, 0);
+    }
+    .mobile-nav-inner {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      height: 56px;
+    }
+    .mobile-nav-btn {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 2px; background: none; border: none; color: var(--text-dim);
+      font-family: inherit; font-size: 9px; letter-spacing: 1px;
+      padding: 6px 12px; cursor: pointer; min-width: 56px; min-height: 44px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .mobile-nav-btn .nav-icon { font-size: 20px; line-height: 1; }
+    .mobile-nav-btn.active { color: var(--green); }
+    .mobile-nav-btn:active { opacity: 0.6; }
+
+    /* ── Phone-first (375-430px) ───────────────────── */
+    @media(max-width: 430px) {
+      /* Show bottom nav, add bottom padding for it */
+      .mobile-nav { display: block; }
+      .wrap { padding: 12px 10px 72px 10px; }
+
+      /* Header: compact */
+      header { margin-bottom: 16px; gap: 8px; }
+      .skull { width: 36px; height: 36px; }
+      .brand { gap: 10px; }
+      .brand-name { font-size: 20px; letter-spacing: 2px; }
+      .brand-sub { font-size: 8px; letter-spacing: 2px; }
+      .header-right { display: flex !important; flex-direction: column; align-items: flex-end; gap: 4px; }
+      .btn-exit { font-size: 9px; padding: 4px 8px; }
+      .header-status { font-size: 10px; }
+      .header-uptime { font-size: 9px; }
+
+      /* Banner: stack on mobile */
+      .banner { padding: 10px 12px; gap: 10px; margin-bottom: 16px; }
+      .banner-icon { font-size: 20px; }
+      .banner-mode { font-size: 14px; }
+      .banner-ip { margin-left: auto; }
+      .banner-ip-val { font-size: 12px; }
+
+      /* Mode cards: full-width stacked, horizontal layout */
+      .modes { grid-template-columns: 1fr; gap: 8px; margin-bottom: 14px; }
+      .mode-card {
+        padding: 14px 16px; min-height: 56px;
+        display: grid; grid-template-columns: 32px 1fr auto;
+        align-items: center; gap: 0 12px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .mode-icon { font-size: 24px; margin-bottom: 0; grid-row: 1 / 3; align-self: center; }
+      .mode-name { font-size: 14px; letter-spacing: 0.5px; grid-column: 2; }
+      .mode-subtitle { font-size: 9px; margin-bottom: 0; grid-column: 2; color: var(--text-faint); }
+      .mode-desc { display: none; }
+      .privacy-bar-wrap { display: none; }
+      .active-badge { position: static; grid-column: 3; grid-row: 1 / 3; align-self: center; }
+
+      /* Tunnels: single row, compact */
+      .tunnels { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+      .stat-box { padding: 8px; }
+      .tunnel-name { font-size: 10px; }
+      .tunnel-val { font-size: 11px; }
+      .tunnel-role { font-size: 7px; }
+
+      /* Grid: single column, stats first */
+      .grid { gap: 14px; }
+      .right-panel { order: -1; }
+
+      /* Ship stats compact */
+      .ship-stat { padding: 8px; }
+      .ship-stat-val { font-size: 13px; }
+
+      /* Log */
+      .log-box { height: 120px; padding: 6px; }
+      .log-entry { font-size: 9px; }
+      .log-time { min-width: 42px; font-size: 8px; }
+
+      /* Activity log */
+      #activity-log { max-height: 160px; font-size: 10px; }
+
+      /* Arsenal: single column on phones */
+      .arsenal-grid { grid-template-columns: 1fr; gap: 8px; }
+      .arsenal-card { padding: 10px; }
+      .arsenal-card-wide { grid-column: auto; }
+      .arsenal-desc { display: none; }
+      .arsenal-protect { display: none; }
+      .arsenal-btn { min-height: 36px; font-size: 10px; padding: 6px 10px; }
+
+      /* Toggle switches: bigger tap target */
+      .toggle-switch { width: 48px; height: 24px; }
+      .toggle-thumb { width: 16px; height: 16px; }
+      .toggle-switch.on .toggle-thumb { left: 27px; }
+
+      /* Family Shield: single column */
+      .fs-categories { grid-template-columns: 1fr; }
+      .fs-cat-card { min-height: 44px; }
+
+      /* Section labels */
+      .section-label { font-size: 9px; letter-spacing: 2px; margin-bottom: 8px; }
+
+      /* Rollback bar */
+      .rollback-bar { flex-direction: column; gap: 8px; text-align: center; }
+      .rollback-actions { justify-content: center; }
+
+      /* Schedule form compact */
+      .schedule-form { gap: 6px; }
+      .day-btn { font-size: 9px; min-width: 28px; min-height: 28px; padding: 4px; }
+
+      /* PWA install bar */
+      .pwa-install-bar { flex-wrap: wrap; gap: 8px; padding: 10px; }
+
+      /* Floating FAB: don't overlap bottom nav */
+      #mode-fab { bottom: 68px !important; }
+
+      /* Support buttons */
+      .support-buttons { flex-direction: column; gap: 6px; }
+      .btn-support { min-height: 44px; font-size: 10px; }
+
+      /* Ticket form */
+      .ticket-field { font-size: 12px; padding: 10px; }
+
+      /* WireGuard config textarea */
+      .wg-config-area { font-size: 10px; }
+
+      /* Touch feedback + transitions */
+      .mode-card { transition: transform 0.15s, opacity 0.15s, border-color 0.3s, background 0.3s; }
+      .mode-card:active { transform: scale(0.97); opacity: 0.8; }
+      .arsenal-btn { transition: transform 0.1s; }
+      .arsenal-btn:active { transform: scale(0.95); }
+      .btn-support:active { transform: scale(0.95); }
+      .mobile-nav-btn { transition: color 0.2s; }
+
+      /* Smooth score ring animation */
+      #mh-score-arc { transition: stroke-dashoffset 1s ease-out; }
+
+      /* Footer */
+      .footer { padding-bottom: 8px; }
+
+      /* Mobile hero */
+      .mobile-hero {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        background: var(--bg2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 14px;
+      }
+      .mh-score-ring {
+        position: relative;
+        width: 80px; height: 80px; flex-shrink: 0;
+      }
+      .mh-svg { width: 80px; height: 80px; }
+      .mh-score-inner {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+      }
+      .mh-score-num {
+        font-size: 22px; font-weight: bold; color: var(--green);
+        text-shadow: 0 0 12px var(--green-glow);
+      }
+      .mh-score-label { font-size: 7px; color: var(--text-dim); letter-spacing: 2px; }
+      .mh-info { flex: 1; min-width: 0; }
+      .mh-mode {
+        font-size: 13px; color: var(--green); font-weight: bold;
+        letter-spacing: 1px; margin-bottom: 8px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .mh-stats { display: flex; gap: 12px; }
+      .mh-stat { display: flex; flex-direction: column; align-items: center; }
+      .mh-stat-val { font-size: 14px; font-weight: bold; color: var(--green); }
+      .mh-stat-label { font-size: 8px; color: var(--text-dim); letter-spacing: 1px; }
+
+      /* Hide banner + right panel stats on mobile (hero replaces them) */
+      .banner { display: none; }
+      .right-panel { order: 1; }
+
+      /* Onboarding overlay */
+      .onboard-overlay {
+        position: fixed; inset: 0; z-index: 1000;
+        background: rgba(6, 10, 6, 0.95);
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 32px 24px;
+        text-align: center;
+      }
+      .onboard-overlay.hidden { display: none; }
+      .onboard-icon { font-size: 56px; margin-bottom: 16px; }
+      .onboard-title { font-size: 18px; color: var(--green); font-weight: bold; letter-spacing: 1px; margin-bottom: 8px; }
+      .onboard-desc { font-size: 13px; color: var(--text-dim); max-width: 280px; line-height: 1.6; margin-bottom: 24px; }
+      .onboard-dots { display: flex; gap: 8px; margin-bottom: 24px; }
+      .onboard-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+      .onboard-dot.active { background: var(--green); box-shadow: 0 0 8px var(--green); }
+      .onboard-btn {
+        padding: 14px 48px; background: none; border: 1px solid var(--green);
+        color: var(--green); font-family: inherit; font-size: 14px;
+        letter-spacing: 1px; border-radius: 4px; cursor: pointer; min-height: 48px;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .onboard-btn:active { background: var(--green-20); }
+      .onboard-skip { margin-top: 16px; font-size: 11px; color: var(--text-faint); cursor: pointer; background: none; border: none; font-family: inherit; }
+    }
+    /* Simple Mode Toggle */
+    .view-toggle { display:flex;align-items:center;gap:6px;margin-right:10px;cursor:pointer; }
+    .view-toggle-label { font-size:9px;letter-spacing:1px;color:var(--text-dim);text-transform:uppercase;white-space:nowrap; }
+    .view-toggle-label.active { color:var(--green); }
+    .view-toggle-track { width:32px;height:16px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;position:relative;transition:background 0.2s; }
+    .view-toggle-track .vt-thumb { width:12px;height:12px;background:var(--green);border-radius:50%;position:absolute;top:1px;left:1px;transition:left 0.2s; }
+    body.simple-mode .view-toggle-track { background:var(--green-13); }
+    body.simple-mode .view-toggle-track .vt-thumb { left:17px; }
+    body.simple-mode .tech-only { display:none !important; }
+    body.simple-mode .brand-sub { visibility:hidden; }
+    body.simple-mode .brand-sub::after { content:"PRIVACY MADE SIMPLE";visibility:visible;position:absolute; }
+    /* Simple mode: hide technical details on mode cards */
+    body.simple-mode .mode-subtitle { display:none; }
+    body.simple-mode .mode-desc { display:none; }
+    body.simple-mode [data-mode="isp"] .mode-name::after { content:" — Standard";font-size:10px;color:var(--text-dim);margin-left:4px; }
+    body.simple-mode [data-mode="zerotrust"] .mode-name::after { content:" — Protected";font-size:10px;color:var(--text-dim);margin-left:4px; }
+    body.simple-mode [data-mode="doublehop"] .mode-name::after { content:" — Private";font-size:10px;color:var(--text-dim);margin-left:4px; }
+    body.simple-mode [data-mode="zhop"] .mode-name::after { content:" — Max Privacy";font-size:10px;color:var(--text-dim);margin-left:4px; }
+    /* Simple mode protection indicator */
+    .simple-protection { display:none;text-align:center;padding:20px;margin:16px 0;background:var(--bg2);border:1px solid var(--border);border-radius:8px; }
+    body.simple-mode .simple-protection { display:block; }
+    .sp-icon { font-size:48px;margin-bottom:8px; }
+    .sp-level { font-size:18px;color:var(--green);letter-spacing:2px;font-weight:bold; }
+    .sp-desc { font-size:11px;color:var(--text-dim);margin-top:6px;letter-spacing:0.5px; }
+    /* Dreadnought Mode (recursive DNS, ISP/ZeroTrust only) */
+    .dreadnought-row { display:flex;align-items:center;gap:8px;margin-top:10px;padding:8px;background:var(--bg2);border:1px dashed var(--border);border-radius:4px;cursor:default; }
+    .dreadnought-row.disabled { opacity:0.55; }
+    .dreadnought-row .dn-check { width:14px;height:14px;border:1px solid var(--green);border-radius:2px;background:var(--bg3);display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer; }
+    .dreadnought-row.on .dn-check { background:var(--green); }
+    .dreadnought-row.on .dn-check::after { content:"✓";color:var(--bg);font-size:10px;font-weight:bold; }
+    .dreadnought-row .dn-label { font-size:10px;letter-spacing:1px;color:var(--text);font-weight:bold; }
+    .dreadnought-row .dn-warn { font-size:9px;color:#ffaa33;letter-spacing:0.5px;margin-left:auto;flex-shrink:0; }
+    .dreadnought-row .dn-install { font-size:9px;color:var(--green);letter-spacing:1px;background:none;border:1px solid var(--green);padding:3px 8px;border-radius:3px;cursor:pointer;font-family:inherit;margin-left:auto; }
+    .dreadnought-row .dn-install:hover { background:var(--green-13); }
+    body.simple-mode .dreadnought-row { display:none; }
+    /* Dreadnought warning modal */
+    .dn-modal { position:fixed;inset:0;z-index:1100;background:rgba(6,10,6,0.92);display:none;align-items:center;justify-content:center;padding:24px; }
+    .dn-modal.visible { display:flex; }
+    .dn-modal-box { max-width:380px;background:var(--bg1);border:1px solid #ffaa33;border-radius:6px;padding:24px;text-align:left; }
+    .dn-modal-title { font-size:14px;color:#ffaa33;letter-spacing:2px;font-weight:bold;margin-bottom:12px; }
+    .dn-modal-body { font-size:11px;color:var(--text);line-height:1.6;margin-bottom:18px; }
+    .dn-modal-body strong { color:#ffaa33; }
+    .dn-modal-actions { display:flex;gap:10px;justify-content:flex-end; }
+    .dn-modal-btn { padding:8px 18px;font-family:inherit;font-size:11px;letter-spacing:1px;border-radius:3px;cursor:pointer;background:none;min-height:36px; }
+    .dn-modal-btn.confirm { border:1px solid #ffaa33;color:#ffaa33; }
+    .dn-modal-btn.confirm:hover { background:rgba(255,170,51,0.1); }
+    .dn-modal-btn.cancel { border:1px solid var(--border);color:var(--text-dim); }
+    .dn-modal-btn.cancel:hover { background:var(--bg3); }
+    /* Use-case-first mode picker (sits above the 4 mode cards) */
+    .usecase-picker { margin:12px 0 14px; }
+    .usecase-title { font-size:10px;color:var(--text-dim);letter-spacing:2px;margin-bottom:8px; }
+    @media (max-width: 560px) {
+      .usecase-title span.tech-only { display:none !important; }
+    }
+    .usecase-grid { display:grid;grid-template-columns:repeat(4,1fr);gap:8px; }
+    .usecase-btn { background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:12px 8px;font-family:inherit;color:var(--text);cursor:pointer;text-align:center;transition:border-color 0.2s, background 0.2s, transform 0.15s;min-height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px; }
+    .usecase-btn:hover { border-color:var(--green-33);background:var(--bg3); }
+    .usecase-btn.active { border-color:var(--green);background:var(--bg3);box-shadow:0 0 10px var(--green-20); }
+    .usecase-btn:active { transform:scale(0.97); }
+    .uc-icon { font-size:22px; }
+    .uc-label { font-size:11px;font-weight:bold;letter-spacing:0.5px;color:var(--text); }
+    .uc-sub { font-size:9px;color:var(--text-dim);letter-spacing:0.3px; }
+    .usecase-btn.active .uc-label { color:var(--green); }
+    .usecase-btn.disabled { opacity:0.3;pointer-events:none;cursor:not-allowed; }
+    .advanced-modes { margin-top:8px; }
+    .advanced-modes summary { font-size:9px;color:var(--text-dim);letter-spacing:2px;cursor:pointer;padding:6px 0;list-style:none;user-select:none; }
+    .advanced-modes summary::before { content:"▸ "; }
+    .advanced-modes[open] summary::before { content:"▾ "; }
+    .advanced-modes summary:hover { color:var(--green); }
+    @media (max-width: 640px) {
+      .usecase-grid { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width: 430px) {
+      /* Dreadnought row: stack label above button on narrow screens so both are reachable */
+      .dreadnought-row { flex-wrap: wrap; gap: 6px; }
+      .dreadnought-row .dn-label { flex: 1 1 auto; font-size: 10px; }
+      .dreadnought-row .dn-label span { display: block; margin-top: 2px; }
+    }
+    body.simple-mode .advanced-modes { display:none; }
   </style>
 </head>
 <body>
+<div id="toast-container"></div>
+
+<!-- Mobile Onboarding (first visit) -->
+<div class="onboard-overlay hidden" id="onboard-overlay">
+  <div class="onboard-icon" id="onboard-icon">☠</div>
+  <div class="onboard-title" id="onboard-title">Welcome to GhostPort</div>
+  <div class="onboard-desc" id="onboard-desc">Your privacy router is active and protecting your network. Here's a quick tour.</div>
+  <div class="onboard-dots">
+    <div class="onboard-dot active" id="onboard-dot-0"></div>
+    <div class="onboard-dot" id="onboard-dot-1"></div>
+    <div class="onboard-dot" id="onboard-dot-2"></div>
+  </div>
+  <button class="onboard-btn" id="onboard-btn" onclick="onboardNext()">NEXT</button>
+  <button class="onboard-skip" onclick="onboardDismiss()">SKIP TOUR</button>
+</div>
+
+<!-- Dreadnought warning modal -->
+<div class="dn-modal" id="dn-modal">
+  <div class="dn-modal-box">
+    <div class="dn-modal-title">⚠ ENGAGE DREADNOUGHT?</div>
+    <div class="dn-modal-body">
+      Dreadnought Mode disables <strong>encrypted DNS (DoH)</strong> and queries root servers directly. Cloudflare is cut out as a middleman, but:<br><br>
+      • Your <strong>ISP can see every domain</strong> you look up.<br>
+      • DNS travels in <strong>plaintext</strong> on the wire.<br>
+      • First queries may be <strong>slower</strong> until unbound's cache warms.<br><br>
+      Use this when you want to distribute DNS trust across the root/TLD system instead of trusting one provider. Not recommended on hostile networks.
+    </div>
+    <div class="dn-modal-actions">
+      <button class="dn-modal-btn cancel" onclick="dreadnoughtCancel()">CANCEL</button>
+      <button class="dn-modal-btn confirm" onclick="dreadnoughtConfirm()">ENGAGE</button>
+    </div>
+  </div>
+</div>
+
 <div class="wrap">
 
   <!-- Header -->
@@ -851,11 +1400,16 @@
     <div class="brand">
       <a href="https://www.ghostporttechnologies.com" target="_blank" rel="noopener"><img src="/logo.png" alt="GhostPort" class="skull" style="border-radius:50%"/></a>
       <div>
-        <div class="brand-name" onclick="this.classList.add('glitch');setTimeout(()=>this.classList.remove('glitch'),600)" style="cursor:pointer">GHOSTPORT</div>
+        <div class="brand-name" onclick="this.classList.add('glitch');setTimeout(()=>this.classList.remove('glitch'),600)" style="cursor:pointer">PHANTOM OS</div>
         <div class="brand-sub">PRIVACY ROUTER // COMMAND DECK</div>
       </div>
     </div>
     <div class="header-right" style="display:flex;align-items:center;gap:8px">
+      <div class="view-toggle" onclick="toggleViewMode()" title="Switch between Simple and Technical view">
+        <span class="view-toggle-label" id="vt-label-tech">ADVANCED</span>
+        <div class="view-toggle-track"><div class="vt-thumb"></div></div>
+        <span class="view-toggle-label" id="vt-label-simple">SIMPLE</span>
+      </div>
       <div>
         <div class="header-status">
           <span class="status-dot" id="status-dot"></span>
@@ -863,7 +1417,7 @@
         </div>
         <div class="header-uptime">UPTIME: <span id="uptime">--</span></div>
       </div>
-      <a href="/install.html" class="btn-exit" style="text-decoration:none;margin-right:6px;background:var(--bg3);border-color:var(--green);color:var(--green)" title="Install GhostPort app">GET APP</a><button class="btn-exit" onclick="exitApp()" title="Exit application">EXIT</button>
+      <a href="/install.html" class="btn-exit" style="text-decoration:none;margin-right:6px;background:var(--bg3);border-color:var(--green);color:var(--green)" title="Install GhostPort app">GET APP</a><button class="btn-exit" id="btn-exit-app" onclick="exitApp()" title="Exit application">EXIT</button>
     </div>
   </header>
 
@@ -905,65 +1459,176 @@
     </div>
   </div>
 
+  <!-- Mobile Hero (phones only) -->
+  <div class="mobile-hero" id="mobile-hero">
+    <div class="mh-score-ring">
+      <svg viewBox="0 0 120 120" class="mh-svg">
+        <circle cx="60" cy="60" r="52" fill="none" stroke="#1a2e1a" stroke-width="8"/>
+        <circle cx="60" cy="60" r="52" fill="none" stroke="var(--green)" stroke-width="8"
+          stroke-dasharray="327" stroke-dashoffset="327" stroke-linecap="round"
+          transform="rotate(-90 60 60)" id="mh-score-arc"/>
+      </svg>
+      <div class="mh-score-inner">
+        <div class="mh-score-num" id="mh-score">--</div>
+        <div class="mh-score-label">PRIVACY</div>
+      </div>
+    </div>
+    <div class="mh-info">
+      <div class="mh-mode" id="mh-mode">Loading...</div>
+      <div class="mh-stats">
+        <div class="mh-stat">
+          <span class="mh-stat-val" id="mh-blocked">--</span>
+          <span class="mh-stat-label">blocked</span>
+        </div>
+        <div class="mh-stat">
+          <span class="mh-stat-val" id="mh-wg-dot">●</span>
+          <span class="mh-stat-label">WG</span>
+        </div>
+        <div class="mh-stat">
+          <span class="mh-stat-val" id="mh-ts-dot">●</span>
+          <span class="mh-stat-label">TS</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="grid">
     <!-- Left panel -->
     <div>
-      <div class="section-label">▸ SELECT OPERATING MODE</div>
+      <div class="section-label" id="section-modes" style="display:flex;align-items:center;justify-content:space-between">
+        <span>▸ SELECT OPERATING MODE</span>
+        <label class="tech-only" style="font-size:9px;color:var(--text-dim);cursor:pointer;display:flex;align-items:center;gap:4px;letter-spacing:1px" title="Normally a mode switch gives you 60 seconds to confirm — if you don't, it auto-reverts. Check this to skip the safety window and commit the switch immediately.">
+          <input type="checkbox" id="skip-rollback" style="accent-color:var(--green);cursor:pointer"> SKIP 60s UNDO TIMER
+        </label>
+      </div>
+      <!-- Use-case-first picker -->
+      <div class="usecase-picker">
+        <div class="usecase-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span>WHAT ARE YOU DOING?</span>
+          <span class="tech-only" style="font-size:8px;color:var(--text-faint);letter-spacing:1px;font-weight:normal">EACH PICKS THE MATCHING MODE BELOW ↓</span>
+        </div>
+        <div class="usecase-grid">
+          <button class="usecase-btn" data-uc-mode="isp" onclick="switchMode('isp')" type="button">
+            <div class="uc-icon">⚓</div>
+            <div class="uc-label">Just Browsing</div>
+            <div class="uc-sub">Full speed, no filter</div>
+          </button>
+          <button class="usecase-btn" data-uc-mode="zerotrust" onclick="switchMode('zerotrust')" type="button">
+            <div class="uc-icon">👻</div>
+            <div class="uc-label">Block Ads</div>
+            <div class="uc-sub">Pi-hole + DNS locked</div>
+          </button>
+          <button class="usecase-btn" data-uc-mode="doublehop" onclick="switchMode('doublehop')" type="button">
+            <div class="uc-icon">💀</div>
+            <div class="uc-label">Hide From ISP</div>
+            <div class="uc-sub">Traffic through VPN</div>
+          </button>
+          <button class="usecase-btn" data-uc-mode="zhop" onclick="switchMode('zhop')" type="button">
+            <div class="uc-icon">🏴‍☠️</div>
+            <div class="uc-label">Max Privacy</div>
+            <div class="uc-sub">VPN + DNS lockdown</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Dreadnought Mode — only applicable in ISP / Zero Trust (tunnel modes use EC2 unbound over WG) -->
+      <div class="dreadnought-row" id="dn-row" style="display:none">
+        <div class="dn-check" id="dn-check" role="switch" aria-checked="false" tabindex="0" aria-label="Toggle Dreadnought recursive DNS"></div>
+        <div class="dn-label">DREADNOUGHT <span style="color:var(--text-dim);font-weight:normal;font-size:9px;letter-spacing:0.5px">— recursive DNS, no Cloudflare</span></div>
+        <span class="dn-warn" id="dn-warn" style="display:none">⚠ PLAINTEXT</span>
+        <button class="dn-install" id="dn-install" onclick="installDreadnought()" style="display:none" type="button">INSTALL</button>
+      </div>
+
       <div class="modes" id="modes-grid">
 
         <!-- ISP -->
-        <div class="mode-card" id="card-isp" onclick="switchMode('isp')">
+        <div class="mode-card" id="card-isp" data-mode="isp" onclick="switchMode('isp')">
           <div class="mode-icon">⚓</div>
           <div class="mode-name">ISP</div>
           <div class="mode-subtitle">Open Waters</div>
-          <div class="mode-desc">Full passthrough. No filtering. Sail free.</div>
+          <div class="mode-desc">Normal internet, no filtering</div>
           <div class="privacy-bar-wrap">
-            <div class="privacy-bar-label">PRIVACY LEVEL</div>
-            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:15%"></div></div>
+            <div class="privacy-bar-inner">
+              <div class="privacy-bar-label">PRIVACY</div>
+              <div class="privacy-bar-bg"><div class="privacy-bar-fill low" style="width:15%"></div></div>
+            </div>
+            <div class="privacy-pct low">15%</div>
           </div>
+          <details class="mode-details" onclick="event.stopPropagation()">
+            <summary>MORE INFO</summary>
+            <div class="mode-details-content">Direct passthrough to your ISP. No DNS filtering, no VPN tunnel. Fastest speeds but your ISP can see all traffic.</div>
+          </details>
         </div>
 
         <!-- Zero Trust -->
-        <div class="mode-card" id="card-zerotrust" onclick="switchMode('zerotrust')">
+        <div class="mode-card" id="card-zerotrust" data-mode="zerotrust" onclick="switchMode('zerotrust')">
           <div class="mode-icon">👻</div>
           <div class="mode-name">Zero Trust</div>
           <div class="mode-subtitle">Ghost Cloak</div>
-          <div class="mode-desc">DNS locked to the ship. Tailscale management active.</div>
+          <div class="mode-desc">Blocks ads & trackers, locks DNS</div>
           <div class="privacy-bar-wrap">
-            <div class="privacy-bar-label">PRIVACY LEVEL</div>
-            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:55%"></div></div>
+            <div class="privacy-bar-inner">
+              <div class="privacy-bar-label">PRIVACY</div>
+              <div class="privacy-bar-bg"><div class="privacy-bar-fill mid" style="width:55%"></div></div>
+            </div>
+            <div class="privacy-pct mid">55%</div>
           </div>
+          <details class="mode-details" onclick="event.stopPropagation()">
+            <summary>MORE INFO</summary>
+            <div class="mode-details-content">Pi-hole blocks ads network-wide. DNS locked down — apps can't bypass filtering via DoH/DoT. Your ISP still sees which sites you visit.</div>
+          </details>
         </div>
 
         <!-- Double Hop -->
-        <div class="mode-card" id="card-doublehop" onclick="switchMode('doublehop')">
+        <div class="mode-card" id="card-doublehop" data-mode="doublehop" onclick="switchMode('doublehop')">
           <div class="mode-icon">💀</div>
           <div class="mode-name">Double Hop</div>
           <div class="mode-subtitle">Dead Man's Route</div>
-          <div class="mode-desc">All LAN traffic through WireGuard. Tailscale stays up for management.</div>
+          <div class="mode-desc">Encrypts all traffic through VPN</div>
           <div class="privacy-bar-wrap">
-            <div class="privacy-bar-label">PRIVACY LEVEL</div>
-            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:80%"></div></div>
+            <div class="privacy-bar-inner">
+              <div class="privacy-bar-label">PRIVACY</div>
+              <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:80%"></div></div>
+            </div>
+            <div class="privacy-pct">80%</div>
           </div>
+          <details class="mode-details" onclick="event.stopPropagation()">
+            <summary>MORE INFO</summary>
+            <div class="mode-details-content">All device traffic routed through WireGuard VPN tunnel. Your ISP sees encrypted data only. DNS queries go through the tunnel too.</div>
+          </details>
         </div>
 
         <!-- ZHop -->
-        <div class="mode-card" id="card-zhop" onclick="switchMode('zhop')">
+        <div class="mode-card" id="card-zhop" data-mode="zhop" onclick="switchMode('zhop')">
           <div class="mode-icon">🏴‍☠️</div>
           <div class="mode-name">Z-HOP</div>
           <div class="mode-subtitle">Davy Jones</div>
-          <div class="mode-desc">Maximum stealth. WireGuard + DNS lockdown. Tailscale management only.</div>
+          <div class="mode-desc">VPN + DNS lockdown, max privacy</div>
           <div class="privacy-bar-wrap">
-            <div class="privacy-bar-label">PRIVACY LEVEL</div>
-            <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:100%"></div></div>
+            <div class="privacy-bar-inner">
+              <div class="privacy-bar-label">PRIVACY</div>
+              <div class="privacy-bar-bg"><div class="privacy-bar-fill" style="width:100%"></div></div>
+            </div>
+            <div class="privacy-pct">100%</div>
           </div>
+          <details class="mode-details" onclick="event.stopPropagation()">
+            <summary>MORE INFO</summary>
+            <div class="mode-details-content">WireGuard VPN + strict DNS lockdown. All traffic encrypted, all DNS queries forced through tunnel. Nothing leaks.</div>
+          </details>
         </div>
 
       </div>
 
+      <!-- Simple Mode Protection Indicator -->
+      <div class="simple-protection" id="simple-protection">
+        <div class="sp-icon" id="sp-icon">🛡️</div>
+        <div class="sp-level" id="sp-level">PROTECTED</div>
+        <div class="sp-desc" id="sp-desc">Your privacy is active. All traffic is encrypted and routed securely.</div>
+      </div>
+
       <!-- Tunnel status -->
-      <div class="section-label">▸ TUNNEL STATUS</div>
-      <div class="tunnels">
+      <div class="section-label tech-only">▸ TUNNEL STATUS</div>
+      <div class="tunnels tech-only">
         <div class="stat-box">
           <div class="tunnel-header">
             <div class="tunnel-dot" id="dot-wg"></div>
@@ -1000,14 +1665,21 @@
         </div>
       </div>
 
+      <!-- DECISION: Topology placed after tunnel status since it visualizes the same network state -->
+      <!-- Network Topology -->
+      <div class="section-label tech-only" id="section-topology" style="margin-top:20px">▸ NETWORK TOPOLOGY</div>
+      <div class="tech-only" id="topology-wrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:16px;min-height:200px">
+        <div id="topology-container"></div>
+      </div>
+
       <!-- Support -->
-      <div class="section-label" style="margin-top:20px">▸ SUPPORT</div>
-      <div class="support-buttons">
+      <div class="section-label tech-only" style="margin-top:20px">▸ SUPPORT</div>
+      <div class="support-buttons tech-only">
         <button class="btn-support" id="btn-diag" onclick="runDiagnostics()">RUN DIAGNOSTICS</button>
         <button class="btn-support" id="btn-ticket" onclick="toggleTicketForm()">SUBMIT TICKET</button>
       </div>
-      <div class="section-label" style="margin-top:16px">▸ REPAIR TOOLS</div>
-      <div class="support-buttons" style="flex-wrap:wrap">
+      <div class="section-label tech-only" style="margin-top:16px">▸ REPAIR TOOLS</div>
+      <div class="support-buttons tech-only" style="flex-wrap:wrap">
         <button class="btn-support" id="btn-ap" onclick="repairAction('ap')">RESTART AP</button>
         <button class="btn-support" id="btn-dns" onclick="repairAction('dns')">RESTART DNS</button>
         <button class="btn-support" id="btn-wg" onclick="repairAction('wireguard')">RESTART WIREGUARD</button>
@@ -1017,8 +1689,8 @@
         <button class="btn-support" id="btn-reboot" onclick="confirmReboot()" style="border-color:#ff444466;color:#ff8888">REBOOT DEVICE</button>
         <button class="btn-support" id="btn-factory" onclick="confirmFactory()" style="border-color:#ff444466;color:#ff8888">FACTORY RESET</button>
       </div>
-      <div id="diag-results" style="display:none"></div>
-      <div id="ticket-form-wrap" style="display:none">
+      <div id="diag-results" class="tech-only" style="display:none"></div>
+      <div id="ticket-form-wrap" class="tech-only" style="display:none">
         <div class="ticket-form">
           <textarea class="ticket-field" id="ticket-desc" rows="4" placeholder="Describe the issue (min 10 characters)..."></textarea>
           <input class="ticket-field" id="ticket-contact" placeholder="Contact info (optional — email, phone, etc.)"/>
@@ -1028,13 +1700,27 @@
       </div>
 
       <!-- DNS Leak Alert -->
-      <div class="dns-leak-alert" id="dns-leak-alert">
+      <div class="dns-leak-alert tech-only" id="dns-leak-alert">
         <strong>⚠ DNS LEAK DETECTED</strong> — Your DNS queries are being exposed to your ISP.
         <span id="dns-leak-action"></span>
       </div>
 
+      <!-- WiFi Sensing Alert -->
+      <div id="wifi-sensing-alert" style="display:none;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:14px 16px;margin-top:16px;font-size:12px;color:#ff8888">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <span style="font-size:18px">📡</span>
+          <strong style="letter-spacing:1px">ISP WIFI SENSING RISK DETECTED</strong>
+        </div>
+        <div id="wifi-sensing-details" style="color:var(--text-dim);font-size:11px;margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a href="/modem-guide.html" class="arsenal-btn" style="text-decoration:none;font-size:10px;padding:6px 14px;border-color:rgba(255,68,68,0.4);color:#ff8888">HOW TO FIX THIS</a>
+          <button class="arsenal-btn" onclick="runWifiSensingCheck()" style="font-size:10px;padding:6px 14px" id="btn-wifi-rescan">RESCAN</button>
+          <button class="arsenal-btn" onclick="dismissWifiSensing()" style="font-size:10px;padding:6px 14px;opacity:0.5">DISMISS</button>
+        </div>
+      </div>
+
       <!-- Pi-hole Setup Banner -->
-      <div class="arsenal-card arsenal-card-wide" id="pihole-setup" style="display:none; margin-top:20px; border-color:#ff9f43;">
+      <div class="arsenal-card arsenal-card-wide tech-only" id="pihole-setup" style="display:none; margin-top:20px; border-color:#ff9f43;">
         <div class="arsenal-header">
           <span class="arsenal-icon">⚙</span>
           <span class="arsenal-name" style="color:#ff9f43">Pi-hole Setup Required</span>
@@ -1048,310 +1734,328 @@
       </div>
 
       <!-- Arsenal -->
-      <div class="section-label" style="margin-top:20px">▸ ARSENAL</div>
-      <div class="arsenal-grid" id="arsenal-grid">
+      <div class="section-label tech-only" id="section-arsenal" style="margin-top:20px">▸ ARSENAL</div>
+      <div class="tech-only" id="arsenal-sections">
 
-        <!-- VPN Kill Switch -->
-        <div class="arsenal-card" id="ac-killswitch">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🛡</span>
-            <span class="arsenal-name">Kill Switch</span>
-            <div class="arsenal-toggle">
-              <div class="toggle-switch" id="tog-killswitch" onclick="arsenalToggle('killswitch')">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div>
+        <!-- Privacy Controls -->
+        <div class="arsenal-category" data-cat="privacy">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('privacy')">
+            <span class="arsenal-cat-icon">🔒</span>
+            <span class="arsenal-cat-name">Privacy Controls</span>
+            <span class="arsenal-cat-chevron">▾</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-privacy">
+            <div class="arsenal-card" id="ac-killswitch">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🛡</span>
+                <span class="arsenal-name">Kill Switch</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-killswitch" onclick="arsenalToggle('killswitch')">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">Blocks all traffic if VPN drops or DNS leaks detected</div>
+              <div class="arsenal-status off" id="ks-status">OFF</div>
+              <div class="ks-auto-row">
+                <div class="toggle-switch" id="tog-ks-auto" onclick="toggleKsAuto()">
+                  <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                </div>
+                <span>Auto-trip on DNS leak</span>
+              </div>
+            </div>
+            <div class="arsenal-card" id="ac-encrypteddns">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🔒</span>
+                <span class="arsenal-name">DNS Protection</span>
+              </div>
+              <div class="arsenal-desc" id="edns-desc">Shows the current DNS path. Change it from the mode section above.</div>
+              <div class="arsenal-status on" id="edns-status">DoH</div>
+              <a href="#section-modes" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px;margin-top:6px;display:inline-block" onclick="scrollToModes(event)">CHANGE ▴</a>
+            </div>
+            <div class="arsenal-card" id="ac-quicblock">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🚫</span>
+                <span class="arsenal-name">QUIC Block</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-quicblock" onclick="arsenalToggle('quicblock')">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">Blocks QUIC to prevent DNS filter bypass</div>
+              <div class="arsenal-status on" id="quic-status">BLOCKING</div>
+            </div>
+            <div class="arsenal-card" id="ac-macrandom">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🎲</span>
+                <span class="arsenal-name">MAC Randomization</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-macrandom" onclick="arsenalToggle('macrandom')">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">Random MAC on reboot to prevent tracking</div>
+              <div class="arsenal-status off" id="mac-status">OFF</div>
+            </div>
+            <div class="arsenal-card" id="ac-terminalmode">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🖥️</span>
+                <span class="arsenal-name">Terminal Mode</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-terminalmode" onclick="arsenalToggle('terminalmode')">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">CLI-only boot, frees RAM for routing</div>
+              <div class="arsenal-status off" id="term-status">OFF</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Network Tests -->
+        <div class="arsenal-category" data-cat="tests">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('tests')">
+            <span class="arsenal-cat-icon">🔍</span>
+            <span class="arsenal-cat-name">Network Tests</span>
+            <span class="arsenal-cat-chevron">▸</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-tests" style="display:none">
+            <div class="arsenal-card" id="ac-dnstest">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🔍</span>
+                <span class="arsenal-name">DNS Leak Test</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-dnstest" onclick="runDnsTest()">RUN TEST</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Check if DNS queries leak outside VPN</div>
+              <div id="dns-result"></div>
+            </div>
+            <div class="arsenal-card" id="ac-speedtest">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">⚡</span>
+                <span class="arsenal-name">Speed Test</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-speedtest" onclick="runSpeedTest()">RUN TEST</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Download/upload speed through current tunnel</div>
+              <div id="speed-result"></div>
+            </div>
+            <div class="arsenal-card" id="ac-pingtest">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📡</span>
+                <span class="arsenal-name">Ping Test</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-pingtest" onclick="runPingTest()">RUN TEST</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Latency to gateway, DNS, and internet</div>
+              <div id="ping-result"></div>
+            </div>
+            <div class="arsenal-card" id="ac-ipleak">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🌐</span>
+                <span class="arsenal-name">IP Leak Test</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-ipleak" onclick="runIpLeak()">RUN TEST</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Check if your real IP leaks outside VPN</div>
+              <div id="ipleak-result"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Security -->
+        <div class="arsenal-category" data-cat="security">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('security')">
+            <span class="arsenal-cat-icon">🛡️</span>
+            <span class="arsenal-cat-name">Security</span>
+            <span class="arsenal-cat-chevron">▸</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-security" style="display:none">
+            <div class="arsenal-card arsenal-card-wide" id="ac-securityscan">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">&#x1f6e1;</span>
+                <span class="arsenal-name">Security Scan</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-securityscan" onclick="runSecurityScan()">RUN SCAN</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">Full system audit — firewall, SSH, permissions, 200+ controls</div>
+              <div id="security-scan-result"></div>
+            </div>
+            <div class="arsenal-card arsenal-card-wide" id="ac-mac-privacy">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">&#x1f575;</span>
+                <span class="arsenal-name">MAC Privacy Check</span>
+                <span style="margin-left:auto;font-size:11px" id="mac-privacy-status">Checking...</span>
+              </div>
+              <div class="arsenal-desc">Check if connected devices are hiding their hardware MAC address</div>
+              <details style="margin-top:8px;font-size:11px;color:var(--text-dim)">
+                <summary style="cursor:pointer;color:var(--green);font-size:11px;letter-spacing:1px">HOW TO ENABLE</summary>
+                <div style="margin-top:8px;line-height:1.8">
+                  <div><strong style="color:var(--text)">iPhone/iPad:</strong> Settings &gt; WiFi &gt; tap <em>&#x24D8;</em> &gt; <strong>Private WiFi Address</strong> &gt; ON</div>
+                  <div><strong style="color:var(--text)">Android:</strong> Settings &gt; WiFi &gt; tap network &gt; Privacy &gt; <strong>Randomized MAC</strong></div>
+                  <div><strong style="color:var(--text)">Windows:</strong> Settings &gt; Network &gt; WiFi &gt; <strong>Random hardware addresses</strong></div>
+                  <div><strong style="color:var(--text)">Mac:</strong> Automatic since macOS Ventura 15+</div>
+                  <div><strong style="color:var(--text)">Linux:</strong> <code style="color:var(--green)">nmcli con modify &lt;name&gt; wifi.cloned-mac-address random</code></div>
+                </div>
+              </details>
+            </div>
+          </div>
+        </div>
+
+        <!-- Management -->
+        <div class="arsenal-category" data-cat="management">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('management')">
+            <span class="arsenal-cat-icon">⚙️</span>
+            <span class="arsenal-cat-name">Management</span>
+            <span class="arsenal-cat-chevron">▾</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-management">
+            <div class="arsenal-card" id="ac-blocklist">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📋</span>
+                <span class="arsenal-name">Blocklist Manager</span>
+                <div class="arsenal-toggle">
+                  <select class="freq-select" id="sel-blockfreq" onchange="setBlockFreq(this.value)">
+                    <option value="weekly">Weekly</option>
+                    <option value="daily">Daily</option>
+                  </select>
+                </div>
+              </div>
+              <div class="arsenal-desc">Pi-hole blocklist update frequency</div>
+              <button class="arsenal-btn" id="btn-gravity" onclick="updateGravity()" style="margin-top:8px">UPDATE NOW</button>
+              <span id="gravity-status" style="font-size:10px;margin-left:8px"></span>
+              <div style="margin-top:10px;border-top:1px solid #1a2a1a;padding-top:10px">
+                <div style="font-size:11px;color:var(--green);margin-bottom:6px">Block or Allow a Domain</div>
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  <input type="text" id="domain-input" placeholder="example.com" style="flex:1;min-width:150px;background:var(--bg2);border:1px solid #1a3a1a;color:var(--text);padding:6px 8px;font-family:'Courier New','Consolas',monospace;font-size:11px;border-radius:4px">
+                  <button class="arsenal-btn" onclick="submitDomain('deny')" style="font-size:10px">BLOCK</button>
+                  <button class="arsenal-btn" onclick="submitDomain('allow')" style="font-size:10px;background:#1a1a0a;border-color:#3a3a1a">ALLOW</button>
+                </div>
+                <span id="domain-status" style="font-size:10px;margin-top:4px;display:block"></span>
+              </div>
+            </div>
+            <div class="arsenal-card arsenal-card-wide" id="ac-clients">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📡</span>
+                <span class="arsenal-name">Connected Clients</span>
+                <span style="margin-left:auto;font-size:11px;color:var(--green)" id="client-count">0 devices</span>
+              </div>
+              <div class="arsenal-desc">Devices on GhostPort WiFi</div>
+              <div class="client-list" id="client-list">
+                <div style="font-size:10px;color:var(--text-faint)">Loading...</div>
+              </div>
+            </div>
+            <div class="arsenal-card arsenal-card-wide" id="ac-schedules">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">⏰</span>
+                <span class="arsenal-name">Scheduled Modes</span>
+              </div>
+              <div class="arsenal-desc">Auto-switch modes on a schedule</div>
+              <div class="schedule-form">
+                <input type="time" id="sched-time" value="22:00"/>
+                <div class="day-picker" id="day-picker">
+                  <button class="day-btn active" data-day="0">Su</button>
+                  <button class="day-btn active" data-day="1">Mo</button>
+                  <button class="day-btn active" data-day="2">Tu</button>
+                  <button class="day-btn active" data-day="3">We</button>
+                  <button class="day-btn active" data-day="4">Th</button>
+                  <button class="day-btn active" data-day="5">Fr</button>
+                  <button class="day-btn active" data-day="6">Sa</button>
+                </div>
+                <select class="freq-select" id="sched-mode">
+                  <option value="isp">ISP</option>
+                  <option value="zerotrust">Zero Trust</option>
+                  <option value="doublehop">Double Hop</option>
+                  <option value="zhop">Z-HOP</option>
+                </select>
+                <button class="arsenal-btn" onclick="addSchedule()">ADD</button>
+              </div>
+              <div class="schedule-list" id="schedule-list"></div>
+            </div>
+            <div class="arsenal-card arsenal-card-wide" id="ac-blocked">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🚷</span>
+                <span class="arsenal-name">Recent Blocked Domains</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-blocked" onclick="fetchBlocked()">REFRESH</button>
+                </div>
+              </div>
+              <div id="blocked-result" style="margin-top:8px"></div>
+            </div>
+            <div class="arsenal-card" id="ac-backup">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">💾</span>
+                <span class="arsenal-name">Backup / Restore</span>
+              </div>
+              <div class="arsenal-desc">Export or import GhostPort settings</div>
+              <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                <button class="arsenal-btn" onclick="downloadBackup()">EXPORT</button>
+                <label class="arsenal-btn" style="cursor:pointer">IMPORT<input type="file" accept=".json" onchange="importBackup(event)" style="display:none"></label>
+              </div>
+              <div id="backup-status" style="font-size:10px;margin-top:6px;min-height:16px"></div>
+            </div>
+            <div class="arsenal-card" id="ac-update">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🔄</span>
+                <span class="arsenal-name">System Update</span>
+                <div class="arsenal-toggle">
+                  <button class="arsenal-btn" id="btn-update" onclick="confirmUpdate()">UPDATE</button>
+                  <button class="arsenal-btn" id="btn-auto-update" onclick="runAutoUpdate()" style="margin-left:4px;background:var(--bg3)">AUTO-UPDATE ALL</button>
+                </div>
+              </div>
+              <div class="arsenal-desc">System packages and Pi-hole updates</div>
+              <div id="update-result" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coming Soon -->
+        <div class="arsenal-category" data-cat="coming">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('coming')">
+            <span class="arsenal-cat-icon">🗺️</span>
+            <span class="arsenal-cat-name">Roadmap</span>
+            <span class="arsenal-cat-chevron">▸</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-coming" style="display:none">
+            <div class="arsenal-card arsenal-card-wide" style="border-style:dashed">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🗺️</span>
+                <span class="arsenal-name">Planned Features</span>
+              </div>
+              <div class="arsenal-desc">Tor Mode, Multi-VPN chaining, IoT VLAN isolation, Suricata IDS, Traffic padding, Guest network, Disk encryption. Ship dates are tracked in the public roadmap — links open below.</div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                <a href="https://www.ghostporttechnologies.com/roadmap" target="_blank" rel="noopener" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">PUBLIC ROADMAP ↗</a>
+                <a href="https://github.com/GhostPortTechnologies/Ghostport-OS/issues" target="_blank" rel="noopener" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">GITHUB ISSUES ↗</a>
               </div>
             </div>
           </div>
-          <div class="arsenal-desc">Blocks all traffic if VPN drops or DNS leaks are detected, preventing your traffic from leaking to your ISP.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> DNS leaks and VPN tunnel failures</div>
-          <div class="arsenal-status off" id="ks-status">OFF</div>
-          <div class="ks-auto-row">
-            <div class="toggle-switch" id="tog-ks-auto" onclick="toggleKsAuto()">
-              <div class="toggle-track"></div><div class="toggle-thumb"></div>
-            </div>
-            <span>Auto-trip on DNS leak</span>
-          </div>
-        </div>
-
-        <!-- Encrypted DNS -->
-        <div class="arsenal-card" id="ac-encrypteddns">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🔒</span>
-            <span class="arsenal-name">Encrypted DNS</span>
-            <div class="arsenal-toggle">
-              <div class="toggle-switch" id="tog-encrypteddns" onclick="arsenalToggle('encrypteddns')">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div>
-              </div>
-            </div>
-          </div>
-          <div class="arsenal-desc">Routes all DNS queries through Cloudflare's DNS-over-HTTPS (DoH) instead of cleartext. Your ISP can't see what sites you look up.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> ISP snooping on your DNS queries and DNS spoofing attacks</div>
-          <div class="arsenal-status off" id="edns-status">OFF</div>
-        </div>
-
-        <!-- QUIC Block -->
-        <div class="arsenal-card" id="ac-quicblock">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🚫</span>
-            <span class="arsenal-name">QUIC Block</span>
-            <div class="arsenal-toggle">
-              <div class="toggle-switch" id="tog-quicblock" onclick="arsenalToggle('quicblock')">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div>
-              </div>
-            </div>
-          </div>
-          <div class="arsenal-desc">Blocks the QUIC protocol (UDP port 443) on all privacy modes. Forces browsers to fall back to standard HTTPS, which ensures Pi-hole DNS filtering can't be bypassed.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> Browsers using QUIC to bypass DNS-based ad blocking and privacy filters</div>
-          <div class="arsenal-status on" id="quic-status">BLOCKING</div>
-        </div>
-
-        <!-- DNS Leak Test -->
-        <div class="arsenal-card" id="ac-dnstest">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🔍</span>
-            <span class="arsenal-name">DNS Leak Test</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-dnstest" onclick="runDnsTest()">RUN TEST</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Checks if your DNS queries are leaking outside your VPN tunnel by comparing what resolver Cloudflare sees for local vs direct requests.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> Unknowingly exposing your browsing to your ISP while on VPN</div>
-          <div id="dns-result"></div>
-        </div>
-
-        <!-- MAC Randomization -->
-        <div class="arsenal-card" id="ac-macrandom">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🎲</span>
-            <span class="arsenal-name">MAC Randomization</span>
-            <div class="arsenal-toggle">
-              <div class="toggle-switch" id="tog-macrandom" onclick="arsenalToggle('macrandom')">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div>
-              </div>
-            </div>
-          </div>
-          <div class="arsenal-desc">Generates a random MAC address for the WiFi AP on each reboot. Uses locally-administered (02:xx) prefix. Takes effect on next reboot.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> Device fingerprinting and network tracking across locations</div>
-          <div class="arsenal-status off" id="mac-status">OFF</div>
-        </div>
-
-        <!-- Terminal Mode -->
-        <div class="arsenal-card" id="ac-terminalmode">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🖥️</span>
-            <span class="arsenal-name">Terminal Mode</span>
-            <div class="arsenal-toggle">
-              <div class="toggle-switch" id="tog-terminalmode" onclick="arsenalToggle('terminalmode')">
-                <div class="toggle-track"></div><div class="toggle-thumb"></div>
-              </div>
-            </div>
-          </div>
-          <div class="arsenal-desc">Boots the Pi into a CLI-only terminal instead of the graphical desktop. Frees up RAM and CPU for routing. Takes effect on next reboot.</div>
-          <div class="arsenal-protect"><strong>Benefit:</strong> Reduced attack surface and lower resource usage — ideal for headless operation</div>
-          <div class="arsenal-status off" id="term-status">OFF</div>
-        </div>
-
-        <!-- Blocklist Management -->
-        <div class="arsenal-card" id="ac-blocklist">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">📋</span>
-            <span class="arsenal-name">Blocklist Manager</span>
-            <div class="arsenal-toggle">
-              <select class="freq-select" id="sel-blockfreq" onchange="setBlockFreq(this.value)">
-                <option value="weekly">Weekly</option>
-                <option value="daily">Daily</option>
-              </select>
-            </div>
-          </div>
-          <div class="arsenal-desc">Controls how often Pi-hole updates its ad/tracker blocklists. Daily catches new threats faster; weekly is lighter on resources.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> Ads, trackers, and malicious domains across all devices on your network</div>
-          <button class="arsenal-btn" id="btn-gravity" onclick="updateGravity()" style="margin-top:8px">UPDATE NOW</button>
-          <span id="gravity-status" style="font-size:10px;margin-left:8px"></span>
-          <div style="margin-top:10px;border-top:1px solid #1a2a1a;padding-top:10px">
-            <div style="font-size:11px;color:var(--green);margin-bottom:6px">Block or Allow a Domain</div>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <input type="text" id="domain-input" placeholder="example.com" style="flex:1;min-width:150px;background:var(--bg2);border:1px solid #1a3a1a;color:var(--text);padding:6px 8px;font-family:'Courier New','Consolas',monospace;font-size:11px;border-radius:4px">
-              <button class="arsenal-btn" onclick="submitDomain('deny')" style="font-size:10px">BLOCK</button>
-              <button class="arsenal-btn" onclick="submitDomain('allow')" style="font-size:10px;background:#1a1a0a;border-color:#3a3a1a">ALLOW</button>
-            </div>
-            <span id="domain-status" style="font-size:10px;margin-top:4px;display:block"></span>
-          </div>
-        </div>
-
-        <!-- Connected Clients -->
-        <div class="arsenal-card arsenal-card-wide" id="ac-clients">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">📡</span>
-            <span class="arsenal-name">Connected Clients</span>
-            <span style="margin-left:auto;font-size:11px;color:var(--green)" id="client-count">0 devices</span>
-          </div>
-          <div class="arsenal-desc">Shows all devices currently connected to GhostPort's WiFi network via DHCP.</div>
-          <div class="client-list" id="client-list">
-            <div style="font-size:10px;color:var(--text-faint)">Loading...</div>
-          </div>
-        </div>
-
-        <!-- Scheduled Modes -->
-        <div class="arsenal-card arsenal-card-wide" id="ac-schedules">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">⏰</span>
-            <span class="arsenal-name">Scheduled Modes</span>
-          </div>
-          <div class="arsenal-desc">Automatically switch security modes on a schedule. For example, switch to Z-HOP every night and back to ISP in the morning.</div>
-          <div class="schedule-form">
-            <input type="time" id="sched-time" value="22:00"/>
-            <div class="day-picker" id="day-picker">
-              <button class="day-btn active" data-day="0">Su</button>
-              <button class="day-btn active" data-day="1">Mo</button>
-              <button class="day-btn active" data-day="2">Tu</button>
-              <button class="day-btn active" data-day="3">We</button>
-              <button class="day-btn active" data-day="4">Th</button>
-              <button class="day-btn active" data-day="5">Fr</button>
-              <button class="day-btn active" data-day="6">Sa</button>
-            </div>
-            <select class="freq-select" id="sched-mode">
-              <option value="isp">ISP</option>
-              <option value="zerotrust">Zero Trust</option>
-              <option value="doublehop">Double Hop</option>
-              <option value="zhop">Z-HOP</option>
-            </select>
-            <button class="arsenal-btn" onclick="addSchedule()">ADD</button>
-          </div>
-          <div class="schedule-list" id="schedule-list"></div>
-        </div>
-
-        <!-- Speed Test -->
-        <div class="arsenal-card" id="ac-speedtest">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">⚡</span>
-            <span class="arsenal-name">Speed Test</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-speedtest" onclick="runSpeedTest()">RUN TEST</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Measures download/upload speed and latency through your current tunnel. Shows the real-world performance impact of your privacy mode.</div>
-          <div id="speed-result"></div>
-        </div>
-
-        <!-- Ping Test -->
-        <div class="arsenal-card" id="ac-pingtest">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">📡</span>
-            <span class="arsenal-name">Ping Test</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-pingtest" onclick="runPingTest()">RUN TEST</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Checks latency to your gateway, local DNS, and the internet. Helps pinpoint where connectivity issues are happening.</div>
-          <div id="ping-result"></div>
-        </div>
-
-        <!-- IP Leak Test -->
-        <div class="arsenal-card" id="ac-ipleak">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🌐</span>
-            <span class="arsenal-name">IP Leak Test</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-ipleak" onclick="runIpLeak()">RUN TEST</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Checks if your real IP address is leaking outside the VPN tunnel by comparing your public IP against the WireGuard endpoint.</div>
-          <div class="arsenal-protect"><strong>Protects you from:</strong> VPN misconfigurations that expose your real IP address</div>
-          <div id="ipleak-result"></div>
-        </div>
-
-        <!-- Security Scan -->
-        <div class="arsenal-card arsenal-card-wide" id="ac-securityscan">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">&#x1f6e1;</span>
-            <span class="arsenal-name">Security Scan</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-securityscan" onclick="runSecurityScan()">RUN SCAN</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Full system security audit powered by Lynis. Checks firewall, SSH, permissions, kernel hardening, authentication, and 200+ security controls.</div>
-          <div class="arsenal-protect"><strong>Scans for:</strong> Misconfigurations, weak permissions, missing hardening, vulnerable services, authentication weaknesses</div>
-          <div id="security-scan-result"></div>
-        </div>
-
-        <!-- Recent Blocked Domains -->
-        <div class="arsenal-card arsenal-card-wide" id="ac-blocked">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🚷</span>
-            <span class="arsenal-name">Recent Blocked Domains</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-blocked" onclick="fetchBlocked()">REFRESH</button>
-            </div>
-          </div>
-          <div id="blocked-result" style="margin-top:8px"></div>
-        </div>
-
-        <!-- Backup / Restore -->
-        <div class="arsenal-card" id="ac-backup">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">💾</span>
-            <span class="arsenal-name">Backup / Restore</span>
-          </div>
-          <div class="arsenal-desc">Export your GhostPort settings or restore from a previous backup.</div>
-          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-            <button class="arsenal-btn" onclick="downloadBackup()">EXPORT BACKUP</button>
-            <label class="arsenal-btn" style="cursor:pointer">IMPORT BACKUP<input type="file" accept=".json" onchange="importBackup(event)" style="display:none"></label>
-          </div>
-          <div id="backup-status" style="font-size:10px;margin-top:6px;min-height:16px"></div>
-        </div>
-
-        <!-- System Update -->
-        <div class="arsenal-card" id="ac-update">
-          <div class="arsenal-header">
-            <span class="arsenal-icon">🔄</span>
-            <span class="arsenal-name">System Update</span>
-            <div class="arsenal-toggle">
-              <button class="arsenal-btn" id="btn-update" onclick="confirmUpdate()">UPDATE</button>
-            </div>
-          </div>
-          <div class="arsenal-desc">Runs apt update & upgrade to install the latest system and security patches. This may take several minutes.</div>
-          <div id="update-result" style="margin-top:8px"></div>
-        </div>
-
-        <!-- Coming Soon cards -->
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">🧅</span><span class="arsenal-name">Tor Mode</span></div>
-          <div class="arsenal-desc">Route all traffic through Tor for anonymous browsing</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">🔗</span><span class="arsenal-name">Multi-VPN Chaining</span></div>
-          <div class="arsenal-desc">Chain multiple VPN servers so no single provider sees the full picture</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">📦</span><span class="arsenal-name">IoT VLAN Isolation</span></div>
-          <div class="arsenal-desc">Put smart devices on a separate network away from your computers</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">🔬</span><span class="arsenal-name">Suricata IDS</span></div>
-          <div class="arsenal-desc">Watch for suspicious network patterns like malware beacons</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">📊</span><span class="arsenal-name">Traffic Padding</span></div>
-          <div class="arsenal-desc">Add dummy traffic to hide your real browsing patterns</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">📶</span><span class="arsenal-name">Guest Network</span></div>
-          <div class="arsenal-desc">A separate WiFi for visitors that can't see your devices</div>
-        </div>
-        <div class="arsenal-card coming-soon">
-          <div class="coming-badge">COMING SOON</div>
-          <div class="arsenal-header"><span class="arsenal-icon">💾</span><span class="arsenal-name">Disk Encryption</span></div>
-          <div class="arsenal-desc">Encrypt the router's storage to protect configs if it's stolen</div>
         </div>
 
       </div>
 
+
+      <!-- Software Status -->
+      <div class="section-label" style="margin-top:20px">▸ SOFTWARE STATUS</div>
+      <div class="arsenal-card" id="software-status-card" style="padding:16px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <span style="font-size:20px">📦</span>
+          <div style="flex:1">
+            <div style="font-size:13px;color:var(--green);letter-spacing:1px">Auto-Update</div>
+            <div style="font-size:10px;color:var(--text-dim);margin-top:2px" id="auto-update-schedule">Weekly — Sundays 4:00 AM</div>
+          </div>
+          <span id="auto-update-badge" style="font-size:10px;padding:2px 8px;border-radius:3px;letter-spacing:1px;background:var(--bg3);color:var(--text-dim)">CHECKING...</span>
+        </div>
+        <div id="software-status-list" style="font-size:11px;color:var(--text-dim)">Loading...</div>
+        <div style="margin-top:10px;font-size:10px;color:var(--text-dim)" id="auto-update-last-run"></div>
+      </div>
 
       <!-- Family Shield -->
       <div class="section-label" style="margin-top:20px">▸ FAMILY SHIELD</div>
@@ -1408,8 +2112,8 @@
       </div>
 
       <!-- WireGuard Setup -->
-      <div class="section-label" style="margin-top:20px">▸ WIREGUARD VPN</div>
-      <div class="arsenal-card">
+      <div class="section-label tech-only" style="margin-top:20px">▸ WIREGUARD VPN</div>
+      <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🔐</span>
           <span class="arsenal-name">WireGuard Config</span>
@@ -1489,8 +2193,8 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <!-- Device Passcode -->
-      <div class="section-label" style="margin-top:20px">▸ DEVICE PASSCODE</div>
-      <div class="arsenal-card">
+      <div class="section-label tech-only" style="margin-top:20px">▸ DEVICE PASSCODE</div>
+      <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🔑</span>
           <span class="arsenal-name">Change Passcode</span>
@@ -1507,9 +2211,59 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
       </div>
 
+      <!-- Two-Factor Authentication -->
+      <div class="section-label tech-only" style="margin-top:20px">▸ TWO-FACTOR AUTHENTICATION</div>
+      <div class="arsenal-card tech-only" id="totp-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🔐</span>
+          <span class="arsenal-name">Authenticator App (TOTP)</span>
+          <div class="arsenal-toggle">
+            <span id="totp-badge" style="font-size:10px;letter-spacing:1px;padding:3px 8px;border-radius:3px;display:none"></span>
+          </div>
+        </div>
+        <div class="arsenal-desc">Require a 6-digit code from an authenticator app (Google Authenticator, Authy, etc.) in addition to your passcode.</div>
+
+        <!-- State: Not configured — show enable button -->
+        <div id="totp-off" style="margin-top:10px">
+          <button class="arsenal-btn" id="totp-enable-btn">ENABLE TWO-FACTOR</button>
+        </div>
+
+        <!-- State: Setup in progress — show QR + confirmation -->
+        <div id="totp-setup" style="display:none;margin-top:10px">
+          <div style="text-align:center;margin-bottom:12px;position:relative;display:inline-block;width:100%">
+            <div style="position:relative;display:inline-block">
+              <img id="totp-qr" alt="TOTP QR Code" style="width:220px;height:220px;border-radius:6px;border:1px solid var(--border)"/>
+              <img src="/logo.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:52px;height:52px;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 12px rgba(0,0,0,0.8);background:var(--bg)"/>
+            </div>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);text-align:center;margin-bottom:8px">
+            CAN'T SCAN? ENTER THIS KEY MANUALLY:
+          </div>
+          <div id="totp-secret-display" style="font-family:monospace;font-size:14px;color:var(--green);text-align:center;letter-spacing:3px;padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;word-break:break-all"></div>
+          <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px">BACKUP CODES — save these somewhere safe:</div>
+          <div id="totp-backup-codes" style="font-family:monospace;font-size:12px;color:var(--text);padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:12px;display:grid;grid-template-columns:1fr 1fr;gap:4px"></div>
+          <input type="text" class="ticket-field" id="totp-confirm-code" placeholder="Enter 6-digit code to verify" maxlength="6" inputmode="numeric" style="text-align:center;letter-spacing:4px"/>
+          <button class="arsenal-btn" id="totp-confirm-btn">VERIFY &amp; ACTIVATE</button>
+          <button class="arsenal-btn" id="totp-cancel-btn" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);margin-top:4px">CANCEL</button>
+        </div>
+
+        <!-- State: Active — show status + disable -->
+        <div id="totp-on" style="display:none;margin-top:10px">
+          <div style="font-size:11px;color:var(--green);margin-bottom:8px">Two-factor authentication is active.</div>
+          <div id="totp-backup-remaining" style="font-size:10px;color:var(--text-dim);margin-bottom:6px"></div>
+          <button class="arsenal-btn" id="totp-regen-btn" style="margin-bottom:8px;font-size:10px">REGENERATE BACKUP CODES</button>
+          <div id="totp-regen-codes" style="display:none;font-family:monospace;font-size:12px;color:var(--text);padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;margin-bottom:8px;display:none;grid-template-columns:1fr 1fr;gap:4px"></div>
+          <button class="arsenal-btn" id="totp-resync-btn">RESYNC — GENERATE NEW QR CODE</button>
+          <input type="text" class="ticket-field" id="totp-disable-code" placeholder="Enter current TOTP code to disable" maxlength="6" inputmode="numeric" style="text-align:center;letter-spacing:4px;margin-top:8px"/>
+          <button class="arsenal-btn" id="totp-disable-btn" style="background:rgba(255,68,68,0.15);border:1px solid rgba(255,68,68,0.3);color:var(--red)">DISABLE TWO-FACTOR</button>
+        </div>
+
+        <div id="totp-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+      </div>
+
       <!-- Pi-hole Password -->
-      <div class="section-label" style="margin-top:20px">▸ PI-HOLE</div>
-      <div class="arsenal-card">
+      <div class="section-label tech-only" style="margin-top:20px">▸ PI-HOLE</div>
+      <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🛡</span>
           <span class="arsenal-name">Pi-hole Password</span>
@@ -1523,7 +2277,39 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
 
-      <!-- WiFi Network -->
+      <!-- WiFi WAN -->
+      <div class="section-label tech-only" style="margin-top:20px">▸ WAN UPLINK</div>
+      <div class="arsenal-card tech-only" id="wan-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon" id="wan-icon">🔌</span>
+          <span class="arsenal-name">Internet Source</span>
+          <span id="wan-badge" style="font-size:9px;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:var(--green-13);color:var(--green);margin-left:auto">ETHERNET</span>
+        </div>
+        <div class="arsenal-desc">Choose how GhostPort connects to the internet — via Ethernet cable or an upstream WiFi network. WiFi WAN uses the M.2 radio in concurrent AP+station mode.</div>
+
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="arsenal-btn" id="wan-eth-btn" onclick="switchWanEthernet()" style="flex:1;opacity:1">ETHERNET</button>
+          <button class="arsenal-btn" id="wan-wifi-btn" onclick="showWanWifi()" style="flex:1;opacity:0.5">WIFI</button>
+        </div>
+
+        <!-- WiFi WAN panel (hidden by default) -->
+        <div id="wan-wifi-panel" style="display:none;margin-top:12px">
+          <button class="arsenal-btn" onclick="scanWanNetworks()" id="wan-scan-btn" style="margin-bottom:8px">SCAN FOR NETWORKS</button>
+          <div id="wan-scan-results" style="max-height:200px;overflow-y:auto"></div>
+          <div style="margin-top:10px">
+            <input type="text" class="ticket-field" id="wan-ssid" placeholder="Network name (SSID)" maxlength="32"/>
+            <div style="position:relative">
+              <input type="password" class="ticket-field" id="wan-pass" placeholder="WiFi password (8-63 chars)" maxlength="63" style="padding-right:40px"/>
+              <button onclick="toggleWanPassVis()" style="position:absolute;right:8px;top:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:'Courier New','Consolas',monospace" id="wan-pass-eye">SHOW</button>
+            </div>
+            <button class="arsenal-btn" onclick="connectWanWifi()" id="wan-connect-btn">CONNECT</button>
+          </div>
+        </div>
+
+        <div id="wan-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
+      </div>
+
+      <!-- WiFi Network (AP) -->
       <div class="section-label" style="margin-top:20px">▸ WIFI NETWORK</div>
       <div class="arsenal-card">
         <div class="arsenal-header">
@@ -1537,40 +2323,25 @@ AllowedIPs = 0.0.0.0/0"></textarea>
             <input type="password" class="ticket-field" id="wifi-pass" placeholder="WiFi password (8-63 characters)" maxlength="63" style="padding-right:40px"/>
             <button onclick="toggleWifiPassVisibility()" style="position:absolute;right:8px;top:6px;background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:12px;font-family:'Courier New','Consolas',monospace" id="wifi-pass-eye">SHOW</button>
           </div>
+          <div style="margin-top:6px">
+            <label style="font-size:10px;color:var(--text-dim);letter-spacing:1px">SECURITY PROTOCOL</label>
+            <select id="wifi-wpa-mode" class="ticket-field" style="margin-top:4px">
+              <option value="wpa2">WPA2 (most compatible)</option>
+              <option value="wpa2wpa3">WPA2/WPA3 transition</option>
+              <option value="wpa3">WPA3 only (strongest)</option>
+            </select>
+          </div>
           <button class="arsenal-btn" onclick="saveWifiConfig()">SAVE &amp; RESTART AP</button>
           <div id="wifi-status" style="font-size:10px;margin-top:8px;min-height:16px"></div>
         </div>
       </div>
 
-      <div class="section-label" style="margin-top:20px">▸ THEME COLOR</div>
-      <div class="arsenal-card">
-        <div class="arsenal-header">
-          <span class="arsenal-icon">🎨</span>
-          <span class="arsenal-name">Neon Accent</span>
-        </div>
-        <div class="arsenal-desc">Change the UI accent color. Choice is saved locally.</div>
-        <div class="theme-swatches">
-          <button class="theme-swatch active" onclick="setColorTheme('#39ff8f')" data-color="#39ff8f" style="background:#39ff8f" title="Green"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#b44aff')" data-color="#b44aff" style="background:#b44aff" title="Purple"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#44aaff')" data-color="#44aaff" style="background:#44aaff" title="Blue"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#ff4466')" data-color="#ff4466" style="background:#ff4466" title="Red"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#e0e0e0')" data-color="#e0e0e0" style="background:#e0e0e0" title="White"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#00e5ff')" data-color="#00e5ff" style="background:#00e5ff" title="Cyan"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#ffb300')" data-color="#ffb300" style="background:#ffb300" title="Amber"></button>
-          <button class="theme-swatch" onclick="setColorTheme('#8a9099')" data-color="#8a9099" style="background:#8a9099" title="Gunmetal"></button>
-          <button class="theme-rgb-btn" id="rgb-btn" onclick="toggleRainbow()" title="RGB Cycle"></button>
-        </div>
-        <div class="theme-picker-row">
-          <input type="color" id="theme-picker" class="theme-color-input" value="#39ff8f" title="Custom color"/>
-          <span class="theme-color-label" id="theme-label">NEON GREEN</span>
-        </div>
-      </div>
     </div>
 
     <!-- Right panel -->
     <div class="right-panel">
       <div>
-        <div class="section-label">▸ SHIP STATS</div>
+        <div class="section-label" id="section-stats">▸ SHIP STATS</div>
         <div class="ship-stats">
           <div class="ship-stat">
             <div>
@@ -1600,14 +2371,45 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         </div>
       </div>
 
-      <div>
+      <div class="tech-only">
         <div class="section-label">▸ CREW LOG</div>
         <div class="log-box" id="log-box"></div>
       </div>
 
-      <div>
+      <div class="tech-only">
+        <div class="section-label" style="display:flex;align-items:center;justify-content:space-between">
+          <span>▸ DEVICE LOG</span>
+          <select id="activity-filter" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
+            <option value="">All</option>
+            <option value="mode">Mode</option>
+            <option value="auth">Auth</option>
+            <option value="security">Security</option>
+            <option value="system">System</option>
+          </select>
+        </div>
+        <div id="activity-log" style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:8px;max-height:240px;overflow-y:auto;font-family:'Courier New','Consolas',monospace;font-size:11px"></div>
+      </div>
+
+      <div class="tech-only" id="bandwidth-section">
         <div class="section-label">▸ BANDWIDTH</div>
-        <div id="bandwidth-result" style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:10px"></div>
+        <div id="bandwidth-result" class="tm-panel">
+          <div class="tm-header">
+            <div class="tm-dot" id="tm-dot"></div>
+            <div class="tm-title">TRAFFIC MONITOR</div>
+          </div>
+          <div class="tm-totals">
+            <div class="tm-total-col">
+              <div class="tm-total-label">▼ DOWNLOAD</div>
+              <div><span class="tm-total-val" id="tm-rx-total">---</span></div>
+            </div>
+            <div class="tm-total-col" style="text-align:right">
+              <div class="tm-total-label">▲ UPLOAD</div>
+              <div><span class="tm-total-val" id="tm-tx-total">---</span></div>
+            </div>
+          </div>
+          <div id="tm-ifaces"></div>
+          <div id="tm-errors" class="tm-errors" style="display:none"></div>
+        </div>
       </div>
 
       <div class="footer">
@@ -1618,7 +2420,48 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   </div>
 </div>
 
+<!-- Mobile Bottom Navigation -->
+<nav class="mobile-nav" id="mobile-nav">
+  <div class="mobile-nav-inner">
+    <button class="mobile-nav-btn active" data-section="top" onclick="mobileNav('top')">
+      <span class="nav-icon">☠</span>STATUS
+    </button>
+    <button class="mobile-nav-btn" data-section="modes" onclick="mobileNav('modes')">
+      <span class="nav-icon">⚙</span>MODES
+    </button>
+    <button class="mobile-nav-btn" data-section="arsenal" onclick="mobileNav('arsenal')">
+      <span class="nav-icon">🛡</span>TOOLS
+    </button>
+    <button class="mobile-nav-btn" data-section="topology" onclick="mobileNav('topology')">
+      <span class="nav-icon">🗺</span>MAP
+    </button>
+    <button class="mobile-nav-btn" data-section="stats" onclick="mobileNav('stats')">
+      <span class="nav-icon">📊</span>STATS
+    </button>
+  </div>
+</nav>
+
+<script src="bg-effects.js"></script>
 <script src="arsenal.js"></script>
+<script src="topology.js"></script>
+<script>
+  // CSRF protection — intercept all state-changing fetch requests
+  (function() {
+    var _csrfToken = localStorage.getItem("gp-csrf") || "";
+    var _origFetch = window.fetch;
+    window.fetch = function(url, opts) {
+      opts = opts || {};
+      if (opts.method && ["POST","PUT","DELETE","PATCH"].indexOf(opts.method.toUpperCase()) !== -1) {
+        opts.headers = Object.assign({}, opts.headers || {}, { "X-CSRF-Token": _csrfToken });
+      }
+      return _origFetch.call(this, url, opts);
+    };
+    _origFetch("/api/auth/csrf").then(function(r) { return r.ok ? r.json() : null; }).then(function(d) {
+      if (d && d.csrfToken) { _csrfToken = d.csrfToken; localStorage.setItem("gp-csrf", _csrfToken); }
+    }).catch(function() {});
+    window._updateCsrfToken = function(t) { _csrfToken = t; localStorage.setItem("gp-csrf", t); };
+  })();
+</script>
 <script>
   const API = "";
 
@@ -1635,6 +2478,48 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     doublehop: { wg: "DATA TUNNEL", ts: "MANAGEMENT" },
     zhop:      { wg: "DATA TUNNEL", ts: "MANAGEMENT" },
   };
+
+  // Simple/Technical view mode toggle
+  const SIMPLE_PROTECTION = {
+    isp:       { icon: "🌐", level: "STANDARD", desc: "Normal browsing — no privacy filtering active.", color: "var(--text-dim)" },
+    zerotrust: { icon: "🛡️", level: "PROTECTED", desc: "Ads and trackers blocked. DNS is locked down.", color: "#ffaa00" },
+    doublehop: { icon: "🔒", level: "PRIVATE", desc: "All traffic encrypted through VPN. Your ISP can't see what you do.", color: "var(--green)" },
+    zhop:      { icon: "🔐", level: "MAX PRIVACY", desc: "VPN + DNS lockdown. Nothing leaks.", color: "var(--green)" },
+  };
+
+  function toggleViewMode() {
+    var isSimple = document.body.classList.toggle("simple-mode");
+    localStorage.setItem("gp-view-mode", isSimple ? "simple" : "tech");
+    document.getElementById("vt-label-simple").classList.toggle("active", isSimple);
+    document.getElementById("vt-label-tech").classList.toggle("active", !isSimple);
+    updateSimpleIndicator();
+  }
+
+  function updateSimpleIndicator() {
+    var el = document.getElementById("simple-protection");
+    if (!el) return;
+    var mode = currentMode || "isp";
+    var info = SIMPLE_PROTECTION[mode] || SIMPLE_PROTECTION.isp;
+    document.getElementById("sp-icon").textContent = info.icon;
+    document.getElementById("sp-level").textContent = info.level;
+    document.getElementById("sp-level").style.color = info.color;
+    document.getElementById("sp-desc").textContent = info.desc;
+  }
+
+  // Restore view mode preference on load (default: simple)
+  (function() {
+    var saved = localStorage.getItem("gp-view-mode");
+    if (saved === "tech") {
+      var lblT2 = document.getElementById("vt-label-tech");
+      if (lblT2) lblT2.classList.add("active");
+    } else {
+      document.body.classList.add("simple-mode");
+      var lblS = document.getElementById("vt-label-simple");
+      var lblT = document.getElementById("vt-label-tech");
+      if (lblS) lblS.classList.add("active");
+      if (lblT) lblT.classList.remove("active");
+    }
+  })();
 
   let currentMode = null;
   let switching = false;
@@ -1654,6 +2539,29 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     // Keep log trimmed
     while (box.children.length > 50) box.removeChild(box.firstChild);
   }
+
+  // Toast notifications
+  const TOAST_ICONS = { success: "✓", warn: "⚠", error: "✗", info: "ℹ" };
+  function toast(msg, type) {
+    type = type || "info";
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const el = document.createElement("div");
+    el.className = "toast " + type;
+    el.innerHTML = '<span class="toast-icon">' + (TOAST_ICONS[type] || "ℹ") + '</span><span class="toast-msg">' + msg + '</span>';
+    el.addEventListener("click", function() { el.classList.add("out"); setTimeout(function() { el.remove(); }, 300); });
+    container.appendChild(el);
+    // Auto-dismiss after 5s
+    setTimeout(function() { el.classList.add("out"); setTimeout(function() { el.remove(); }, 300); }, 5000);
+    // Max 5 toasts
+    while (container.children.length > 5) container.removeChild(container.firstChild);
+  }
+
+  // Track state for toast triggers
+  let lastMode = null;
+  let lastTunnelState = {};
+  let lastBlockCount = 0;
+  let statusPollCount = 0;
 
   function setTunnel(id, state) {
     const dot = document.getElementById("dot-" + id);
@@ -1682,13 +2590,13 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       desc.textContent = `Will revert to ${(rollback.target || "ISP").toUpperCase()} if not confirmed`;
       countdown.textContent = rollback.remainingSec;
 
-      // Disable mode cards while rollback is pending
-      document.querySelectorAll(".mode-card").forEach(c => {
+      // Disable mode cards + usecase picker while rollback is pending
+      document.querySelectorAll(".mode-card, .usecase-btn").forEach(c => {
         if (!c.classList.contains("active")) c.classList.add("disabled");
       });
     } else {
       bar.classList.remove("visible");
-      document.querySelectorAll(".mode-card").forEach(c => c.classList.remove("disabled"));
+      document.querySelectorAll(".mode-card, .usecase-btn").forEach(c => c.classList.remove("disabled"));
     }
   }
 
@@ -1722,6 +2630,11 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       }
     });
 
+    // Use-case picker — same state as mode cards (picker buttons share data-uc-mode)
+    document.querySelectorAll(".usecase-btn[data-uc-mode]").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.ucMode === mode);
+    });
+
     // Tunnels
     setTunnel("wg", data.tunnels.wg0);
     setTunnel("ts", data.tunnels.tailscale);
@@ -1740,10 +2653,74 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     document.getElementById("stat-enc").textContent = info.enc;
     document.getElementById("stat-enc-detail").textContent = info.encDetail;
 
+    // WAN status
+    if (data.wan) {
+      var wBadge = document.getElementById("wan-badge");
+      var wIcon = document.getElementById("wan-icon");
+      if (wBadge && data.wan.type === "wireless") {
+        wBadge.textContent = "WIFI";
+        wBadge.style.background = "rgba(0,229,255,0.12)";
+        wBadge.style.color = "#00e5ff";
+        if (wIcon) wIcon.textContent = "📡";
+      } else if (wBadge) {
+        wBadge.textContent = "ETHERNET";
+        wBadge.style.background = "var(--green-13)";
+        wBadge.style.color = "var(--green)";
+        if (wIcon) wIcon.textContent = "🔌";
+      }
+    }
+
     // Rollback bar
     updateRollbackBar(data.rollback);
 
+    // Toast notifications on state changes
+    statusPollCount++;
+    if (statusPollCount > 1) {
+      // Mode change
+      if (lastMode && mode !== lastMode) {
+        toast("Mode switched to " + info.label, "success");
+      }
+      // Tunnel state changes
+      var wgNow = data.tunnels.wg0 === "up" ? "up" : "down";
+      var tsNow = data.tunnels.tailscale === "up" ? "up" : "down";
+      if (lastTunnelState.wg && wgNow !== lastTunnelState.wg) {
+        toast("WireGuard " + (wgNow === "up" ? "connected" : "disconnected"), wgNow === "up" ? "success" : "warn");
+      }
+      if (lastTunnelState.ts && tsNow !== lastTunnelState.ts) {
+        toast("Tailscale " + (tsNow === "up" ? "connected" : "disconnected"), tsNow === "up" ? "success" : "error");
+      }
+      // DNS block spike (>50 new blocks since last poll)
+      var blocked = data.adsBlocked || 0;
+      if (lastBlockCount > 0 && blocked - lastBlockCount > 50) {
+        toast((blocked - lastBlockCount) + " threats blocked", "info");
+      }
+      lastTunnelState = { wg: wgNow, ts: tsNow };
+      lastBlockCount = blocked;
+    } else {
+      // First poll — seed state without toasting
+      lastTunnelState = { wg: data.tunnels.wg0 ? "up" : "down", ts: data.tunnels.tailscale ? "up" : "down" };
+      lastBlockCount = data.adsBlocked || 0;
+    }
+    lastMode = mode;
+
+    // Mobile hero update
+    var scores = { isp: 20, zerotrust: 55, doublehop: 80, zhop: 95 };
+    var score = scores[mode] || 0;
+    var scoreEl = document.getElementById("mh-score");
+    var arcEl = document.getElementById("mh-score-arc");
+    if (scoreEl) scoreEl.textContent = score;
+    if (arcEl) arcEl.setAttribute("stroke-dashoffset", 327 - (327 * score / 100));
+    var mhMode = document.getElementById("mh-mode");
+    if (mhMode) mhMode.textContent = info.label;
+    var mhBlocked = document.getElementById("mh-blocked");
+    if (mhBlocked) mhBlocked.textContent = (data.adsBlocked || 0).toLocaleString();
+    var mhWg = document.getElementById("mh-wg-dot");
+    if (mhWg) { mhWg.textContent = "●"; mhWg.style.color = data.tunnels.wg0 ? "var(--green)" : "#ff4444"; }
+    var mhTs = document.getElementById("mh-ts-dot");
+    if (mhTs) { mhTs.textContent = "●"; mhTs.style.color = data.tunnels.tailscale ? "var(--green)" : "#ff4444"; }
+
     currentMode = mode;
+    updateSimpleIndicator();
   }
 
   let adsCache = {};
@@ -1779,6 +2756,40 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       document.getElementById("status-dot").className = "status-dot error";
     }
   }
+
+  function escHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+
+  const ACTIVITY_ICONS = { mode: "⚙", auth: "🔑", security: "🛡", system: "⚡" };
+  const ACTIVITY_COLORS = { mode: "#00e5ff", auth: "#ff9f43", security: "#ff4444", system: "#888" };
+
+  async function fetchActivity() {
+    try {
+      const filter = document.getElementById("activity-filter").value;
+      const url = API + "/api/activity?limit=50" + (filter ? "&type=" + filter : "");
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.ok) return;
+      const box = document.getElementById("activity-log");
+      if (!data.events.length) {
+        box.innerHTML = '<div style="color:#555;text-align:center;padding:12px">No activity yet</div>';
+        return;
+      }
+      box.innerHTML = data.events.map(function(e) {
+        var icon = ACTIVITY_ICONS[e.type] || "•";
+        var color = ACTIVITY_COLORS[e.type] || "#888";
+        var d = new Date(e.ts);
+        var time = d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+        var detail = e.detail ? ' <span style="color:#555">(' + escHtml(e.detail) + ')</span>' : "";
+        return '<div style="padding:4px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:6px;align-items:baseline">'
+          + '<span>' + icon + '</span>'
+          + '<span style="color:#555;min-width:100px;flex-shrink:0">' + time + '</span>'
+          + '<span style="color:' + color + '">' + escHtml(e.message) + detail + '</span>'
+          + '</div>';
+      }).join("");
+    } catch (e) { /* silent */ }
+  }
+
+  document.getElementById("activity-filter").addEventListener("change", fetchActivity);
 
   async function confirmMode() {
     log("Confirming mode switch...", "info");
@@ -1851,10 +2862,11 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     log(`Switching to ${mode.toUpperCase()} mode...`, "warn");
 
     try {
+      const skipRollback = document.getElementById("skip-rollback") && document.getElementById("skip-rollback").checked;
       const res = await fetch(API + "/api/mode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode })
+        body: JSON.stringify({ mode, skipRollback })
       });
       const data = await res.json();
 
@@ -1887,6 +2899,43 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     document.getElementById("card-" + mode).classList.remove("switching");
     switching = false;
   }
+
+  // ── WiFi Sensing Detection ──────────────────────────────
+  async function runWifiSensingCheck() {
+    var btn = document.getElementById("btn-wifi-rescan");
+    if (btn) btn.textContent = "SCANNING...";
+    try {
+      var r = await fetch(API + "/api/wifi-sensing-check");
+      if (!r.ok) throw new Error("API error " + r.status);
+      var data = await r.json();
+      var alert = document.getElementById("wifi-sensing-alert");
+      var details = document.getElementById("wifi-sensing-details");
+      if (data.ispWifiDetected && data.detectedNetworks && data.detectedNetworks.length > 0) {
+        var names = data.detectedNetworks.map(function(n) { return n.ispName + " (" + esc(n.ssid) + ")"; }).join(", ");
+        details.innerHTML = "Detected ISP WiFi networks nearby: <strong style='color:#ff8888'>" + names + "</strong>. Your ISP router's WiFi radio may be performing physical surveillance (WiFi sensing) inside your home. Disable it or replace your router with a standalone modem.";
+        alert.style.display = "block";
+        localStorage.removeItem("gp-wifi-sensing-dismissed");
+      } else {
+        alert.style.display = "none";
+        toast("No ISP WiFi networks detected — you're clear", "success");
+      }
+    } catch(e) {
+      console.error("WiFi sensing check failed:", e);
+    }
+    if (btn) btn.textContent = "RESCAN";
+  }
+
+  function dismissWifiSensing() {
+    document.getElementById("wifi-sensing-alert").style.display = "none";
+    localStorage.setItem("gp-wifi-sensing-dismissed", Date.now());
+  }
+
+  // Run WiFi sensing check on page load (once per session, unless dismissed in last 24h)
+  (function() {
+    var dismissed = localStorage.getItem("gp-wifi-sensing-dismissed");
+    if (dismissed && (Date.now() - parseInt(dismissed)) < 86400000) return;
+    setTimeout(function() { runWifiSensingCheck(); }, 10000); // 10s after load
+  })();
 
   // ── Support ──────────────────────────────────────────────
 
@@ -2109,6 +3158,88 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     }
   }
 
+
+  // Mobile bottom nav
+  function mobileNav(section) {
+    var target = section === "top" ? document.querySelector("header") : document.getElementById("section-" + section);
+    if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelectorAll(".mobile-nav-btn").forEach(function(btn) {
+      btn.classList.toggle("active", btn.getAttribute("data-section") === section);
+    });
+  }
+
+  // Auto-highlight nav on scroll
+  var mobileNavSections = ["top", "modes", "arsenal", "topology", "stats"];
+  var mobileNavDebounce = null;
+  window.addEventListener("scroll", function() {
+    if (mobileNavDebounce) return;
+    mobileNavDebounce = setTimeout(function() {
+      mobileNavDebounce = null;
+      if (window.innerWidth > 430) return;
+      var best = "top";
+      for (var i = mobileNavSections.length - 1; i >= 0; i--) {
+        var s = mobileNavSections[i];
+        var el = s === "top" ? document.querySelector("header") : document.getElementById("section-" + s);
+        if (el && el.getBoundingClientRect().top <= 100) { best = s; break; }
+      }
+      document.querySelectorAll(".mobile-nav-btn").forEach(function(btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-section") === best);
+      });
+    }, 100);
+  }, { passive: true });
+
+  // Mobile onboarding
+  var onboardStep = 0;
+  var onboardSlides = [
+    { icon: "☠", title: "Welcome to GhostPort", desc: "Your privacy router is active and protecting your network. Here's a quick tour." },
+    { icon: "⚙", title: "Switch Modes", desc: "Tap a mode card to change your privacy level. ISP is open, Z-HOP is maximum protection with encrypted DNS + VPN." },
+    { icon: "📊", title: "Monitor Everything", desc: "Track blocked ads, tunnel status, bandwidth, and connected devices — all in real time. Pull down to refresh." }
+  ];
+  function showOnboard() {
+    if (window.innerWidth > 430) return;
+    if (localStorage.getItem("gp-onboard-done")) return;
+    document.getElementById("onboard-overlay").classList.remove("hidden");
+  }
+  function onboardNext() {
+    onboardStep++;
+    if (onboardStep >= onboardSlides.length) { onboardDismiss(); return; }
+    var s = onboardSlides[onboardStep];
+    document.getElementById("onboard-icon").textContent = s.icon;
+    document.getElementById("onboard-title").textContent = s.title;
+    document.getElementById("onboard-desc").textContent = s.desc;
+    for (var i = 0; i < onboardSlides.length; i++) {
+      document.getElementById("onboard-dot-" + i).classList.toggle("active", i === onboardStep);
+    }
+    if (onboardStep === onboardSlides.length - 1) {
+      var btn = document.getElementById("onboard-btn");
+      btn.textContent = "GET STARTED";
+      btn.onclick = onboardDismiss;
+    }
+  }
+  function onboardDismiss() {
+    var el = document.getElementById("onboard-overlay");
+    if (el) { el.style.display = "none"; el.classList.add("hidden"); }
+    localStorage.setItem("gp-onboard-done", "1");
+  }
+  setTimeout(showOnboard, 1000);
+
+  // Pull-to-refresh (mobile)
+  var ptrStartY = 0;
+  var ptrRefreshing = false;
+  document.addEventListener("touchstart", function(e) {
+    if (window.scrollY === 0) ptrStartY = e.touches[0].clientY;
+  }, { passive: true });
+  document.addEventListener("touchend", function(e) {
+    if (ptrRefreshing) return;
+    var dy = e.changedTouches[0].clientY - ptrStartY;
+    if (dy > 100 && window.scrollY === 0) {
+      ptrRefreshing = true;
+      toast("Refreshing...", "info");
+      fetchStatus().then(function() { fetchActivity(); ptrRefreshing = false; });
+    }
+    ptrStartY = 0;
+  }, { passive: true });
+
   // Boot sequence
   log("GhostPort Command Deck v1.1 initializing...", "info");
   log("Establishing connection to Pi...", "info");
@@ -2259,12 +3390,121 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     setColorTheme(hex);
   }
 
+  // ── Arsenal Category Toggle ─────────────────────────────
+  var arsenalCatState = {};
+  try { arsenalCatState = JSON.parse(localStorage.getItem("gp-arsenal-cats") || "{}"); } catch {}
+
+  window.toggleArsenalCat = function(cat) {
+    var grid = document.getElementById("arsenal-grid-" + cat);
+    var header = grid ? grid.previousElementSibling : null;
+    if (!grid) return;
+    var isHidden = grid.style.display === "none";
+    grid.style.display = isHidden ? "" : "none";
+    var chevron = header ? header.querySelector(".arsenal-cat-chevron") : null;
+    if (chevron) chevron.textContent = isHidden ? "▾" : "▸";
+    arsenalCatState[cat] = isHidden;
+    localStorage.setItem("gp-arsenal-cats", JSON.stringify(arsenalCatState));
+  };
+
+  // Restore saved category states
+  (function() {
+    var cats = ["privacy", "tests", "security", "management", "coming"];
+    // Defaults: privacy and management open, others closed
+    var defaults = { privacy: true, tests: false, security: false, management: true, coming: false };
+    cats.forEach(function(cat) {
+      var open = arsenalCatState[cat] !== undefined ? arsenalCatState[cat] : defaults[cat];
+      var grid = document.getElementById("arsenal-grid-" + cat);
+      if (!grid) return;
+      grid.style.display = open ? "" : "none";
+      var header = grid.previousElementSibling;
+      var chevron = header ? header.querySelector(".arsenal-cat-chevron") : null;
+      if (chevron) chevron.textContent = open ? "▾" : "▸";
+    });
+  })();
+
   fetchStatus().then(() => {
     log("All systems nominal. Welcome aboard, Captain.", "success");
   });
 
+  // DECISION: Init topology after first status fetch so container exists in DOM
+  if (typeof GhostPortTopology !== "undefined" && document.getElementById("topology-container")) {
+    GhostPortTopology.init("topology-container");
+  }
+
   // Poll status every 5 seconds (faster to catch rollback countdown)
   setInterval(fetchStatus, 5000);
+
+  // Activity log — load on startup, refresh every 30s
+  fetchActivity();
+  setInterval(fetchActivity, 30000);
+
+  // ── Software Status ──────────────────────────────────────
+  async function fetchSoftwareStatus() {
+    try {
+      var r = await fetch("/api/system/updates", { headers: { "X-CSRF-Token": csrfToken } });
+      var d = await r.json();
+      if (!d.ok) return;
+      var list = document.getElementById("software-status-list");
+      var badge = document.getElementById("auto-update-badge");
+      var lastRun = document.getElementById("auto-update-last-run");
+      if (!list) return;
+      var comps = d.components || {};
+      var rows = "";
+      var allCurrent = true;
+      var statusColors = { current: "var(--green)", updated: "#00e5ff", error: "var(--red)", unknown: "var(--text-dim)" };
+      var labels = { pihole_core: "Pi-hole Core", pihole_ftl: "Pi-hole FTL", pihole_web: "Pi-hole Web", system_packages: "System Packages", nodejs: "Node.js" };
+      for (var key in comps) {
+        var c = comps[key];
+        var color = statusColors[c.status] || "var(--text-dim)";
+        var label = labels[key] || key;
+        var ver = c.version || "—";
+        var st = (c.status || "unknown").toUpperCase();
+        if (c.status !== "current" && c.status !== "updated") allCurrent = false;
+        rows += '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--border)">'
+          + '<span>' + escHtml(label) + '</span>'
+          + '<span style="color:' + color + '">' + escHtml(ver) + ' <span style="font-size:9px;opacity:0.7">' + st + '</span></span></div>';
+      }
+      list.innerHTML = rows || '<div style="color:var(--text-dim)">No data yet — auto-update runs weekly</div>';
+      if (d.last_run) {
+        badge.textContent = allCurrent ? "ALL CURRENT" : "NEEDS UPDATE";
+        badge.style.background = allCurrent ? "var(--green-20)" : "rgba(255,68,68,0.2)";
+        badge.style.color = allCurrent ? "var(--green)" : "var(--red)";
+      }
+      if (d.last_run) {
+        var ago = Math.round((Date.now() - new Date(d.last_run).getTime()) / 3600000);
+        lastRun.textContent = "Last checked: " + (ago < 1 ? "just now" : ago + "h ago");
+      }
+      if (d.errors && d.errors.length > 0) {
+        var latest = d.errors[d.errors.length - 1];
+        lastRun.textContent += " | Last error: " + escHtml(latest.msg).substring(0, 60);
+      }
+    } catch (e) { /* silent */ }
+  }
+
+  async function runAutoUpdate() {
+    if (!confirm("Run auto-update now? This will update Pi-hole, Node.js, and system packages. The dashboard may restart.")) return;
+    var btn = document.getElementById("btn-auto-update");
+    btn.textContent = "UPDATING...";
+    btn.disabled = true;
+    try {
+      var r = await fetch("/api/system/updates/run", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken } });
+      var d = await r.json();
+      var el = document.getElementById("update-result");
+      if (d.ok) {
+        el.innerHTML = '<div style="color:var(--green);font-size:11px;white-space:pre-wrap">' + escHtml(d.output || "Complete") + '</div>';
+      } else {
+        el.innerHTML = '<div style="color:var(--red);font-size:11px">' + escHtml(d.error || "Failed") + '</div>';
+      }
+      fetchSoftwareStatus();
+    } catch (e) {
+      document.getElementById("update-result").innerHTML = '<div style="color:var(--red);font-size:11px">Auto-update request failed</div>';
+    }
+    btn.textContent = "AUTO-UPDATE ALL";
+    btn.disabled = false;
+  }
+
+  fetchSoftwareStatus();
+  setInterval(fetchSoftwareStatus, 60000);
 
   // ── WiFi Network ──────────────────────────────────────────
 
@@ -2287,6 +3527,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       if (data.ok) {
         document.getElementById("wifi-ssid").value = data.ssid;
         document.getElementById("wifi-pass").value = data.passphrase;
+        if (data.wpaMode) document.getElementById("wifi-wpa-mode").value = data.wpaMode;
       }
     } catch (e) { /* silent */ }
   }
@@ -2294,6 +3535,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   async function saveWifiConfig() {
     const ssid = document.getElementById("wifi-ssid").value.trim();
     const passphrase = document.getElementById("wifi-pass").value;
+    const wpaMode = document.getElementById("wifi-wpa-mode").value;
     const status = document.getElementById("wifi-status");
 
     if (!ssid && !passphrase) {
@@ -2315,6 +3557,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       const body = {};
       if (ssid) body.ssid = ssid;
       if (passphrase) body.passphrase = passphrase;
+      body.wpaMode = wpaMode;
 
       const res = await fetch(API + "/api/hostapd/config", {
         method: "POST",
@@ -2338,6 +3581,206 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     }
   }
 
+
+  // ── WiFi WAN ──────────────────────────────────────────
+
+  var wanState = { type: "ethernet", ssid: "" };
+
+  async function loadWanStatus() {
+    try {
+      const res = await fetch(API + "/api/wan/status");
+      const data = await res.json();
+      if (!data.ok) return;
+      wanState = data;
+      const badge = document.getElementById("wan-badge");
+      const icon = document.getElementById("wan-icon");
+      const ethBtn = document.getElementById("wan-eth-btn");
+      const wifiBtn = document.getElementById("wan-wifi-btn");
+      const panel = document.getElementById("wan-wifi-panel");
+      const status = document.getElementById("wan-status");
+
+      if (data.type === "wireless") {
+        badge.textContent = "WIFI";
+        badge.style.background = "rgba(0,229,255,0.12)";
+        badge.style.color = "#00e5ff";
+        icon.textContent = "📡";
+        ethBtn.style.opacity = "0.5";
+        wifiBtn.style.opacity = "1";
+        panel.style.display = "block";
+        if (data.connectedSsid && data.connectedSsid !== "none") {
+          status.style.color = "var(--green)";
+          status.textContent = "Connected to " + data.connectedSsid + (data.wlan1Ip && data.wlan1Ip !== "none" ? " (" + data.wlan1Ip + ")" : "");
+        }
+        if (data.ssid) document.getElementById("wan-ssid").value = data.ssid;
+      } else {
+        badge.textContent = "ETHERNET";
+        badge.style.background = "var(--green-13)";
+        badge.style.color = "var(--green)";
+        icon.textContent = "🔌";
+        ethBtn.style.opacity = "1";
+        wifiBtn.style.opacity = "0.5";
+        if (data.eth0Ip && data.eth0Ip !== "none") {
+          status.style.color = "var(--green)";
+          status.textContent = "Ethernet active: " + data.eth0Ip;
+        }
+      }
+    } catch (e) { /* silent */ }
+  }
+
+  function showWanWifi() {
+    document.getElementById("wan-wifi-panel").style.display = "block";
+    document.getElementById("wan-eth-btn").style.opacity = "0.5";
+    document.getElementById("wan-wifi-btn").style.opacity = "1";
+  }
+
+  function toggleWanPassVis() {
+    const input = document.getElementById("wan-pass");
+    const btn = document.getElementById("wan-pass-eye");
+    if (input.type === "password") { input.type = "text"; btn.textContent = "HIDE"; }
+    else { input.type = "password"; btn.textContent = "SHOW"; }
+  }
+
+  async function scanWanNetworks() {
+    const btn = document.getElementById("wan-scan-btn");
+    const results = document.getElementById("wan-scan-results");
+    btn.textContent = "SCANNING...";
+    btn.disabled = true;
+    results.innerHTML = '<div style="color:var(--text-dim);padding:8px;text-align:center">Scanning nearby networks...</div>';
+
+    try {
+      const res = await fetch(API + "/api/wan/scan", { method: "POST" });
+      const data = await res.json();
+      btn.textContent = "SCAN FOR NETWORKS";
+      btn.disabled = false;
+
+      if (!data.ok || !data.networks || !data.networks.length) {
+        results.innerHTML = '<div style="color:var(--text-dim);padding:8px;text-align:center">No networks found</div>';
+        return;
+      }
+
+      results.innerHTML = data.networks.map(function(n) {
+        var bars = n.signal > -50 ? "▰▰▰▰" : n.signal > -65 ? "▰▰▰▱" : n.signal > -75 ? "▰▰▱▱" : "▰▱▱▱";
+        var sec = n.security === "open" ? "OPEN" : "WPA";
+        return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer;border-radius:4px" '
+          + 'onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'none\'" '
+          + 'onclick="selectWanNetwork(\'' + escHtml(n.ssid).replace(/'/g, "&#39;") + '\')">'
+          + '<span style="color:var(--green);font-size:10px;letter-spacing:1px">' + bars + '</span>'
+          + '<span style="flex:1;font-size:11px;color:var(--text)">' + escHtml(n.ssid) + '</span>'
+          + '<span style="font-size:9px;color:var(--text-dim);letter-spacing:1px">CH' + escHtml(n.channel) + '</span>'
+          + '<span style="font-size:9px;color:var(--text-dim);letter-spacing:1px">' + sec + '</span>'
+          + '</div>';
+      }).join("");
+    } catch (e) {
+      btn.textContent = "SCAN FOR NETWORKS";
+      btn.disabled = false;
+      results.innerHTML = '<div style="color:var(--red);padding:8px;text-align:center">Scan failed: ' + escHtml(e.message) + '</div>';
+    }
+  }
+
+  function selectWanNetwork(ssid) {
+    document.getElementById("wan-ssid").value = ssid;
+    document.getElementById("wan-pass").focus();
+  }
+
+  async function connectWanWifi() {
+    const ssid = document.getElementById("wan-ssid").value.trim();
+    const password = document.getElementById("wan-pass").value;
+    const status = document.getElementById("wan-status");
+    const btn = document.getElementById("wan-connect-btn");
+
+    if (!ssid) {
+      status.style.color = "var(--red)";
+      status.textContent = "Enter an SSID";
+      return;
+    }
+    if (!password || password.length < 8 || password.length > 63) {
+      status.style.color = "var(--red)";
+      status.textContent = "Password must be 8-63 characters";
+      return;
+    }
+
+    btn.textContent = "CONNECTING...";
+    btn.disabled = true;
+    status.style.color = "var(--text-dim)";
+    status.textContent = "Connecting to " + ssid + " (this takes 15-30s)...";
+    log("Switching to WiFi WAN: " + ssid, "warn");
+
+    try {
+      const res = await fetch(API + "/api/wan/wireless", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ssid: ssid, password: password }),
+      });
+      const data = await res.json();
+      btn.textContent = "CONNECT";
+      btn.disabled = false;
+
+      if (data.ok) {
+        status.style.color = "var(--green)";
+        status.textContent = "Connected to " + ssid;
+        log("WiFi WAN connected: " + ssid, "success");
+        toast("WiFi WAN connected: " + ssid, "success");
+        loadWanStatus();
+        fetchStatus();
+      } else {
+        status.style.color = "var(--red)";
+        status.textContent = data.error || "Connection failed";
+        log("WiFi WAN failed: " + (data.error || "unknown error"), "error");
+      }
+    } catch (e) {
+      btn.textContent = "CONNECT";
+      btn.disabled = false;
+      status.style.color = "var(--red)";
+      status.textContent = "Failed: " + e.message;
+      log("WiFi WAN error: " + e.message, "error");
+    }
+  }
+
+  async function switchWanEthernet() {
+    const status = document.getElementById("wan-status");
+    const btn = document.getElementById("wan-eth-btn");
+
+    if (wanState.type === "ethernet") {
+      status.style.color = "var(--text-dim)";
+      status.textContent = "Already on Ethernet";
+      return;
+    }
+
+    btn.textContent = "SWITCHING...";
+    btn.disabled = true;
+    status.style.color = "var(--text-dim)";
+    status.textContent = "Switching to Ethernet WAN...";
+    log("Switching to Ethernet WAN...", "warn");
+
+    try {
+      const res = await fetch(API + "/api/wan/ethernet", { method: "POST" });
+      const data = await res.json();
+      btn.textContent = "ETHERNET";
+      btn.disabled = false;
+
+      if (data.ok) {
+        status.style.color = "var(--green)";
+        status.textContent = "Switched to Ethernet";
+        log("Ethernet WAN active", "success");
+        toast("Switched to Ethernet WAN", "success");
+        document.getElementById("wan-wifi-panel").style.display = "none";
+        loadWanStatus();
+        fetchStatus();
+      } else {
+        status.style.color = "var(--red)";
+        status.textContent = data.error || "Switch failed";
+        log("Ethernet switch failed: " + (data.error || "unknown"), "error");
+      }
+    } catch (e) {
+      btn.textContent = "ETHERNET";
+      btn.disabled = false;
+      status.style.color = "var(--red)";
+      status.textContent = "Failed: " + e.message;
+    }
+  }
+
+  // Load WAN status on page load
+  loadWanStatus();
 
   // ── Family Shield ──────────────────────────────────────
   // All functions on window.* so onclick handlers always find them
@@ -2524,6 +3967,324 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   })();
 
   loadWifiConfig();
+
 </script>
+
+<!-- Fixed floating theme picker -->
+<div id="mode-fab" title="Quick Modes">☠️<span id="mode-fab-tip">quick modes :D</span></div>
+<div id="mode-panel">
+  <div class="fab-tabs">
+    <div class="fab-tab active" onclick="switchFabTab('modes')">MODES</div>
+    <div class="fab-tab" onclick="switchFabTab('style')">STYLE</div>
+  </div>
+
+  <!-- Modes Tab -->
+  <div class="fab-tab-content active" id="fab-tab-modes">
+    <div class="mode-slot" data-mode="isp" onclick="switchMode('isp')">
+      <span class="mode-slot-icon">⚓</span>
+      <div><div class="mode-slot-name">ISP</div><div class="mode-slot-sub">Open Waters</div></div>
+    </div>
+    <div class="mode-slot" data-mode="zerotrust" onclick="switchMode('zerotrust')">
+      <span class="mode-slot-icon">👻</span>
+      <div><div class="mode-slot-name">ZERO TRUST</div><div class="mode-slot-sub">Ghost Cloak</div></div>
+    </div>
+    <div class="mode-slot" data-mode="doublehop" onclick="switchMode('doublehop')">
+      <span class="mode-slot-icon">💀</span>
+      <div><div class="mode-slot-name">DOUBLE HOP</div><div class="mode-slot-sub">Dead Man's Route</div></div>
+    </div>
+    <div class="mode-slot" data-mode="zhop" onclick="switchMode('zhop')">
+      <span class="mode-slot-icon">🏴‍☠️</span>
+      <div><div class="mode-slot-name">Z-HOP</div><div class="mode-slot-sub">Davy Jones</div></div>
+    </div>
+  </div>
+
+  <!-- Style Tab -->
+  <div class="fab-tab-content" id="fab-tab-style">
+    <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin-bottom:6px">THEME PACKS</div>
+    <div class="theme-pack-grid">
+      <div class="theme-pack-btn active" onclick="setThemePack('terminal')" data-pack="terminal">
+        <div class="theme-pack-dot" style="background:#39ff8f"></div>
+        <div class="theme-pack-name">Terminal</div>
+      </div>
+      <div class="theme-pack-btn" onclick="setThemePack('stealth')" data-pack="stealth">
+        <div class="theme-pack-dot" style="background:#8a9099"></div>
+        <div class="theme-pack-name">Stealth</div>
+      </div>
+      <div class="theme-pack-btn" onclick="setThemePack('ocean')" data-pack="ocean">
+        <div class="theme-pack-dot" style="background:#44aaff"></div>
+        <div class="theme-pack-name">Ocean</div>
+      </div>
+      <div class="theme-pack-btn" onclick="setThemePack('ember')" data-pack="ember">
+        <div class="theme-pack-dot" style="background:#ff6633"></div>
+        <div class="theme-pack-name">Ember</div>
+      </div>
+      <div class="theme-pack-btn" onclick="setThemePack('seadevil')" data-pack="seadevil">
+        <div class="theme-pack-dot" style="background:#b44aff"></div>
+        <div class="theme-pack-name">Seadevil</div>
+      </div>
+      <div class="theme-pack-btn" onclick="setThemePack('frost')" data-pack="frost">
+        <div class="theme-pack-dot" style="background:#00e5ff"></div>
+        <div class="theme-pack-name">Frost</div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:6px;justify-content:center;margin-bottom:8px">
+      <input type="color" id="theme-picker" class="theme-color-input" value="#39ff8f" title="Custom color"/>
+      <span class="theme-color-label" id="theme-label">#39FF8F</span>
+      <button class="theme-rgb-btn" id="rgb-btn" onclick="toggleRainbow()" title="RGB Cycle" style="width:22px;height:22px"></button>
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin-bottom:4px">EFFECTS</div>
+      <input type="range" min="0" max="2" step="1" id="anim-slider" class="anim-slider" value="2"/>
+      <div class="anim-labels"><span>MINIMAL</span><span>STANDARD</span><span>FULL</span></div>
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+      <div style="font-size:9px;color:var(--text-dim);letter-spacing:2px;margin-bottom:4px">BACKGROUND</div>
+      <div style="display:flex;gap:3px;flex-wrap:wrap">
+        <button class="bg-btn active" data-bg="solid" onclick="setBgEffect('solid')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">None</button>
+        <button class="bg-btn" data-bg="particles" onclick="setBgEffect('particles')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">Particles</button>
+        <button class="bg-btn" data-bg="matrix" onclick="setBgEffect('matrix')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">Matrix</button>
+        <button class="bg-btn" data-bg="grid" onclick="setBgEffect('grid')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">Grid</button>
+        <button class="bg-btn" data-bg="waves" onclick="setBgEffect('waves')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">Waves</button>
+        <button class="bg-btn" data-bg="video" onclick="setBgEffect('video')" style="font-size:8px;padding:3px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text-dim);border-radius:3px;cursor:pointer">Video</button>
+      </div>
+      <div id="video-url-row" style="display:none;margin-top:6px">
+        <input type="text" id="bg-video-url" placeholder="Video URL (mp4)" style="width:100%;font-size:9px;padding:4px 6px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:3px;font-family:inherit"/>
+        <button onclick="applyVideoUrl()" style="font-size:8px;padding:3px 8px;margin-top:4px;background:var(--bg3);border:1px solid var(--green);color:var(--green);border-radius:3px;cursor:pointer;font-family:inherit">APPLY</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+// Draggable mode FAB (includes theme picker)
+(function() {
+  var fab = document.getElementById("mode-fab");
+  var panel = document.getElementById("mode-panel");
+  if (!fab || !panel) return;
+  var dragging = false, didDrag = false, startX, startY, fabX, fabY;
+
+  var saved = localStorage.getItem("gp-mode-fab-pos");
+  if (saved) {
+    try {
+      var p = JSON.parse(saved);
+      fab.style.left = p.x + "px"; fab.style.top = p.y + "px";
+      fab.style.right = "auto"; fab.style.bottom = "auto";
+    } catch {}
+  }
+
+  function getFabRect() { return fab.getBoundingClientRect(); }
+
+  function positionPanel() {
+    var r = getFabRect();
+    var pw = 220, ph = 400;
+    var left = r.left + r.width / 2 - pw / 2;
+    var top = r.top - ph - 12;
+    if (top < 8) top = r.bottom + 12;
+    if (left < 8) left = 8;
+    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
+    panel.style.left = left + "px";
+    panel.style.top = top + "px";
+  }
+
+  function onDown(e) {
+    if (e.button && e.button !== 0) return;
+    dragging = true; didDrag = false;
+    fab.classList.add("dragging");
+    var r = getFabRect();
+    var ev = e.touches ? e.touches[0] : e;
+    startX = ev.clientX; startY = ev.clientY;
+    fabX = r.left; fabY = r.top;
+    e.preventDefault();
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    var ev = e.touches ? e.touches[0] : e;
+    var dx = ev.clientX - startX, dy = ev.clientY - startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) didDrag = true;
+    var nx = Math.max(0, Math.min(window.innerWidth - 44, fabX + dx));
+    var ny = Math.max(0, Math.min(window.innerHeight - 44, fabY + dy));
+    fab.style.left = nx + "px"; fab.style.top = ny + "px";
+    fab.style.right = "auto"; fab.style.bottom = "auto";
+    if (panel.classList.contains("open")) positionPanel();
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    fab.classList.remove("dragging");
+    var r = getFabRect();
+    localStorage.setItem("gp-mode-fab-pos", JSON.stringify({ x: r.left, y: r.top }));
+    if (!didDrag) {
+      panel.classList.toggle("open");
+      if (panel.classList.contains("open")) { positionPanel(); updateModeSlots(); }
+    }
+  }
+
+  fab.addEventListener("mousedown", onDown);
+  fab.addEventListener("touchstart", onDown, { passive: false });
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("touchmove", onMove, { passive: false });
+  document.addEventListener("mouseup", onUp);
+  document.addEventListener("touchend", onUp);
+
+  document.addEventListener("click", function(e) {
+    if (panel.classList.contains("open") && !panel.contains(e.target) && !fab.contains(e.target)) {
+      panel.classList.remove("open");
+    }
+  });
+
+  // Sync active mode highlight
+  window.updateModeSlots = function() {
+    var slots = panel.querySelectorAll(".mode-slot[data-mode]");
+    slots.forEach(function(s) {
+      s.classList.toggle("active", s.dataset.mode === currentMode);
+    });
+  };
+
+  // Sync theme picker2 with main picker
+  var picker2 = document.getElementById("theme-picker");
+  var label2 = document.getElementById("theme-label");
+  if (picker2) {
+    picker2.addEventListener("input", function() {
+      setColorTheme(picker2.value);
+    });
+  }
+  // Hook into setColorTheme to sync picker2 and theme packs
+  var origSetColor = window.setColorTheme;
+  if (origSetColor) {
+    window.setColorTheme = function(c) {
+      origSetColor(c);
+      if (picker2) picker2.value = c;
+      if (label2) label2.textContent = c.toUpperCase();
+      // Sync theme pack active states
+      panel.querySelectorAll(".theme-pack-btn").forEach(function(b) {
+        var packColors = {terminal:"#39ff8f",stealth:"#8a9099",ocean:"#44aaff",ember:"#ff6633",seadevil:"#b44aff",frost:"#00e5ff"};
+        var packName = b.dataset.pack;
+        b.classList.toggle("active", packColors[packName] === c);
+      });
+    };
+  }
+
+  // Tooltip
+  var tip = document.getElementById("mode-fab-tip");
+  if (tip) {
+    setTimeout(function() { tip.classList.add("show"); }, 2000);
+    var dismissTip = function() {
+      tip.classList.remove("show");
+      setTimeout(function() { tip.classList.add("gone"); }, 400);
+    };
+    setTimeout(dismissTip, 8000);
+    fab.addEventListener("mousedown", dismissTip, { once: true });
+    fab.addEventListener("touchstart", dismissTip, { once: true });
+  }
+})();
+
+// ── FAB Tab Switching ────────────────────────────────
+window.switchFabTab = function(tab) {
+  document.querySelectorAll(".fab-tab").forEach(function(t) {
+    t.classList.toggle("active", t.textContent.trim().toLowerCase() === tab);
+  });
+  document.querySelectorAll(".fab-tab-content").forEach(function(c) {
+    c.classList.toggle("active", c.id === "fab-tab-" + tab);
+  });
+};
+
+// ── Theme Pack System ────────────────────────────────
+var THEME_PACKS = {
+  terminal: "#39ff8f", stealth: "#8a9099", ocean: "#44aaff",
+  ember: "#ff6633", seadevil: "#b44aff", frost: "#00e5ff"
+};
+
+window.setThemePack = function(pack) {
+  var hex = THEME_PACKS[pack];
+  if (!hex) return;
+  setColorTheme(hex);
+  localStorage.setItem("gp-theme-pack", pack);
+  document.querySelectorAll(".theme-pack-btn").forEach(function(b) {
+    b.classList.toggle("active", b.dataset.pack === pack);
+  });
+};
+
+// Restore saved theme pack on load
+(function() {
+  var savedPack = localStorage.getItem("gp-theme-pack");
+  if (savedPack && THEME_PACKS[savedPack]) {
+    document.querySelectorAll(".theme-pack-btn").forEach(function(b) {
+      b.classList.toggle("active", b.dataset.pack === savedPack);
+    });
+  }
+})();
+
+// ── Animation Intensity ──────────────────────────────
+var ANIM_LEVELS = ["minimal", "standard", "full"];
+
+window.setAnimLevel = function(level) {
+  document.body.setAttribute("data-animation", ANIM_LEVELS[level] || "full");
+  localStorage.setItem("gp-animation", String(level));
+};
+
+(function() {
+  var saved = localStorage.getItem("gp-animation");
+  var level = saved !== null ? parseInt(saved) : 2;
+  if (isNaN(level) || level < 0 || level > 2) level = 2;
+  document.body.setAttribute("data-animation", ANIM_LEVELS[level]);
+  var slider = document.getElementById("anim-slider");
+  if (slider) {
+    slider.value = level;
+    slider.addEventListener("input", function() { setAnimLevel(parseInt(this.value)); });
+  }
+})();
+
+// ── Background Effects (stub — full impl in Phase 3) ─
+var currentBgEffect = "solid";
+
+window.setBgEffect = function(effect) {
+  currentBgEffect = effect;
+  localStorage.setItem("gp-bg-effect", effect);
+  document.querySelectorAll(".bg-btn").forEach(function(b) {
+    b.classList.toggle("active", b.dataset.bg === effect);
+    if (b.classList.contains("active")) {
+      b.style.borderColor = "var(--green)";
+      b.style.color = "var(--green)";
+    } else {
+      b.style.borderColor = "";
+      b.style.color = "";
+    }
+  });
+  var videoRow = document.getElementById("video-url-row");
+  if (videoRow) videoRow.style.display = effect === "video" ? "block" : "none";
+  // Toggle glassmorphism class
+  document.body.classList.toggle("has-bg-effect", effect !== "solid");
+  // Apply effect (Phase 3 will add full canvas/video rendering)
+  if (typeof GhostBG !== "undefined" && GhostBG.set) {
+    GhostBG.set(effect);
+  }
+};
+
+window.applyVideoUrl = function() {
+  var url = document.getElementById("bg-video-url");
+  if (url && url.value.trim()) {
+    localStorage.setItem("gp-bg-video-url", url.value.trim());
+    if (typeof GhostBG !== "undefined" && GhostBG.setVideo) {
+      GhostBG.setVideo(url.value.trim());
+    }
+  }
+};
+
+// Restore saved background effect
+(function() {
+  var saved = localStorage.getItem("gp-bg-effect") || "solid";
+  var videoUrl = localStorage.getItem("gp-bg-video-url") || "";
+  setBgEffect(saved);
+  var urlInput = document.getElementById("bg-video-url");
+  if (urlInput && videoUrl) urlInput.value = videoUrl;
+})();
+</script>
+
 </body>
 </html>

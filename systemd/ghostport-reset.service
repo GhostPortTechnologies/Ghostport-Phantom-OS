@@ -1,0 +1,13 @@
+[Unit]
+Description=GhostPort GPIO Reset Button Monitor
+After=network.target ghostport.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gp-reset-button
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+#!/bin/bash
+# gp-factory-reset — Reset device to factory defaults
+# Preserves Tailscale enrollment for remote management
+# Usage: sudo gp-factory-reset [--no-reboot]
+
+set -euo pipefail
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Error: must run as root (sudo gp-factory-reset)"
+  exit 1
+fi
+
+echo "[Factory Reset] Starting..."
+
+# Switch to ISP safe mode
+echo "[Factory Reset] Switching to ISP mode..."
+gp-mode isp --no-rollback 2>/dev/null || true
+
+# Remove all config EXCEPT Tailscale enrollment and fleet-auth (manufacturing provisioned)
+echo "[Factory Reset] Removing configuration..."
+rm -f /etc/phantom/auth.json
+rm -f /etc/phantom/admin-auth.json
+rm -f /etc/phantom/arsenal.json
+rm -f /etc/phantom/pihole.json
+rm -f /etc/phantom/fleet.json
+rm -f /etc/phantom/subscription.json
+rm -f /etc/phantom/family-shield.json
+rm -f /etc/phantom/ads-tally.json
+rm -f /etc/phantom/update-state.json
+rm -f /etc/phantom/version.json
+
+# Remove scheduled mode switches
+rm -f /etc/cron.d/ghostport-schedules
+
+# Clear temp files
+rm -f /tmp/gp-sched-line /tmp/gp-current-mode
+
+# Clear mode state to ISP
+echo "isp" > /etc/phantom/current-mode
+
+# Reset hostapd SSID/password to defaults
+HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
+if [ -f "$HOSTAPD_CONF" ]; then
+  echo "[Factory Reset] Resetting WiFi to defaults..."
+  sed -i 's/^ssid=.*/ssid=GhostPort Router/' "$HOSTAPD_CONF"
+  sed -i 's/^wpa_passphrase=.*/wpa_passphrase=ghostport/' "$HOSTAPD_CONF"
+fi
+
+# Clear dnsmasq leases
+rm -f /var/lib/misc/dnsmasq.leases
+rm -f /tmp/pihole-FTL.db 2>/dev/null || true
+
+echo "[Factory Reset] Complete."
+
+if [ "${1:-}" != "--no-reboot" ]; then
+  echo "[Factory Reset] Rebooting in 3 seconds..."
+  sleep 3
+  reboot
+fi

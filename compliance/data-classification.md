@@ -23,16 +23,16 @@
 
 | # | Data Type | Location | System | Encryption at Rest | Encryption in Transit | Backup | Retention |
 |---|-----------|----------|--------|--------------------|-----------------------|--------|-----------|
-| R-01 | Stripe API key (sk_live_*) | `/opt/ghostport-fleet/stripe.json` | EC2 | Filesystem permissions (mode 0600, owner: ghostport). EBS volume not encrypted by default. | Yes (HTTPS to Stripe API) | AMI snapshot (2026-03-23) | Rotate on exposure; no expiry |
-| R-02 | Stripe webhook signing secret (whsec_*) | `/opt/ghostport-fleet/stripe.json` | EC2 | Mode 0600, owner: ghostport | Yes (HTTPS inbound via nginx TLS) | AMI snapshot | Rotate on exposure |
+| R-01 | Stripe API key (sk_live_*) | `/opt/phantom-fleet/stripe.json` | EC2 | Filesystem permissions (mode 0600, owner: ghostport). EBS volume not encrypted by default. | Yes (HTTPS to Stripe API) | AMI snapshot (2026-03-23) | Rotate on exposure; no expiry |
+| R-02 | Stripe webhook signing secret (whsec_*) | `/opt/phantom-fleet/stripe.json` | EC2 | Mode 0600, owner: ghostport | Yes (HTTPS inbound via nginx TLS) | AMI snapshot | Rotate on exposure |
 | R-03 | WireGuard private key (Pi) | `/etc/wireguard/wg0.conf` | Pi | Filesystem permissions (mode 0600, owner: root) | N/A (never transmitted) | .bak file alongside | Permanent; rotate if compromised |
 | R-04 | WireGuard private key (EC2) | `/etc/wireguard/wg0.conf` | EC2 | Filesystem permissions (mode 0600, owner: root) | N/A (never transmitted) | AMI snapshot | Permanent; rotate if compromised |
-| R-05 | Admin passcode hash + salt | `/etc/ghostport/auth.json` | Pi | Filesystem permissions (mode 0600). Scrypt hash (not reversible). | Yes (HTTPS on port 4201) | .bak file alongside | Regenerated on reset via gp-passcode |
-| R-06 | Fleet auth tokens (bridge Bearer token) | `/opt/ghostport-fleet/auth.json` | EC2 | Mode 0600, owner: ghostport | Yes (HTTPS via nginx; WireGuard tunnel for internal) | AMI snapshot | Rotate on exposure |
-| R-07 | SSL private key (Pi) | `/opt/ghostport/ssl/` | Pi | Filesystem permissions | N/A (used locally for TLS termination) | Not backed up externally | Renewed with cert |
+| R-05 | Admin passcode hash + salt | `/etc/phantom/auth.json` | Pi | Filesystem permissions (mode 0600). Scrypt hash (not reversible). | Yes (HTTPS on port 4201) | .bak file alongside | Regenerated on reset via gp-passcode |
+| R-06 | Fleet auth tokens (bridge Bearer token) | `/opt/phantom-fleet/auth.json` | EC2 | Mode 0600, owner: ghostport | Yes (HTTPS via nginx; WireGuard tunnel for internal) | AMI snapshot | Rotate on exposure |
+| R-07 | SSL private key (Pi) | `/opt/phantom/ssl/` | Pi | Filesystem permissions | N/A (used locally for TLS termination) | Not backed up externally | Renewed with cert |
 | R-08 | SSL private key (EC2 / Let's Encrypt) | `/etc/letsencrypt/live/api.ghostporttechnologies.com/` | EC2 | Filesystem permissions (mode 0600) | N/A (used locally for TLS termination) | AMI snapshot | Auto-renewed every 90 days; expires 2026-06-20 |
 | R-09 | WiFi WPA passphrase | `/etc/hostapd/hostapd.conf` | Pi | Filesystem permissions | WPA3/WPA2 over air | .bak file alongside | Permanent; change via hostapd config |
-| R-10 | Pi-hole API password | `/etc/ghostport/pihole.json` | Pi | Mode 0600, owner: ghostport-admin | Yes (localhost HTTP only, port 80) | .bak file alongside | Regenerated on Pi-hole reinstall |
+| R-10 | Pi-hole API password | `/etc/phantom/pihole.json` | Pi | Mode 0600, owner: ghostport-admin | Yes (localhost HTTP only, port 80) | .bak file alongside | Regenerated on Pi-hole reinstall |
 
 ### Restricted Data Controls
 - Files MUST be mode 0600 or 0640, owned by service account or root.
@@ -46,20 +46,20 @@
 
 | # | Data Type | Location | System | Encryption at Rest | Encryption in Transit | Backup | Retention |
 |---|-----------|----------|--------|--------------------|-----------------------|--------|-----------|
-| I-01 | fleet.db (device registrations, tenants, license keys, subscriptions) | `/opt/ghostport-fleet/fleet.db` | EC2 | No (plaintext SQLite on EBS) | Yes (WireGuard tunnel for API; HTTPS for activation) | AMI snapshot; daily S3 backup planned | Permanent (customer records) |
+| I-01 | fleet.db (device registrations, tenants, license keys, subscriptions) | `/opt/phantom-fleet/fleet.db` | EC2 | No (plaintext SQLite on EBS) | Yes (WireGuard tunnel for API; HTTPS for activation) | AMI snapshot; daily S3 backup planned | Permanent (customer records) |
 | I-02 | Bridge messages (inter-Claude messaging) | In-memory + fleet.db `messages` table | EC2 | No (SQLite) | Yes (HTTPS + Bearer auth) | AMI snapshot | Last 200 messages retained |
-| I-03 | auth.json (Pi dashboard auth config) | `/etc/ghostport/auth.json` | Pi | No | Yes (HTTPS port 4201) | .bak file | Permanent |
-| I-04 | pihole.json (Pi-hole API credentials) | `/etc/ghostport/pihole.json` | Pi | No | Localhost only | .bak file | Permanent |
-| I-05 | arsenal.json (security tools config) | `/etc/ghostport/arsenal.json` | Pi | No | Yes (HTTPS port 4201) | .bak file | Permanent |
-| I-06 | family-shield.json (parental control config) | `/etc/ghostport/family-shield.json` | Pi | Mode 0600, owner: ghostport-admin | Yes (HTTPS port 4201) | No external backup | Permanent |
+| I-03 | auth.json (Pi dashboard auth config) | `/etc/phantom/auth.json` | Pi | No | Yes (HTTPS port 4201) | .bak file | Permanent |
+| I-04 | pihole.json (Pi-hole API credentials) | `/etc/phantom/pihole.json` | Pi | No | Localhost only | .bak file | Permanent |
+| I-05 | arsenal.json (security tools config) | `/etc/phantom/arsenal.json` | Pi | No | Yes (HTTPS port 4201) | .bak file | Permanent |
+| I-06 | family-shield.json (parental control config) | `/etc/phantom/family-shield.json` | Pi | Mode 0600, owner: ghostport-admin | Yes (HTTPS port 4201) | No external backup | Permanent |
 | I-07 | nginx configs | `/etc/nginx/sites-available/` | EC2 | No | N/A | AMI snapshot | Permanent |
 | I-08 | WireGuard peer configs (public keys, endpoints, allowed IPs) | `/etc/wireguard/wg0.conf` | Both | Mode 0600 (bundled with private key file) | N/A | .bak (Pi), AMI (EC2) | Permanent |
-| I-09 | nftables firewall profiles | `/etc/gpmodes/*.nft` | Pi | No | N/A | Git repo at /opt/ghostport/ | Permanent |
+| I-09 | nftables firewall profiles | `/etc/gpmodes/*.nft` | Pi | No | N/A | Git repo at /opt/phantom/ | Permanent |
 | I-10 | System logs (journald) | `/var/log/journal/` | Both | No | N/A | No external backup | Default journald rotation |
 | I-11 | Pi-hole query logs | Pi-hole FTL database | Pi | No | N/A | No external backup | Pi-hole default (24h detailed, 365d summary) |
 | I-12 | Pi-hole gravity.db (blocklists) | `/etc/pihole/gravity.db` | Pi | No | N/A | Rebuildable via `pihole -g` | Rebuilt on update |
 | I-13 | Device serial numbers | `/proc/cpuinfo` (Pi), fleet.db (EC2) | Both | No | Yes (WireGuard tunnel during fleet checkin) | AMI snapshot (EC2) | Permanent |
-| I-14 | current-mode state | `/etc/ghostport/current-mode` | Pi | No | N/A | .bak file | Overwritten on mode switch |
+| I-14 | current-mode state | `/etc/phantom/current-mode` | Pi | No | N/A | .bak file | Overwritten on mode switch |
 | I-15 | Moltbook API credentials | `~/.config/moltbook/credentials.json` | Pi | Filesystem permissions | Yes (HTTPS to Moltbook API) | No external backup | Permanent |
 | I-16 | dnsmasq config | `/etc/dnsmasq.d/` | Pi | No | N/A | .bak files | Permanent |
 | I-17 | hostapd config (non-secret fields) | `/etc/hostapd/hostapd.conf` | Pi | No | N/A | .bak file | Permanent |

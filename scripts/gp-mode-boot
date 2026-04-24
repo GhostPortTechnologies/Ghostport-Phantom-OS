@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
-# Applied on boot — reads saved mode and applies it (no rollback needed)
+# Applied on boot — restores WAN type and saved mode (no rollback needed)
 set -euo pipefail
 
-MODEFILE="/etc/ghostport/current-mode"
+MODEFILE="/etc/phantom/current-mode"
+WAN_CONF="/etc/phantom/wan.json"
+
+# ── Restore WiFi WAN if configured ──────────────────────
+if [[ -f "$WAN_CONF" ]]; then
+  wan_type=$(python3 -c "import json; print(json.load(open('$WAN_CONF')).get('type','ethernet'))" 2>/dev/null || echo "ethernet")
+  if [[ "$wan_type" == "wireless" ]]; then
+    echo "[ghostport-boot] Restoring WiFi WAN..."
+    if ! timeout 30 /usr/local/bin/gp-wan reconnect; then
+      echo "[ghostport-boot] WiFi WAN failed — falling back to ethernet"
+      /usr/local/bin/gp-wan ethernet || true
+    fi
+  fi
+fi
+
+# ── Apply saved privacy mode ────────────────────────────
 MODE=$(cat "$MODEFILE" 2>/dev/null || echo "isp")
 
 # Validate
@@ -12,5 +27,11 @@ case "$MODE" in
 esac
 
 echo "[ghostport-boot] Applying saved mode: $MODE"
-/usr/local/bin/gp-mode "$MODE" --no-rollback
-echo "[ghostport-boot] Mode $MODE applied successfully"
+if ! timeout 30 /usr/local/bin/gp-mode "$MODE" --no-rollback; then
+  echo "[ghostport-boot] ERROR: Mode $MODE failed — falling back to ISP"
+  /usr/local/bin/gp-mode isp --no-rollback || true
+  echo "isp" > /etc/phantom/current-mode 2>/dev/null || true
+  echo "[ghostport-boot] ISP fallback applied"
+else
+  echo "[ghostport-boot] Mode $MODE applied successfully"
+fi

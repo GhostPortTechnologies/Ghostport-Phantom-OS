@@ -1,0 +1,270 @@
+#!/bin/bash
+# gp-build-image — GhostPort OS Image Builder
+# Run this on a FRESH Raspberry Pi OS Lite SD card to create GhostPort OS
+# DO NOT run on the dev unit — use a separate card
+#
+# Usage: sudo gp-build-image [--confirm]
+set -euo pipefail
+
+LOG_TAG="gp-build-image"
+log() { echo "[$(date '+%H:%M:%S')] $1"; logger -t "$LOG_TAG" "$1"; }
+
+if [ "$(id -u)" -ne 0 ]; then echo "Must run as root"; exit 1; fi
+
+# Safety check — don't run on the dev unit
+if [ -f /etc/phantom/fleet-auth.json ]; then
+    echo "!!! WARNING: This appears to be the live dev unit !!!"
+    echo "This script should only run on a FRESH SD card with Raspberry Pi OS Lite."
+    echo "Running it here could remove packages you need for development."
+    echo ""
+    echo "If you REALLY want to continue (testing only), pass --force"
+    if [ "${1:-}" != "--force" ]; then
+        exit 1
+    fi
+    echo "Force mode — proceeding with caution..."
+fi
+
+if [ "${1:-}" != "--confirm" ] && [ "${1:-}" != "--force" ]; then
+    echo "GhostPort OS Image Builder"
+    echo "=========================="
+    echo ""
+    echo "This script will:"
+    echo "  1. Remove unnecessary desktop/dev packages (~1.5GB)"
+    echo "  2. Install GhostPort dependencies"
+    echo "  3. Configure os-release, boot splash, hostname"
+    echo "  4. Harden the base OS"
+    echo "  5. Set up read-only rootfs (optional)"
+    echo ""
+    echo "Run with --confirm to proceed."
+    exit 0
+fi
+
+log "=== GhostPort OS Image Builder Starting ==="
+
+# ─── Phase 1: Strip bloat ───────────────────────────────────
+log "Phase 1: Removing unnecessary packages..."
+
+# Desktop environments and window managers
+DESKTOP_PKGS="
+    xserver-xorg xserver-xorg-core xserver-xorg-input-all xserver-xorg-video-all
+    lxde lxde-core lxpanel lxappearance lxsession lxpolkit lxtask lxterminal
+    pcmanfm openbox obconf
+    lightdm lightdm-gtk-greeter
+    xfce4 xfce4-terminal
+    wayfire labwc seatd
+    rpd-plinth
+"
+
+# Desktop apps
+APP_PKGS="
+    firefox chromium chromium-common chromium-l10n
+    libreoffice-core libreoffice-common libreoffice-writer libreoffice-calc
+    scratch nuscratch
+    vlc vlc-l10n
+    rpi-imager
+    realvnc-vnc-server
+    thonny
+    geany
+    mousepad
+    galculator
+    rpd-wallpaper
+    system-config-printer
+"
+
+# Dev tools not needed on production
+DEV_PKGS="
+    gcc-12 g++-12 cpp-12
+    libboost1.74-dev libboost-dev
+    openjdk-17-jre-headless
+    python3-scipy python3-mypy python3-wxgtk4.0
+    pocketsphinx-en-us
+    build-essential
+"
+
+# Fonts (keep basic, remove extras)
+FONT_PKGS="
+    fonts-noto-extra
+    fonts-noto-mono
+    fonts-droid-fallback
+    fonts-liberation2
+"
+
+# Other unnecessary
+OTHER_PKGS="
+    squeekboard
+    pipewire pipewire-pulse wireplumber
+    bluez bluetooth
+    cups cups-browsed
+    mesa-vulkan-drivers
+    unicode-data
+"
+
+for pkg_group in "$DESKTOP_PKGS" "$APP_PKGS" "$DEV_PKGS" "$FONT_PKGS" "$OTHER_PKGS"; do
+    for pkg in $pkg_group; do
+        if dpkg -l "$pkg" &>/dev/null; then
+            log "Removing: $pkg"
+            DEBIAN_FRONTEND=noninteractive apt-get remove -y --purge "$pkg" 2>/dev/null || true
+        fi
+    done
+done
+
+# Clean up orphaned dependencies
+apt-get autoremove -y --purge 2>/dev/null || true
+apt-get clean
+
+log "Phase 1 complete — bloat removed"
+
+# ─── Phase 2: Install GhostPort dependencies ────────────────
+log "Phase 2: Installing GhostPort dependencies..."
+
+apt-get update
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    nodejs \
+    hostapd \
+    dnsmasq \
+    nftables \
+    wireguard-tools \
+    cloudflared \
+    curl \
+    jq \
+    python3 \
+    python3-pip \
+    openssl \
+    sudo \
+    systemd-resolved \
+    avahi-daemon \
+    iw \
+    wireless-tools \
+    net-tools \
+    iproute2 \
+    iptables \
+    procps \
+    coreutils \
+    bash
+
+log "Phase 2 complete — dependencies installed"
+
+# ─── Phase 3: Configure GhostPort OS identity ───────────────
+log "Phase 3: Configuring OS identity..."
+
+# os-release
+cat > /etc/os-release << 'OSREL'
+PRETTY_NAME="GhostPort OS 1.0 (Phantom)"
+NAME="GhostPort OS"
+VERSION_ID="1.0"
+VERSION="1.0 (Phantom)"
+VERSION_CODENAME=phantom
+ID=ghostport
+ID_LIKE=debian
+HOME_URL="https://ghostporttechnologies.com/"
+SUPPORT_URL="https://ghostporttechnologies.com/support"
+BUG_REPORT_URL="https://ghostporttechnologies.com/support"
+OSREL
+
+# Hostname
+hostnamectl set-hostname Ghostport
+echo "127.0.1.1 Ghostport" >> /etc/hosts
+
+# MOTD
+cat > /etc/motd << 'MOTD'
+
+   ☠  GhostPort OS 1.0 (Phantom)  ☠
+   ──────────────────────────────────
+   Privacy router + secure workstation
+   https://ghostporttechnologies.com
+
+MOTD
+
+# Issue (login prompt banner)
+cat > /etc/issue << 'ISSUE'
+☠  GhostPort OS 1.0  ☠
+\n \l
+
+ISSUE
+
+log "Phase 3 complete — identity configured"
+
+# ─── Phase 4: Security hardening ────────────────────────────
+log "Phase 4: Applying security hardening..."
+
+# Disable default pi user if exists
+if id pi &>/dev/null; then
+    usermod -L pi
+    log "Disabled default pi user"
+fi
+
+# Sysctl hardening
+cat > /etc/sysctl.d/99-ghostport-hardening.conf << 'SYSCTL'
+net.ipv6.conf.eth0.disable_ipv6=1
+net.ipv6.conf.wlan0.disable_ipv6=1
+net.ipv4.conf.default.rp_filter=1
+net.ipv4.conf.all.rp_filter=1
+net.ipv6.conf.all.accept_redirects=0
+net.ipv4.conf.all.log_martians=1
+net.ipv4.conf.all.accept_source_route=0
+net.ipv4.conf.all.send_redirects=0
+net.ipv4.icmp_echo_ignore_broadcasts=1
+SYSCTL
+
+# Filter IPv6 DNS (AAAA) responses — we block IPv6 forwarding so don't hand out IPv6 addresses
+# This prevents apps from trying IPv6, timing out, then falling back to IPv4
+sed -i 's/dnsmasq_lines = \[\]/dnsmasq_lines = ["filter-AAAA"]/' /etc/pihole/pihole.toml 2>/dev/null || true
+
+# SSH hardening
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+sed -i 's/^#\?X11Forwarding.*/X11Forwarding no/' /etc/ssh/sshd_config
+sed -i 's/^#\?MaxAuthTries.*/MaxAuthTries 3/' /etc/ssh/sshd_config
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# Disable LLMNR
+mkdir -p /etc/systemd/resolved.conf.d
+cat > /etc/systemd/resolved.conf.d/no-llmnr.conf << 'LLMNR'
+[Resolve]
+LLMNR=no
+LLMNR
+
+log "Phase 4 complete — hardening applied"
+
+# ─── Phase 5: Clean up ──────────────────────────────────────
+log "Phase 5: Final cleanup..."
+
+# Remove apt cache
+apt-get clean
+rm -rf /var/cache/apt/archives/*.deb
+
+# Remove old kernel headers (keep current only)
+CURRENT_KERNEL=$(uname -r)
+dpkg -l 'linux-headers-*' 2>/dev/null | awk '/^ii/{print $2}' | grep -v "$CURRENT_KERNEL" | while read pkg; do
+    apt-get remove -y --purge "$pkg" 2>/dev/null || true
+done
+
+# Remove old kernel images (keep current + one previous)
+dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' | sort -V | head -n -2 | while read pkg; do
+    apt-get remove -y --purge "$pkg" 2>/dev/null || true
+done
+
+apt-get autoremove -y --purge
+apt-get clean
+
+# Clear logs
+journalctl --vacuum-time=1d
+find /var/log -type f -name "*.gz" -delete
+find /var/log -type f -name "*.1" -delete
+
+log "Phase 5 complete — cleanup done"
+
+# ─── Report ─────────────────────────────────────────────────
+DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+DISK_AVAIL=$(df -h / | awk 'NR==2{print $4}')
+PKG_COUNT=$(dpkg-query -f '.\n' -W | wc -l)
+
+log "=== GhostPort OS Image Build Complete ==="
+log "Disk used: $DISK_USED | Available: $DISK_AVAIL | Packages: $PKG_COUNT"
+log ""
+log "Next steps:"
+log "  1. Copy GhostPort software: /opt/phantom/"
+log "  2. Install systemd services"
+log "  3. Run gp-provision for fleet registration"
+log "  4. Install Tailscale: curl -fsSL https://tailscale.com/install.sh | sh"
+log "  5. Install Pi-hole: curl -sSL https://install.pi-hole.net | bash"
+log "  6. Test all modes, then clone the SD card as your golden image"

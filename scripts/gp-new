@@ -18,8 +18,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-ADMIN_AUTH="/etc/ghostport/admin-auth.json"
-AUTH_DIR="/etc/ghostport"
+ADMIN_AUTH="/etc/phantom/admin-auth.json"
+AUTH_DIR="/etc/phantom"
 AUTH_FILE="${AUTH_DIR}/auth.json"
 PIHOLE_FILE="${AUTH_DIR}/pihole.json"
 
@@ -159,15 +159,15 @@ if [ -n "$LICENSE_KEY" ]; then
     REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer $REG_TOKEN"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
   else
     # Try direct registration with license key as auth
-    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer ***REVOKED-TOKEN***"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
+    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer MISSING_BRIDGE_TOKEN"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
   fi
 
   DEVICE_ID=$(echo "$REG" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.device?.id||'')}catch{console.log('')}" 2>/dev/null)
 
   if [ -n "$DEVICE_ID" ]; then
     # Save fleet config
-    echo "{\"device_id\":\"$DEVICE_ID\",\"serial\":\"$SERIAL\",\"license_key\":\"$LICENSE_KEY\",\"fleet_server\":\"$FLEET_SERVER\"}" > /etc/ghostport/fleet.json
-    chmod 600 /etc/ghostport/fleet.json
+    echo "{\"device_id\":\"$DEVICE_ID\",\"serial\":\"$SERIAL\",\"license_key\":\"$LICENSE_KEY\",\"fleet_server\":\"$FLEET_SERVER\"}" > /etc/phantom/fleet.json
+    chmod 600 /etc/phantom/fleet.json
     FLEET_STATUS="registered (ID: $DEVICE_ID)"
   else
     FLEET_STATUS="registration failed — check tunnel"

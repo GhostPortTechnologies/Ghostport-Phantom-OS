@@ -1,55 +1,113 @@
 #!/bin/bash
-# gp-passcode — View or reset the GhostPort Command Deck passcode
-# Usage: gp-passcode [show|reset]
+# gp-passcode — Reset the GhostPort Command Deck passcode
+# Usage: gp-passcode reset
+#        gp-passcode totp-reset  (clear TOTP, revert to passcode-only)
+# Note: On provisioned (consumer) devices, reset is blocked.
+#       Consumers must use the fleet API for credential recovery.
 
-AUTH_FILE="/etc/ghostport/auth.json"
+AUTH_FILE="/etc/phantom/auth.json"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Error: must run as root (sudo gp-passcode $1)"
   exit 1
 fi
 
-case "${1:-show}" in
-  show)
-    if [ ! -f "$AUTH_FILE" ]; then
-      echo "No passcode configured. Restart ghostport service to generate one."
-      exit 1
-    fi
-    PASSCODE=$(python3 -c "import json; print(json.load(open('$AUTH_FILE'))['passcode'])" 2>/dev/null)
-    if [ -z "$PASSCODE" ]; then
-      echo "Passcode not found in auth file. Try: sudo gp-passcode reset"
-      exit 1
-    fi
+is_provisioned() {
+  node -e "
+    try {
+      const a = JSON.parse(require('fs').readFileSync('$AUTH_FILE','utf8'));
+      process.exit(a.provisioned === true ? 0 : 1);
+    } catch { process.exit(1); }
+  "
+}
+
+do_reset() {
+  if is_provisioned; then
     echo ""
-    echo "  Device Passcode: $PASSCODE"
+    echo "  Error: This device is activated (consumer mode)."
+    echo "  Local passcode reset is disabled for security."
+    echo "  Use the GhostPort app or visit ghostporttechnologies.com/support"
+    echo "  to request a credential reset via the fleet API."
     echo ""
-    ;;
-  reset)
-    NEW=$(node -e "
-      const crypto = require('crypto');
-      const fs = require('fs');
-      const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-      let parts = [];
-      for (let p = 0; p < 3; p++) {
-        let s = '';
-        for (let i = 0; i < 4; i++) s += chars[crypto.randomInt(chars.length)];
-        parts.push(s);
-      }
-      const passcode = 'GP-' + parts.join('-');
-      const salt = crypto.randomBytes(32).toString('hex');
-      const hash = crypto.scryptSync(passcode, salt, 64).toString('hex');
-      fs.writeFileSync('$AUTH_FILE', JSON.stringify({ passcode, hash, salt }, null, 2));
+    exit 1
+  fi
+
+  NEW=$(node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let parts = [];
+    for (let p = 0; p < 3; p++) {
+      let s = '';
+      for (let i = 0; i < 4; i++) s += chars[crypto.randomInt(chars.length)];
+      parts.push(s);
+    }
+    const passcode = 'GP-' + parts.join('-');
+    const salt = crypto.randomBytes(32).toString('hex');
+    const hash = crypto.scryptSync(passcode, salt, 64).toString('hex');
+    // Clear TOTP on reset — start fresh
+    fs.writeFileSync('$AUTH_FILE', JSON.stringify({ hash, salt, provisioned: false }, null, 2));
+    fs.chmodSync('$AUTH_FILE', 0o600);
+    console.log(passcode);
+  ")
+  systemctl restart ghostport
+  echo ""
+  echo "  New passcode: $NEW"
+  echo "  TOTP has been cleared — you can set it up again from the dashboard."
+  echo "  Service restarted — all sessions invalidated."
+  echo "  Save this passcode now — it cannot be recovered, only reset."
+  echo ""
+}
+
+do_totp_reset() {
+  if is_provisioned; then
+    echo ""
+    echo "  Error: This device is activated (consumer mode)."
+    echo "  Use the fleet API for credential recovery."
+    echo ""
+    exit 1
+  fi
+
+  node -e "
+    const fs = require('fs');
+    try {
+      const auth = JSON.parse(fs.readFileSync('$AUTH_FILE','utf8'));
+      delete auth.totp;
+      fs.writeFileSync('$AUTH_FILE', JSON.stringify(auth, null, 2));
       fs.chmodSync('$AUTH_FILE', 0o600);
-      console.log(passcode);
-    ")
-    systemctl restart ghostport
+      console.log('TOTP cleared.');
+    } catch (e) {
+      console.error('Error:', e.message);
+      process.exit(1);
+    }
+  "
+  systemctl restart ghostport
+  echo ""
+  echo "  TOTP has been disabled. Login with your passcode only."
+  echo "  You can re-enable TOTP from the dashboard Settings."
+  echo ""
+}
+
+case "${1:-}" in
+  reset)
+    do_reset
+    ;;
+  totp-reset)
+    do_totp_reset
+    ;;
+  show)
     echo ""
-    echo "  New passcode: $NEW"
-    echo "  Service restarted — all sessions invalidated."
+    echo "  'show' has been removed for security — plaintext passcodes are no longer stored."
+    echo "  Use 'sudo gp-passcode reset' to generate a new passcode."
     echo ""
     ;;
   *)
-    echo "Usage: gp-passcode [show|reset]"
+    echo "Usage: gp-passcode <command>"
+    echo ""
+    echo "  reset       — Generate a new passcode (dev devices only)"
+    echo "  totp-reset  — Clear TOTP, revert to passcode-only (dev devices only)"
+    echo ""
+    echo "  Consumer devices: use the fleet API for credential recovery."
     exit 1
     ;;
 esac

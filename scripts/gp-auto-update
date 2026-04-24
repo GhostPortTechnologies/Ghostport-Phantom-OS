@@ -1,0 +1,222 @@
+#!/bin/bash
+# gp-auto-update — Automatic dependency updater for GhostPort
+# Updates: Pi-hole, system packages, Node.js
+# GhostPort firmware handled separately by gp-update
+set -euo pipefail
+
+LOG_TAG="gp-auto-update"
+STATE_FILE="/etc/phantom/auto-update-state.json"
+LOCK_FILE="/tmp/gp-auto-update.lock"
+
+log() { logger -t "$LOG_TAG" "$1"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
+
+# Prevent concurrent runs
+if [ -f "$LOCK_FILE" ]; then
+    LOCK_PID=$(cat "$LOCK_FILE" 2>/dev/null)
+    if kill -0 "$LOCK_PID" 2>/dev/null; then
+        log "Another instance running (PID $LOCK_PID) — exiting"
+        exit 0
+    fi
+    rm -f "$LOCK_FILE"
+fi
+echo $$ > "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
+# Initialize state file if missing
+if [ ! -f "$STATE_FILE" ]; then
+    cat > "$STATE_FILE" << 'INIT'
+{
+  "last_run": null,
+  "last_success": null,
+  "components": {
+    "pihole_core": { "version": null, "updated_at": null, "status": "unknown" },
+    "pihole_ftl": { "version": null, "updated_at": null, "status": "unknown" },
+    "pihole_web": { "version": null, "updated_at": null, "status": "unknown" },
+    "system_packages": { "count": 0, "updated_at": null, "status": "unknown" },
+    "nodejs": { "version": null, "updated_at": null, "status": "unknown" }
+  },
+  "errors": []
+}
+INIT
+    chmod 600 "$STATE_FILE"
+fi
+
+update_state() {
+    local key="$1" value="$2"
+    python3 -c "
+import json
+with open('$STATE_FILE') as f: state = json.load(f)
+keys = '$key'.split('.')
+obj = state
+for k in keys[:-1]: obj = obj[k]
+obj[keys[-1]] = $value
+with open('$STATE_FILE','w') as f: json.dump(state, f, indent=2)
+"
+}
+
+set_component() {
+    local comp="$1" version="$2" status="$3"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    python3 -c "
+import json
+with open('$STATE_FILE') as f: state = json.load(f)
+state['components']['$comp']['version'] = '$version'
+state['components']['$comp']['status'] = '$status'
+state['components']['$comp']['updated_at'] = '$now'
+with open('$STATE_FILE','w') as f: json.dump(state, f, indent=2)
+"
+}
+
+add_error() {
+    local msg="$1"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    python3 -c "
+import json
+with open('$STATE_FILE') as f: state = json.load(f)
+state['errors'] = state.get('errors', [])[-9:]
+state['errors'].append({'ts': '$now', 'msg': $(python3 -c "import json; print(json.dumps('$msg'[:200]))")})
+with open('$STATE_FILE','w') as f: json.dump(state, f, indent=2)
+"
+}
+
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+update_state "last_run" "\"$NOW\""
+
+ERRORS=0
+
+case "${1:-run}" in
+    run)
+        log "=== Auto-update starting ==="
+
+        # --- 1. Pi-hole ---
+        log "Checking Pi-hole updates..."
+        PIHOLE_OUTPUT=$(pihole -up 2>&1) || true
+
+        if echo "$PIHOLE_OUTPUT" | grep -q "Everything is up to date"; then
+            PIHOLE_VER=$(pihole -v 2>/dev/null | head -1 | grep -oP 'v[\d.]+' || echo "unknown")
+            FTL_VER=$(pihole -v 2>/dev/null | grep FTL | grep -oP 'v[\d.]+' || echo "unknown")
+            WEB_VER=$(pihole -v 2>/dev/null | grep Web | grep -oP 'v[\d.]+' || echo "unknown")
+            set_component "pihole_core" "$PIHOLE_VER" "current"
+            set_component "pihole_ftl" "$FTL_VER" "current"
+            set_component "pihole_web" "$WEB_VER" "current"
+            log "Pi-hole: already current ($PIHOLE_VER)"
+        elif echo "$PIHOLE_OUTPUT" | grep -qi "update\|upgraded\|installed"; then
+            PIHOLE_VER=$(pihole -v 2>/dev/null | head -1 | grep -oP 'v[\d.]+' || echo "unknown")
+            FTL_VER=$(pihole -v 2>/dev/null | grep FTL | grep -oP 'v[\d.]+' || echo "unknown")
+            WEB_VER=$(pihole -v 2>/dev/null | grep Web | grep -oP 'v[\d.]+' || echo "unknown")
+            set_component "pihole_core" "$PIHOLE_VER" "updated"
+            set_component "pihole_ftl" "$FTL_VER" "updated"
+            set_component "pihole_web" "$WEB_VER" "updated"
+            log "Pi-hole: updated to $PIHOLE_VER (FTL: $FTL_VER, Web: $WEB_VER)"
+        else
+            set_component "pihole_core" "unknown" "error"
+            add_error "Pi-hole update failed"
+            log "Pi-hole: update failed"
+            ERRORS=$((ERRORS + 1))
+        fi
+
+        # --- 2. System packages (security updates) ---
+        log "Checking system package updates..."
+        apt-get update -qq 2>/dev/null || true
+
+        UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -c "/" || echo "0")
+
+        if [ "$UPGRADABLE" -gt 0 ]; then
+            log "Applying $UPGRADABLE package updates..."
+            if DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq 2>&1 | tail -5; then
+                set_component "system_packages" "$UPGRADABLE updated" "updated"
+                log "System packages: $UPGRADABLE packages updated"
+            else
+                set_component "system_packages" "$UPGRADABLE pending" "error"
+                add_error "System package upgrade failed"
+                log "System packages: upgrade failed"
+                ERRORS=$((ERRORS + 1))
+            fi
+        else
+            set_component "system_packages" "0 pending" "current"
+            log "System packages: all current"
+        fi
+
+        # --- 3. Node.js ---
+        log "Checking Node.js version..."
+        NODE_VER=$(node --version 2>/dev/null || echo "unknown")
+        NODE_APT=$(apt list --upgradable 2>/dev/null | grep -i "node" || true)
+        if [ -n "$NODE_APT" ]; then
+            log "Node.js update available, applying..."
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs 2>&1 | tail -3; then
+                NODE_VER=$(node --version 2>/dev/null || echo "unknown")
+                set_component "nodejs" "$NODE_VER" "updated"
+                log "Node.js: updated to $NODE_VER — restarting GhostPort server"
+                systemctl restart ghostport || true
+            else
+                set_component "nodejs" "$NODE_VER" "error"
+                add_error "Node.js update failed"
+                ERRORS=$((ERRORS + 1))
+            fi
+        else
+            set_component "nodejs" "$NODE_VER" "current"
+            log "Node.js: current ($NODE_VER)"
+        fi
+
+        # --- 4. Cleanup ---
+        apt-get autoremove -y -qq 2>/dev/null || true
+        apt-get clean -qq 2>/dev/null || true
+
+        # --- Final status ---
+        if [ $ERRORS -eq 0 ]; then
+            update_state "last_success" "\"$NOW\""
+            log "=== Auto-update complete — all components current ==="
+        else
+            log "=== Auto-update complete — $ERRORS component(s) had errors ==="
+        fi
+        ;;
+
+    status)
+        if [ -f "$STATE_FILE" ]; then
+            python3 -c "
+import json
+with open('$STATE_FILE') as f: state = json.load(f)
+print(f\"Last run:     {state.get('last_run', 'never')}\")
+print(f\"Last success: {state.get('last_success', 'never')}\")
+print()
+for name, comp in state.get('components', {}).items():
+    status = comp.get('status', 'unknown').upper()
+    ver = comp.get('version', 'unknown')
+    updated = comp.get('updated_at', 'never')
+    print(f'  {name:20s} {ver:15s} {status:10s} (last: {updated})')
+errors = state.get('errors', [])
+if errors:
+    print(f'\nRecent errors ({len(errors)}):')
+    for e in errors[-3:]:
+        print(f\"  [{e['ts']}] {e['msg']}\")
+"
+        else
+            echo "No update state found. Run 'gp-auto-update run' first."
+        fi
+        ;;
+
+    check)
+        echo "=== Component Version Check ==="
+        echo ""
+        echo "Pi-hole:"
+        pihole -v 2>/dev/null || echo "  Not installed"
+        echo ""
+        echo "Node.js: $(node --version 2>/dev/null || echo 'not found')"
+        echo ""
+        echo "System packages pending:"
+        apt-get update -qq 2>/dev/null || true
+        UPGRADABLE=$(apt list --upgradable 2>/dev/null | grep -v "^Listing" || echo "None")
+        echo "  $UPGRADABLE"
+        ;;
+
+    *)
+        echo "Usage: gp-auto-update {run|status|check}"
+        echo ""
+        echo "  run     - Update all components (Pi-hole, system packages, Node.js)"
+        echo "  status  - Show current update state"
+        echo "  check   - Dry run — show what needs updating"
+        exit 1
+        ;;
+esac

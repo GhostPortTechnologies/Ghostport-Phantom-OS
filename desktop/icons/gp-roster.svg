@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128pt" height="128pt" viewBox="0 0 128 128" version="1.1">
+<g id="surface36">
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<!-- Left person — pushed out, lowered -->
+<circle style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" cx="30" cy="60" r="7"/>
+<path style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" d="M 18 82 C 18 75.371094 23.371094 70 30 70 C 36.628906 70 42 75.371094 42 82"/>
+<!-- Middle person (captain) — larger -->
+<!-- Head -->
+<circle style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" cx="64" cy="48" r="10"/>
+<!-- Body -->
+<path style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" d="M 48 76 C 48 65.507812 54.820312 57 64 57 C 73.179688 57 80 65.507812 80 76"/>
+<!-- Pirate bicorne hat — front-facing, two pointed tips up, dip in center -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke:none;" d="M 46 44 L 44 34 L 50 38 L 56 32 L 64 36 L 72 32 L 78 38 L 84 34 L 82 44 Z"/>
+<!-- Hat brim -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.7;stroke:none;" d="M 44 44 L 84 44 L 82 48 L 46 48 Z"/>
+<!-- Right person — pushed out, lowered -->
+<circle style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" cx="98" cy="60" r="7"/>
+<path style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" d="M 86 82 C 86 75.371094 91.371094 70 98 70 C 104.628906 70 110 75.371094 110 82"/>
+<!-- Third person — bottom center, same size as side people -->
+<circle style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" cx="64" cy="92" r="7"/>
+<path style="stroke:none;fill-rule:nonzero;fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;" d="M 52 114 C 52 107.371094 57.371094 102 64 102 C 70.628906 102 76 107.371094 76 114"/>
+<!-- Quill feather on hat — sweeping up and to the right -->
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:1;" d="M 78 36 C 82 28 88 20 96 14"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.6;stroke:none;" d="M 96 14 C 90 16 86 22 82 28 C 84 26 90 18 96 14"/>
+<!-- Quill barbs -->
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;" d="M 84 26 L 90 22"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;" d="M 82 30 L 88 26"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;" d="M 86 22 L 92 18"/>
+</g>
+</svg>

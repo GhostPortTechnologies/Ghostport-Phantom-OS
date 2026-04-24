@@ -1,0 +1,9 @@
+[Unit]
+Description=GhostPort System Health Guard
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-health-guard
+TimeoutStartSec=30
+Nice=10

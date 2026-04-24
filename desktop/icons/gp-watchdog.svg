@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128pt" height="128pt" viewBox="0 0 128 128" version="1.1">
+<g id="surface31">
+<!-- Background circle -->
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<!-- Sonar ping rings — full circles radiating outward, fading -->
+<circle style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.2;" cx="64" cy="64" r="48"/>
+<circle style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.3;" cx="64" cy="64" r="36"/>
+<circle style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.45;" cx="64" cy="64" r="24"/>
+<circle style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.6;" cx="64" cy="64" r="12"/>
+<!-- Crosshair lines — faint grid overlay -->
+<path style="fill:none;stroke-width:0.8;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.15;stroke-miterlimit:10;" d="M 64 16 L 64 112"/>
+<path style="fill:none;stroke-width:0.8;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.15;stroke-miterlimit:10;" d="M 16 64 L 112 64"/>
+<!-- Sweep arm — bold rotating scanner line -->
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 64 L 92 28"/>
+<!-- Sweep trail — fading arc behind the arm -->
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 64 64 L 98 44"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 64 64 L 100 58"/>
+<!-- Center hub -->
+<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke:none;" cx="64" cy="64" r="4"/>
+<!-- Detected targets — blips on the sonar -->
+<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke:none;" cx="82" cy="38" r="3"/>
+<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.5;stroke:none;" cx="44" cy="46" r="2.5"/>
+<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" cx="50" cy="86" r="2.5"/>
+</g>
+</svg>

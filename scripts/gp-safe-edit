@@ -1,0 +1,91 @@
+#!/bin/bash
+# GhostPort Safe Edit — backup, apply, verify, rollback if broken
+# Usage: gp-safe-edit <file> [--service <name>] [--from <source-file>]
+
+set -euo pipefail
+
+FILE=""
+SERVICE=""
+SOURCE=""
+CHANGELOG="/etc/phantom/changelog.json"
+
+# Parse args
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --service) SERVICE="$2"; shift 2 ;;
+        --from)    SOURCE="$2"; shift 2 ;;
+        *)         FILE="$1"; shift ;;
+    esac
+done
+
+if [ -z "$FILE" ]; then
+    echo "Usage: gp-safe-edit <file> [--service <name>] [--from <source-file>]"
+    exit 1
+fi
+
+if [ ! -f "$FILE" ]; then
+    echo "Error: $FILE does not exist"
+    exit 1
+fi
+
+# Step 1: Backup
+TIMESTAMP=$(date +%s)
+BACKUP="${FILE}.bak-${TIMESTAMP}"
+cp "$FILE" "$BACKUP"
+echo "[safe-edit] Backed up $FILE → $BACKUP"
+
+# Step 2: Apply change
+if [ -n "$SOURCE" ]; then
+    if [ "$SOURCE" = "-" ]; then
+        cat > "$FILE"
+    else
+        cp "$SOURCE" "$FILE"
+    fi
+    echo "[safe-edit] Applied changes to $FILE"
+fi
+
+# Step 3: Restart service if specified
+if [ -n "$SERVICE" ]; then
+    echo "[safe-edit] Restarting $SERVICE..."
+    if ! systemctl restart "$SERVICE" 2>&1; then
+        echo "[safe-edit] Service restart FAILED — rolling back"
+        cp "$BACKUP" "$FILE"
+        systemctl restart "$SERVICE" 2>/dev/null || true
+        exit 1
+    fi
+    sleep 3
+fi
+
+# Step 4: Run preflight
+echo "[safe-edit] Running preflight check..."
+if ! gp-preflight --quiet 2>/dev/null; then
+    echo "[safe-edit] Preflight FAILED — rolling back"
+    cp "$BACKUP" "$FILE"
+    if [ -n "$SERVICE" ]; then
+        systemctl restart "$SERVICE" 2>/dev/null || true
+    fi
+    rm -f "$BACKUP"
+    exit 1
+fi
+
+echo "[safe-edit] Preflight PASSED"
+
+# Step 5: Log to changelog
+if [ ! -f "$CHANGELOG" ]; then
+    echo "[]" > "$CHANGELOG"
+fi
+
+ENTRY="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"file\":\"$FILE\",\"backup\":\"$BACKUP\",\"service\":\"${SERVICE:-none}\",\"result\":\"success\"}"
+
+# Append entry to JSON array
+python3 -c "
+import json, sys
+try:
+    with open('$CHANGELOG') as f: log = json.load(f)
+except: log = []
+log.append(json.loads('$ENTRY'))
+log = log[-100:]  # keep last 100 entries
+with open('$CHANGELOG', 'w') as f: json.dump(log, f, indent=2)
+" 2>/dev/null || true
+
+echo "[safe-edit] SUCCESS — change logged"

@@ -1,0 +1,9 @@
+[Unit]
+Description=GhostPort Lookout — Behavioral Baseline Collector
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ghostport-admin
+ExecStart=/home/ghostport-admin/.local/bin/gp-lookout collect
+TimeoutSec=30

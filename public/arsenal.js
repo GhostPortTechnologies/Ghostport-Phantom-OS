@@ -67,11 +67,24 @@ function updateArsenalUI(data) {
     quicStatus.textContent = data.quicBlock ? "BLOCKING" : "OFF";
   }
 
-  // Encrypted DNS
-  setToggle("tog-encrypteddns", data.encryptedDns);
+  // DNS Protection (read-only — mode section is the source of truth)
   const ednsStatus = document.getElementById("edns-status");
-  ednsStatus.className = "arsenal-status " + (data.encryptedDns ? "on" : "off");
-  ednsStatus.textContent = data.encryptedDns ? "DoH ACTIVE" : "CLEARTEXT";
+  const ednsDesc = document.getElementById("edns-desc");
+  if (ednsStatus && ednsDesc) {
+    const map = {
+      doh:         { cls: "on",      label: "DoH",         desc: "Encrypted DNS via Cloudflare. Default on ISP / Zero Trust." },
+      tunnel:      { cls: "on",      label: "TUNNEL",      desc: "DNS encrypted through the WireGuard tunnel to the GhostPort resolver." },
+      dreadnought: { cls: "on",      label: "DREADNOUGHT", desc: "Recursive lookups to root servers — no Cloudflare middleman, plaintext on wire." },
+      plaintext:   { cls: "tripped", label: "PLAINTEXT",   desc: "Unencrypted queries to public resolvers. Debug only — not recommended." },
+    };
+    const m = map[data.dnsStatus] || map.doh;
+    ednsStatus.className = "arsenal-status " + m.cls;
+    ednsStatus.textContent = m.label;
+    ednsDesc.textContent = m.desc;
+  }
+
+  // Dreadnought checkbox state (mode section row)
+  updateDreadnought(data);
 
   // MAC Randomization
   setToggle("tog-macrandom", data.macRandomization);
@@ -128,20 +141,130 @@ function renderClients(clients) {
   const list = document.getElementById("client-list");
   if (!clients.length) {
     list.innerHTML = '<div style="font-size:10px;color:var(--text-faint)">No devices connected</div>';
+    updateMacPrivacyCount(0, 0);
     return;
   }
-  list.innerHTML = clients.map(c =>
-    `<div class="client-row"><span class="client-host">${escapeHtml(c.hostname)}</span><span class="client-ip">${escapeHtml(c.ip)}</span><span class="client-mac">${escapeHtml(c.mac)}</span></div>`
-  ).join("");
+  list.innerHTML = clients.map(c => {
+    var macIcon = c.macRandomized ? '<span title="MAC randomized" style="color:var(--green);margin-left:4px">&#x1f512;</span>' : '<span title="Real MAC exposed — enable Private WiFi Address" style="color:#ff4466;margin-left:4px">&#x26a0;</span>';
+    return '<div class="client-row"><span class="client-host">' + escapeHtml(c.hostname) + '</span><span class="client-ip">' + escapeHtml(c.ip) + '</span><span class="client-mac">' + escapeHtml(c.mac) + macIcon + '</span></div>';
+  }).join("");
+  var randomized = clients.filter(function(c) { return c.macRandomized; }).length;
+  updateMacPrivacyCount(randomized, clients.length);
+}
+
+function updateMacPrivacyCount(randomized, total) {
+  var el = document.getElementById("mac-privacy-status");
+  if (!el) return;
+  if (total === 0) {
+    el.textContent = "No devices connected";
+    el.style.color = "var(--text-dim)";
+  } else if (randomized === total) {
+    el.textContent = total + "/" + total + " devices using private MAC";
+    el.style.color = "var(--green)";
+  } else {
+    el.textContent = randomized + "/" + total + " devices using private MAC — " + (total - randomized) + " exposed";
+    el.style.color = "#ff4466";
+  }
+}
+
+// Scroll helper for read-only DNS card's "CHANGE" button
+function scrollToModes(e) {
+  if (e) e.preventDefault();
+  const el = document.getElementById("section-modes");
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ── Dreadnought Mode (recursive DNS — ISP/ZT only) ──────────
+
+function updateDreadnought(data) {
+  const row = document.getElementById("dn-row");
+  if (!row) return;
+  const applicable = !!data.dreadnoughtApplicable;  // hide entirely in tunnel modes
+  row.style.display = applicable ? "flex" : "none";
+  if (!applicable) return;
+
+  const on = !!data.dreadnought;
+  const ready = !!data.dreadnoughtReady;
+  row.classList.toggle("on", on);
+  row.classList.toggle("disabled", !ready);
+
+  const checkEl = document.getElementById("dn-check");
+  if (checkEl) checkEl.setAttribute("aria-checked", on ? "true" : "false");
+
+  const installBtn = document.getElementById("dn-install");
+  const warn = document.getElementById("dn-warn");
+  if (installBtn) installBtn.style.display = ready ? "none" : "inline-block";
+  if (warn) warn.style.display = (ready && on) ? "inline" : "none";
+}
+
+function toggleDreadnought() {
+  const row = document.getElementById("dn-row");
+  if (!row || row.classList.contains("disabled") || row.style.display === "none") return;
+  const isOn = row.classList.contains("on");
+  if (isOn) {
+    setDreadnought(false);  // disabling doesn't need confirmation — user owns the risk
+  } else {
+    document.getElementById("dn-modal").classList.add("visible");
+  }
+}
+
+function dreadnoughtCancel() {
+  document.getElementById("dn-modal").classList.remove("visible");
+}
+
+function dreadnoughtConfirm() {
+  document.getElementById("dn-modal").classList.remove("visible");
+  setDreadnought(true);
+}
+
+async function setDreadnought(enabled) {
+  log(`Dreadnought: ${enabled ? "engaging..." : "disengaging..."}`, "warn");
+  try {
+    const res = await fetch(ARSENAL_API + "/api/arsenal/dreadnought", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      log(`Dreadnought ${enabled ? "active — DNS now recursive" : "disabled — DoH restored"}`, enabled ? "success" : "info");
+      await fetchArsenalStatus();
+    } else {
+      log(`Dreadnought: ${data.error}`, "error");
+    }
+  } catch (e) {
+    log(`Dreadnought error: ${e.message}`, "error");
+  }
+}
+
+async function installDreadnought() {
+  const btns = [document.getElementById("dn-install")].filter(Boolean);
+  btns.forEach(b => { b.disabled = true; b.textContent = "INSTALLING..."; });
+  log("Dreadnought: installing unbound (may take up to 2 minutes)...", "info");
+  try {
+    const res = await fetch(ARSENAL_API + "/api/arsenal/dreadnought/install", { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      log("Dreadnought: unbound installed and running — ready to engage", "success");
+      await fetchArsenalStatus();
+    } else {
+      log(`Dreadnought install failed: ${data.error}`, "error");
+    }
+  } catch (e) {
+    log(`Dreadnought install error: ${e.message}`, "error");
+  }
+  btns.forEach(b => { b.disabled = false; b.textContent = "INSTALL"; });
 }
 
 // ── Toggle actions ──────────────────────────────────────────
 
 async function arsenalToggle(feature) {
+  // encrypteddns intentionally removed — DNS Protection card is now read-only.
+  // DNS intent is set from the mode section (Dreadnought checkbox) and the
+  // gp-dns-upstream script applied automatically by gp-mode.
   const toggleMap = {
     killswitch: { endpoint: "/api/arsenal/killswitch", key: "killSwitch", togId: "tog-killswitch" },
     quicblock: { endpoint: "/api/arsenal/quicblock", key: "quicBlock", togId: "tog-quicblock" },
-    encrypteddns: { endpoint: "/api/arsenal/encrypteddns", key: "encryptedDns", togId: "tog-encrypteddns" },
     macrandom: { endpoint: "/api/arsenal/macrandom", key: "macRandomization", togId: "tog-macrandom" },
     terminalmode: { endpoint: "/api/terminal-mode", key: "terminalMode", togId: "tog-terminalmode" },
   };
@@ -338,12 +461,16 @@ function renderSchedules(schedules) {
   list.innerHTML = schedules.map(s => {
     const dayLabels = s.days.map(d => DAY_NAMES[d]).join(", ");
     return `<div class="schedule-item">
-      <span style="color:var(--green)">${s.time}</span>
-      <span style="color:var(--text-dim)">${dayLabels}</span>
-      <span style="color:var(--text)">${s.mode.toUpperCase()}</span>
-      <button class="schedule-del" onclick="deleteSchedule('${escapeHtml(s.id)}')">&times;</button>
+      <span style="color:var(--green)">${escapeHtml(s.time)}</span>
+      <span style="color:var(--text-dim)">${escapeHtml(dayLabels)}</span>
+      <span style="color:var(--text)">${escapeHtml(s.mode.toUpperCase())}</span>
+      <button class="schedule-del" data-sched-id="${escapeHtml(s.id)}">&times;</button>
     </div>`;
   }).join("");
+  // Bind delete buttons via event delegation (no inline onclick)
+  list.querySelectorAll(".schedule-del[data-sched-id]").forEach(btn => {
+    btn.addEventListener("click", () => deleteSchedule(btn.dataset.schedId));
+  });
 }
 
 async function addSchedule() {
@@ -441,6 +568,255 @@ async function logoutSession() {
   } catch (e) { /* ignore */ }
   window.location.href = "/login.html";
 }
+
+// ── TOTP Two-Factor Authentication ───────────────────────────
+
+async function totpLoadStatus() {
+  try {
+    const res = await fetch(ARSENAL_API + "/api/auth/totp/status");
+    const data = await res.json();
+    const badge = document.getElementById("totp-badge");
+    if (data.totpConfigured) {
+      document.getElementById("totp-off").style.display = "none";
+      document.getElementById("totp-setup").style.display = "none";
+      document.getElementById("totp-on").style.display = "block";
+      badge.textContent = "ACTIVE";
+      badge.style.background = "rgba(57,255,143,0.15)";
+      badge.style.color = "var(--green)";
+      badge.style.display = "inline-block";
+      // Load backup code count
+      try {
+        const bcRes = await fetch(ARSENAL_API + "/api/auth/totp/backup-codes");
+        const bcData = await bcRes.json();
+        if (bcData.ok) {
+          const el = document.getElementById("totp-backup-remaining");
+          el.textContent = `Backup codes remaining: ${bcData.remaining} of ${bcData.total}`;
+          if (bcData.remaining <= 2) el.style.color = "var(--red)";
+        }
+      } catch {}
+    } else {
+      document.getElementById("totp-off").style.display = "block";
+      document.getElementById("totp-setup").style.display = "none";
+      document.getElementById("totp-on").style.display = "none";
+      badge.style.display = "none";
+    }
+  } catch {}
+}
+
+async function totpEnable() {
+  const status = document.getElementById("totp-status");
+  status.style.color = "var(--text-dim)";
+  status.textContent = "Generating...";
+  try {
+    const res = await fetch(ARSENAL_API + "/api/auth/totp/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" }
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      status.style.color = "var(--red)";
+      status.textContent = data.error || "Setup failed";
+      return;
+    }
+    // Show QR code and secret
+    document.getElementById("totp-qr").src = data.qrDataUri;
+    document.getElementById("totp-secret-display").textContent = data.secret.replace(/(.{4})/g, "$1 ").trim();
+    // Show backup codes (safe DOM construction)
+    const codesEl = document.getElementById("totp-backup-codes");
+    codesEl.textContent = "";
+    data.backupCodes.forEach(function(c) {
+      var span = document.createElement("span");
+      span.style.padding = "2px 4px";
+      span.textContent = c;
+      codesEl.appendChild(span);
+    });
+    // Switch view
+    document.getElementById("totp-off").style.display = "none";
+    document.getElementById("totp-setup").style.display = "block";
+    document.getElementById("totp-confirm-code").value = "";
+    document.getElementById("totp-confirm-code").focus();
+    status.textContent = "";
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+async function totpConfirmSetup() {
+  const code = document.getElementById("totp-confirm-code").value.trim();
+  const status = document.getElementById("totp-status");
+  if (!code || code.length !== 6) {
+    status.style.color = "var(--red)";
+    status.textContent = "Enter the 6-digit code from your authenticator app";
+    return;
+  }
+  status.style.color = "var(--text-dim)";
+  status.textContent = "Verifying...";
+  try {
+    const res = await fetch(ARSENAL_API + "/api/auth/totp/confirm-setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.style.color = "var(--green)";
+      status.textContent = "Two-factor authentication activated!";
+      log("TOTP two-factor authentication enabled", "success");
+      totpLoadStatus();
+    } else {
+      status.style.color = "var(--red)";
+      status.textContent = data.error || "Invalid code";
+      document.getElementById("totp-confirm-code").value = "";
+      document.getElementById("totp-confirm-code").focus();
+    }
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+function totpCancelSetup() {
+  document.getElementById("totp-setup").style.display = "none";
+  document.getElementById("totp-off").style.display = "block";
+  document.getElementById("totp-status").textContent = "";
+}
+
+async function totpDisable() {
+  const code = document.getElementById("totp-disable-code").value.trim();
+  const status = document.getElementById("totp-status");
+  if (!code || code.length !== 6) {
+    status.style.color = "var(--red)";
+    status.textContent = "Enter your current TOTP code to disable";
+    return;
+  }
+  status.style.color = "var(--text-dim)";
+  status.textContent = "Disabling...";
+  try {
+    const res = await fetch(ARSENAL_API + "/api/auth/totp/disable", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.style.color = "var(--green)";
+      status.textContent = "Two-factor authentication disabled";
+      document.getElementById("totp-disable-code").value = "";
+      log("TOTP two-factor authentication disabled", "warning");
+      totpLoadStatus();
+    } else {
+      status.style.color = "var(--red)";
+      status.textContent = data.error || "Invalid code";
+      document.getElementById("totp-disable-code").value = "";
+    }
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+async function totpRegenBackup() {
+  var code = prompt("Enter your current TOTP code to regenerate backup codes:");
+  if (!code) return;
+  var status = document.getElementById("totp-status");
+  status.style.color = "var(--text-dim)";
+  status.textContent = "Regenerating...";
+  try {
+    var res = await fetch(ARSENAL_API + "/api/auth/totp/regenerate-backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: code.trim() })
+    });
+    var data = await res.json();
+    if (data.ok) {
+      var codesEl = document.getElementById("totp-regen-codes");
+      codesEl.textContent = "";
+      data.backupCodes.forEach(function(c) {
+        var span = document.createElement("span");
+        span.style.padding = "2px 4px";
+        span.textContent = c;
+        codesEl.appendChild(span);
+      });
+      codesEl.style.display = "grid";
+      status.style.color = "var(--green)";
+      status.textContent = "New backup codes generated — save them now!";
+      totpLoadStatus();
+    } else {
+      status.style.color = "var(--red)";
+      status.textContent = data.error || "Failed";
+    }
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+async function totpResync() {
+  const status = document.getElementById("totp-status");
+  // Require passcode for security
+  const passcode = prompt("Enter your device passcode to resync 2FA:");
+  if (!passcode) return;
+  status.style.color = "var(--text-dim)";
+  status.textContent = "Verifying passcode...";
+  try {
+    const res = await fetch(ARSENAL_API + "/api/auth/totp/resync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passcode: passcode })
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      status.style.color = "var(--red)";
+      status.textContent = data.error || "Resync failed";
+      return;
+    }
+    // Show the new QR setup
+    document.getElementById("totp-qr").src = data.qrDataUri;
+    document.getElementById("totp-secret-display").textContent = data.secret.replace(/(.{4})/g, "$1 ").trim();
+    var codesEl = document.getElementById("totp-backup-codes");
+    codesEl.textContent = "";
+    data.backupCodes.forEach(function(c) {
+      var span = document.createElement("span");
+      span.style.padding = "2px 4px";
+      span.textContent = c;
+      codesEl.appendChild(span);
+    });
+    document.getElementById("totp-on").style.display = "none";
+    document.getElementById("totp-setup").style.display = "block";
+    document.getElementById("totp-confirm-code").value = "";
+    document.getElementById("totp-confirm-code").focus();
+    status.style.color = "var(--green)";
+    status.textContent = "Scan the new QR code and enter the 6-digit code to confirm";
+  } catch (e) {
+    status.style.color = "var(--red)";
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+// Wire up TOTP buttons (event delegation safe)
+document.addEventListener("DOMContentLoaded", function() {
+  var el;
+  el = document.getElementById("totp-enable-btn");
+  if (el) el.addEventListener("click", totpEnable);
+  el = document.getElementById("totp-confirm-btn");
+  if (el) el.addEventListener("click", totpConfirmSetup);
+  el = document.getElementById("totp-cancel-btn");
+  if (el) el.addEventListener("click", totpCancelSetup);
+  el = document.getElementById("totp-disable-btn");
+  if (el) el.addEventListener("click", totpDisable);
+  el = document.getElementById("totp-resync-btn");
+  if (el) el.addEventListener("click", totpResync);
+  el = document.getElementById("totp-regen-btn");
+  if (el) el.addEventListener("click", totpRegenBackup);
+  // Enter key on confirm input
+  el = document.getElementById("totp-confirm-code");
+  if (el) el.addEventListener("keydown", function(e) { if (e.key === "Enter") totpConfirmSetup(); });
+  el = document.getElementById("totp-disable-code");
+  if (el) el.addEventListener("keydown", function(e) { if (e.key === "Enter") totpDisable(); });
+  // Load initial TOTP status
+  totpLoadStatus();
+});
 
 // ── Speed Test ───────────────────────────────────────────────
 
@@ -543,6 +919,15 @@ function formatBytes(bytes) {
   return bytes + " B";
 }
 
+var bwPrev = null;
+var bwPrevTime = null;
+
+function formatRate(bytesPerSec) {
+  if (bytesPerSec >= 1e6) return (bytesPerSec / 1e6).toFixed(1) + " MB/s";
+  if (bytesPerSec >= 1e3) return (bytesPerSec / 1e3).toFixed(1) + " KB/s";
+  return bytesPerSec.toFixed(0) + " B/s";
+}
+
 async function fetchBandwidth() {
   const result = document.getElementById("bandwidth-result");
   if (!result) return;
@@ -550,14 +935,34 @@ async function fetchBandwidth() {
     const res = await fetch(ARSENAL_API + "/api/tools/bandwidth");
     const data = await res.json();
     if (data.ok) {
-      const labels = { eth0: "WAN", wlan0: "WiFi AP", wg0: "WireGuard", tailscale0: "Tailscale" };
-      result.innerHTML = Object.entries(data.interfaces).map(([iface, s]) =>
-        `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1a1a1a;font-size:11px">
-          <span style="color:var(--green);min-width:80px">${labels[iface] || iface}</span>
-          <span style="color:var(--text-dim)">↓ ${formatBytes(s.rx)}</span>
-          <span style="color:var(--text-dim)">↑ ${formatBytes(s.tx)}</span>
-        </div>`
-      ).join("");
+      var now = Date.now();
+      var labels = { eth0: "WAN", wlan0: "WiFi AP", wg0: "WireGuard", tailscale0: "Tailscale" };
+      var colors = { eth0: "#00e5ff", wlan0: "#00c853", wg0: "#ff9f43", tailscale0: "#888" };
+      var elapsed = bwPrev && bwPrevTime ? (now - bwPrevTime) / 1000 : 0;
+
+      result.innerHTML = Object.entries(data.interfaces).map(function(entry) {
+        var iface = entry[0], s = entry[1];
+        var rxRate = 0, txRate = 0;
+        if (elapsed > 0 && bwPrev && bwPrev[iface]) {
+          rxRate = Math.max(0, (s.rx - bwPrev[iface].rx) / elapsed);
+          txRate = Math.max(0, (s.tx - bwPrev[iface].tx) / elapsed);
+        }
+        var c = colors[iface] || "#888";
+        return '<div style="padding:6px 0;border-bottom:1px solid #1a1a1a">'
+          + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">'
+          + '<span style="color:' + c + ';font-size:12px;font-weight:600">' + (labels[iface] || iface) + '</span>'
+          + '<span style="color:#555;font-size:10px">Total: ' + formatBytes(s.rx + s.tx) + '</span>'
+          + '</div>'
+          + '<div style="display:flex;gap:16px;font-size:11px">'
+          + '<span style="color:#4CAF50">↓ ' + formatRate(rxRate) + '</span>'
+          + '<span style="color:#ff9800">↑ ' + formatRate(txRate) + '</span>'
+          + '<span style="color:#555;margin-left:auto">↓ ' + formatBytes(s.rx) + ' / ↑ ' + formatBytes(s.tx) + '</span>'
+          + '</div>'
+          + '</div>';
+      }).join("");
+
+      bwPrev = data.interfaces;
+      bwPrevTime = now;
     }
   } catch (e) { /* silent */ }
 }
@@ -1035,7 +1440,51 @@ fetchBlocked();
 fetchWgStatus();
 setInterval(fetchArsenalStatus, 10000);
 setInterval(fetchClients, 15000);
-setInterval(fetchBandwidth, 30000);
+setInterval(fetchBandwidth, 5000);
+
+// A11y: custom toggle divs (.toggle-switch, .dn-check) are not real <input>s,
+// so browsers never give them focus or keyboard activation for free. One-time
+// wire-up applies role=switch, tabindex=0, aria-checked, and Space/Enter → click.
+// aria-checked auto-syncs via MutationObserver on the .on class.
+(function wireA11y() {
+  function syncAria(el, onClass) {
+    el.setAttribute("aria-checked", el.classList.contains(onClass) ? "true" : "false");
+  }
+  function initEl(el, onClass) {
+    if (el.dataset.a11yWired === "1") return;
+    el.dataset.a11yWired = "1";
+    if (!el.hasAttribute("role")) el.setAttribute("role", "switch");
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+    syncAria(el, onClass);
+    el.addEventListener("keydown", function(ev) {
+      if (ev.key === " " || ev.key === "Enter") {
+        ev.preventDefault();
+        el.click();
+      }
+    });
+    // Observe class changes so aria-checked tracks the visual state
+    var mo = new MutationObserver(function() { syncAria(el, onClass); });
+    mo.observe(el, { attributes: true, attributeFilter: ["class"] });
+  }
+  document.querySelectorAll(".toggle-switch").forEach(function(el) { initEl(el, "on"); });
+  document.querySelectorAll(".dn-check").forEach(function(el) {
+    // dn-check's "on" state lives on the parent .dreadnought-row; observe the row.
+    if (el.dataset.a11yWired === "1") return;
+    el.dataset.a11yWired = "1";
+    if (!el.hasAttribute("role")) el.setAttribute("role", "switch");
+    if (!el.hasAttribute("tabindex")) el.setAttribute("tabindex", "0");
+    var row = el.closest(".dreadnought-row");
+    var syncRow = function() { el.setAttribute("aria-checked", row && row.classList.contains("on") ? "true" : "false"); };
+    syncRow();
+    el.addEventListener("keydown", function(ev) {
+      if (ev.key === " " || ev.key === "Enter") {
+        ev.preventDefault();
+        el.click();
+      }
+    });
+    if (row) new MutationObserver(syncRow).observe(row, { attributes: true, attributeFilter: ["class"] });
+  });
+})();
 
 
 // ── Security Scan (Lynis) ──────────────────────────────────

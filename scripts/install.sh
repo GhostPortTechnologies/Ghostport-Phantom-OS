@@ -64,42 +64,42 @@ for script in gp-mode gp-mode-boot gp-dns-switch gp-passcode gp-new; do
   fi
 done
 
-mkdir -p /etc/ghostport
-echo "isp" > /etc/ghostport/current-mode
+mkdir -p /etc/phantom
+echo "isp" > /etc/phantom/current-mode
 log "Mode switcher installed."
 
 # ── Step 4: Dashboard ────────────────────────────────────────
 section "Step 4/9 — GhostPort Dashboard"
-mkdir -p /opt/ghostport/public
-mkdir -p /opt/ghostport/ssl
+mkdir -p /opt/phantom/public
+mkdir -p /opt/phantom/ssl
 
-cp ghostport-server.js /opt/ghostport/
-chmod 644 /opt/ghostport/ghostport-server.js
+cp ghostport-server.js /opt/phantom/
+chmod 644 /opt/phantom/ghostport-server.js
 
 for f in index.html login.html arsenal.js pwa.html manifest.json logo.png; do
   if [ -f "public/$f" ]; then
-    cp "public/$f" "/opt/ghostport/public/$f"
+    cp "public/$f" "/opt/phantom/public/$f"
   fi
 done
-chmod 644 /opt/ghostport/public/*
+chmod 644 /opt/phantom/public/*
 
-cd /opt/ghostport
+cd /opt/phantom
 npm init -y >/dev/null
 npm install express cors >/dev/null
-log "Dashboard installed at /opt/ghostport"
+log "Dashboard installed at /opt/phantom"
 
 # ── Step 5: SSL Certificate ──────────────────────────────────
 section "Step 5/9 — SSL Certificate"
-if [ ! -f /opt/ghostport/ssl/ghostport.crt ]; then
+if [ ! -f /opt/phantom/ssl/ghostport.crt ]; then
   openssl req -x509 -nodes -newkey rsa:2048 \
-    -keyout /opt/ghostport/ssl/ghostport.key \
-    -out /opt/ghostport/ssl/ghostport.crt \
+    -keyout /opt/phantom/ssl/ghostport.key \
+    -out /opt/phantom/ssl/ghostport.crt \
     -days 3650 \
     -subj "/CN=ghostport.local" \
     -addext "subjectAltName=DNS:ghostport.local,DNS:localhost,IP:127.0.0.1,IP:192.168.50.1" \
     2>/dev/null
-  chmod 640 /opt/ghostport/ssl/ghostport.key
-  chown root:$CURRENT_USER /opt/ghostport/ssl/ghostport.key
+  chmod 640 /opt/phantom/ssl/ghostport.key
+  chown root:$CURRENT_USER /opt/phantom/ssl/ghostport.key
   log "SSL certificate generated with SANs."
 else
   log "SSL certificate already exists — skipping."

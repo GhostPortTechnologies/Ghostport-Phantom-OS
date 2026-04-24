@@ -1,0 +1,72 @@
+#!/bin/bash
+# GhostPort Git Sync — syncs live files to repo and commits
+set -uo pipefail
+
+REPO="/opt/phantom"
+PUSH=false
+MSG=""
+
+for arg in "$@"; do
+  case "$arg" in
+    --push) PUSH=true ;;
+    --msg=*) MSG="${arg#--msg=}" ;;
+  esac
+done
+
+echo "[gp-commit] Syncing live files to repo..."
+
+# Scripts
+cp /usr/local/bin/gp-mode "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-dns-switch "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-dns-upstream "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-dns-watchdog "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-dns-guard "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-health-guard "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-passcode "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-update "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-provision "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-factory-reset "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-reset-button "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-heartbeat "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-wan "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-mode-boot "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-auto-update "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-preflight "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-safe-edit "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-noise "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-security-loop "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-commit "$REPO/scripts/" 2>/dev/null || true
+
+# nftables
+cp /etc/gpmodes/*.nft "$REPO/etc/gpmodes/" 2>/dev/null || true
+
+# systemd
+cp /etc/systemd/system/ghostport*.service "$REPO/systemd/" 2>/dev/null || true
+cp /etc/systemd/system/ghostport*.timer "$REPO/systemd/" 2>/dev/null || true
+
+echo "[gp-commit] Files synced"
+
+cd "$REPO" || exit 1
+
+# Check for changes
+if git diff --quiet && git diff --cached --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+  echo "[gp-commit] No changes to commit"
+  exit 0
+fi
+
+# Generate commit message from diff
+if [ -z "$MSG" ]; then
+  CHANGED=$(git diff --name-only; git ls-files --others --exclude-standard)
+  COUNT=$(echo "$CHANGED" | wc -l)
+  MSG="[auto] sync $COUNT files from live system ($(date +%Y-%m-%d))"
+fi
+
+git add -A
+git commit -m "$MSG" 2>&1 | tail -3
+
+if [ "$PUSH" = "true" ]; then
+  git push 2>&1 | tail -3
+  echo "[gp-commit] Pushed to remote"
+fi
+
+echo "[gp-commit] Done"

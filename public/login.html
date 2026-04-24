@@ -83,15 +83,33 @@
   </div>
 
   <form id="login-form">
-    <label class="login-label">DEVICE PASSCODE</label>
-    <input class="login-input" type="password" id="passcode-input" placeholder="GP-XXXX-XXXX-XXXX" autocomplete="off" autofocus/>
-    <button class="login-btn" type="submit" id="login-btn">AUTHENTICATE</button>
+    <div id="step-passcode">
+      <label class="login-label">DEVICE PASSCODE</label>
+      <input class="login-input" type="password" id="passcode-input" placeholder="GP-XXXX-XXXX-XXXX" autocomplete="off" autofocus/>
+      <button class="login-btn" type="submit" id="login-btn">AUTHENTICATE</button>
+    </div>
+    <div id="step-totp" style="display:none">
+      <label class="login-label">AUTHENTICATOR CODE</label>
+      <input class="login-input" type="text" id="totp-input" placeholder="000000" autocomplete="one-time-code" inputmode="numeric" maxlength="8" style="letter-spacing:6px"/>
+      <button class="login-btn" type="submit" id="totp-btn">VERIFY</button>
+      <div style="margin-top:12px;text-align:center">
+        <a href="#" id="backup-link" style="font-size:9px;color:var(--text-dim);text-decoration:none;letter-spacing:1px">USE BACKUP CODE</a>
+      </div>
+    </div>
   </form>
   <div class="login-error" id="login-error"></div>
 
-  <div class="login-hint">
+  <div class="login-hint" id="hint-passcode">
     Find your passcode on the card included with your device<br/>
-    or recover it via SSH: <span style="color:var(--text-dim)">sudo gp-passcode show</span>
+    or recover via SSH: <span style="color:var(--text-dim)">sudo gp-passcode reset</span>
+  </div>
+  <div class="login-hint" id="hint-totp" style="display:none">
+    Open your authenticator app and enter the 6-digit code<br/>
+    or use one of your 8-character backup codes
+  </div>
+  <div id="forgot-section" style="display:none;margin-top:14px;text-align:center">
+    <a href="#" id="forgot-link" style="font-size:10px;color:var(--text-dim);text-decoration:none;letter-spacing:1px">FORGOT ACCESS? REQUEST RESET</a>
+    <div id="forgot-status" style="font-size:10px;margin-top:8px;min-height:14px"></div>
   </div>
 </div>
 

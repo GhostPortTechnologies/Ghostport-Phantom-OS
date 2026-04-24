@@ -1,0 +1,307 @@
+#!/bin/bash
+# gp-update — OTA update mechanism for GhostPort
+# Usage: sudo gp-update [check|apply|status]
+
+set -euo pipefail
+
+LOCK_FILE="/tmp/gp-update.lock"
+
+# Prevent concurrent updates using flock (atomic, no TOCTOU race)
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "ERROR: Another gp-update is already running" >&2
+  exit 1
+fi
+trap 'rm -rf "$STAGING_DIR" 2>/dev/null' EXIT
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Error: must run as root (sudo gp-update ${1:-})"
+  exit 1
+fi
+
+VERSION_FILE="/etc/phantom/version.json"
+UPDATE_STATE="/etc/phantom/update-state.json"
+FLEET_FILE="/etc/phantom/fleet.json"
+FLEET_AUTH="/etc/phantom/fleet-auth.json"
+BACKUP_DIR="/opt/phantom-backup"
+STAGING_DIR=""
+LOG_TAG="gp-update"
+
+log() { logger -t "$LOG_TAG" "$1"; echo "[$LOG_TAG] $1"; }
+
+get_current_version() {
+  if [ -f "$VERSION_FILE" ]; then
+    python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$VERSION_FILE" 2>/dev/null || echo "0.1.0"
+  else
+    echo "0.1.0"
+  fi
+}
+
+get_fleet_server() {
+  for f in "$FLEET_FILE" "$FLEET_AUTH"; do
+    if [ -f "$f" ]; then
+      python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('fleet_server',''))" "$f" 2>/dev/null && return
+    fi
+  done
+  echo "http://10.66.66.1:8080"
+}
+
+get_fleet_token() {
+  for f in "$FLEET_AUTH" "$FLEET_FILE"; do
+    if [ -f "$f" ]; then
+      TOKEN=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('fleet_token',''))" "$f" 2>/dev/null)
+      if [ -n "$TOKEN" ]; then echo "$TOKEN"; return; fi
+    fi
+  done
+  echo ""
+}
+
+get_device_id() {
+  if [ -f "$FLEET_FILE" ]; then
+    python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('device_id',''))" "$FLEET_FILE" 2>/dev/null || echo ""
+  fi
+}
+
+case "${1:-status}" in
+  check)
+    log "Checking for updates..."
+    FLEET_SERVER=$(get_fleet_server)
+    FLEET_TOKEN=$(get_fleet_token)
+    DEVICE_ID=$(get_device_id)
+    CURRENT=$(get_current_version)
+
+    if [ -z "$FLEET_TOKEN" ]; then
+      log "No fleet token — cannot check for updates"
+      exit 1
+    fi
+
+    # Call fleet checkin
+    RESPONSE=$(curl -sf --max-time 15 \
+      -H "Authorization: Bearer $FLEET_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"device_id\":\"$DEVICE_ID\",\"current_version\":\"$CURRENT\"}" \
+      "${FLEET_SERVER}/fleet/devices/checkin" 2>/dev/null || echo '{}')
+
+    # Parse response
+    UPDATE_VERSION=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('update',{}).get('version',''))" 2>/dev/null || echo "")
+    UPDATE_URL=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('update',{}).get('url',''))" 2>/dev/null || echo "")
+    UPDATE_SHA=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('update',{}).get('sha256',''))" 2>/dev/null || echo "")
+
+    # Sanitize version string — allow only safe characters (e.g. 1.2.3-beta1)
+    UPDATE_VERSION="${UPDATE_VERSION//[^0-9.a-zA-Z_-]/}"
+    UPDATE_URL="${UPDATE_URL//[^a-zA-Z0-9:\/._~\?\&=%-]/}"
+
+    # Save state
+    GP_CUR="$CURRENT" GP_VER="$UPDATE_VERSION" GP_URL="$UPDATE_URL" GP_SHA="$UPDATE_SHA" GP_OUT="$UPDATE_STATE" python3 -c "
+import json, os, datetime
+state = {
+  'current_version': os.environ['GP_CUR'],
+  'available_version': os.environ.get('GP_VER') or None,
+  'update_url': os.environ.get('GP_URL') or None,
+  'update_sha256': os.environ.get('GP_SHA') or None,
+  'checked_at': datetime.datetime.utcnow().isoformat() + 'Z'
+}
+with open(os.environ['GP_OUT'], 'w') as f:
+    json.dump(state, f, indent=2)
+"
+    chmod 600 "$UPDATE_STATE"
+
+    if [ -n "$UPDATE_VERSION" ] && [ "$UPDATE_VERSION" != "$CURRENT" ]; then
+      log "Update available: $CURRENT → $UPDATE_VERSION"
+      echo "Update available: $UPDATE_VERSION"
+      echo "Run: sudo gp-update apply"
+    else
+      log "System is up to date ($CURRENT)"
+      echo "Up to date: $CURRENT"
+    fi
+    ;;
+
+  apply)
+    STAGING_DIR=$(mktemp -d /tmp/gp-update-staging.XXXXXX)
+    log "Applying update..."
+
+    # Read update state
+    if [ ! -f "$UPDATE_STATE" ]; then
+      log "No update state — run 'gp-update check' first"
+      exit 1
+    fi
+
+    UPDATE_URL=$(python3 -c "import json; print(json.load(open('$UPDATE_STATE')).get('update_url',''))" 2>/dev/null)
+    UPDATE_SHA=$(python3 -c "import json; print(json.load(open('$UPDATE_STATE')).get('update_sha256',''))" 2>/dev/null)
+    UPDATE_VERSION=$(python3 -c "import json; print(json.load(open('$UPDATE_STATE')).get('available_version',''))" 2>/dev/null)
+
+    if [ -z "$UPDATE_URL" ]; then
+      log "No update URL available — run 'gp-update check' first"
+      exit 1
+    fi
+
+    # Create backup of current installation
+    log "Backing up current installation..."
+    rm -rf "$BACKUP_DIR"
+    mkdir -p "$BACKUP_DIR"
+    rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
+      /opt/phantom/ "$BACKUP_DIR/"
+    cp "$VERSION_FILE" "${BACKUP_DIR}/version.json" 2>/dev/null || true
+
+    # Download update
+    log "Downloading update from $UPDATE_URL..."
+    rm -rf "$STAGING_DIR"
+    mkdir -p "$STAGING_DIR"
+    TARBALL="${STAGING_DIR}/update.tar.gz"
+
+    if ! curl -sf --max-time 120 -o "$TARBALL" "$UPDATE_URL"; then
+      log "Download failed"
+      rm -rf "$STAGING_DIR"
+      exit 1
+    fi
+
+    # Verify SHA-256
+    if [ -z "$UPDATE_SHA" ]; then
+      log "SECURITY: No SHA-256 hash provided — rejecting update"
+      rm -rf "$STAGING_DIR"
+      exit 1
+    fi
+    # Verify SHA-256 hash
+      ACTUAL_SHA=$(sha256sum "$TARBALL" | awk '{print $1}')
+      if [ "$ACTUAL_SHA" != "$UPDATE_SHA" ]; then
+        log "SHA-256 mismatch! Expected: $UPDATE_SHA, Got: $ACTUAL_SHA"
+        rm -rf "$STAGING_DIR"
+        exit 1
+      fi
+      log "SHA-256 verified"
+
+    # Extract to staging
+    log "Extracting update..."
+    # Verify tarball has no path traversal attempts
+    if tar -tzf "$TARBALL" 2>/dev/null | grep -qE '(^/|\.\.)'; then
+      log "SECURITY: Tarball contains absolute paths or ../ — rejecting update"
+      rm -rf "$STAGING_DIR"
+      exit 1
+    fi
+    tar -xzf "$TARBALL" -C "$STAGING_DIR"
+    rm -f "$TARBALL"
+
+    # Find the extracted directory (might be nested)
+    EXTRACT_DIR=$(find "$STAGING_DIR" -maxdepth 1 -mindepth 1 -type d | head -1)
+    if [ -z "$EXTRACT_DIR" ]; then
+      EXTRACT_DIR="$STAGING_DIR"
+    fi
+
+    # Deploy update (manual deploy only — never run untrusted scripts from tarball)
+    log "Deploying update..."
+    if [ -f "${EXTRACT_DIR}/scripts/gp-deploy" ]; then
+      log "WARNING: Ignoring gp-deploy script in tarball (security policy: no untrusted script execution)"
+    fi
+      # Manual deploy: copy files
+      rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
+        "$EXTRACT_DIR/" /opt/phantom/
+      # Deploy scripts
+      for script in "$EXTRACT_DIR"/scripts/gp-*; do
+        [ -f "$script" ] || continue
+        cp "$script" "/usr/local/bin/$(basename "$script")"
+        chmod 755 "/usr/local/bin/$(basename "$script")"
+      done
+      # Deploy nftables
+      cp "$EXTRACT_DIR"/etc/gpmodes/*.nft /etc/gpmodes/ 2>/dev/null || true
+      # Deploy systemd
+      for svc in "$EXTRACT_DIR"/systemd/*.service "$EXTRACT_DIR"/systemd/*.timer; do
+        [ -f "$svc" ] || continue
+        cp "$svc" /etc/systemd/system/
+      done
+      systemctl daemon-reload
+
+    # Write version.json
+    GP_UPDATE_VER="$UPDATE_VERSION" GP_PREV_VER="$(get_current_version)" GP_VFILE="$VERSION_FILE" python3 -c "
+import json, datetime, os
+v = {'version': os.environ['GP_UPDATE_VER'], 'buildDate': datetime.datetime.utcnow().isoformat() + 'Z', 'updateAvailable': None, 'previousVersion': os.environ['GP_PREV_VER']}
+with open(os.environ['GP_VFILE'], 'w') as f:
+    json.dump(v, f, indent=2)
+"
+    chmod 600 "$VERSION_FILE"
+
+    # Restart services
+    log "Restarting services..."
+    systemctl restart ghostport
+
+    # Health check — verify port 4200 responds within 60s
+    log "Verifying dashboard health..."
+    HEALTHY=false
+    for i in $(seq 1 12); do
+      sleep 5
+      if curl -sf --max-time 5 http://127.0.0.1:4200/api/auth/check >/dev/null 2>&1; then
+        HEALTHY=true
+        break
+      fi
+    done
+
+    if [ "$HEALTHY" = true ]; then
+      log "Update to $UPDATE_VERSION successful!"
+      # Clear update state
+      python3 -c "
+import json
+state = json.load(open('$UPDATE_STATE'))
+state['available_version'] = None
+state['update_url'] = None
+with open('$UPDATE_STATE', 'w') as f:
+    json.dump(state, f, indent=2)
+"
+      rm -rf "$STAGING_DIR"
+      echo "Update applied: $UPDATE_VERSION"
+    else
+      # ROLLBACK
+      log "Health check failed — rolling back to previous version!"
+      rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
+        "$BACKUP_DIR/" /opt/phantom/
+      cp "${BACKUP_DIR}/version.json" "$VERSION_FILE" 2>/dev/null || true
+      # Re-deploy scripts from backup
+      for script in "$BACKUP_DIR"/scripts/gp-*; do
+        [ -f "$script" ] || continue
+        cp "$script" "/usr/local/bin/$(basename "$script")"
+        chmod 755 "/usr/local/bin/$(basename "$script")"
+      done
+      systemctl restart ghostport
+      rm -rf "$STAGING_DIR"
+      log "Rolled back to previous version"
+      echo "Update FAILED — rolled back to previous version"
+      exit 1
+    fi
+    ;;
+
+  rollback)
+    log "Manual rollback requested..."
+    if [ ! -d "$BACKUP_DIR" ]; then
+      log "No backup found at $BACKUP_DIR"
+      exit 1
+    fi
+    rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
+      "$BACKUP_DIR/" /opt/phantom/
+    cp "${BACKUP_DIR}/version.json" "$VERSION_FILE" 2>/dev/null || true
+    for script in "$BACKUP_DIR"/scripts/gp-*; do
+      [ -f "$script" ] || continue
+      cp "$script" "/usr/local/bin/$(basename "$script")"
+      chmod 755 "/usr/local/bin/$(basename "$script")"
+    done
+    systemctl daemon-reload
+    systemctl restart ghostport
+    log "Rollback complete"
+    echo "Rolled back to: $(get_current_version)"
+    ;;
+
+  status)
+    CURRENT=$(get_current_version)
+    echo "Current version: $CURRENT"
+    if [ -f "$UPDATE_STATE" ]; then
+      AVAIL=$(python3 -c "import json; print(json.load(open('$UPDATE_STATE')).get('available_version','') or 'none')" 2>/dev/null)
+      CHECKED=$(python3 -c "import json; print(json.load(open('$UPDATE_STATE')).get('checked_at','never'))" 2>/dev/null)
+      echo "Available update: $AVAIL"
+      echo "Last checked: $CHECKED"
+    else
+      echo "No update checks performed yet"
+    fi
+    ;;
+
+  *)
+    echo "Usage: gp-update [check|apply|rollback|status]"
+    exit 1
+    ;;
+esac

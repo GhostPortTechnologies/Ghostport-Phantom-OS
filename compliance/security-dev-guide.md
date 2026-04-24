@@ -44,7 +44,7 @@
 
 ### Secrets Management
 - No hardcoded tokens, keys, or passwords in source code
-- Secrets live in `/etc/ghostport/` (Pi) or `/opt/ghostport-fleet/` (EC2)
+- Secrets live in `/etc/phantom/` (Pi) or `/opt/phantom-fleet/` (EC2)
 - File permissions: 600, owned by service user
 - Secrets excluded from git via `.gitignore`
 - Rotate after any suspected exposure

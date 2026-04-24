@@ -2,7 +2,7 @@
 # Switch Pi-hole upstream DNS based on current mode
 # Called by gp-mode after profile apply
 
-MODE="${1:-$(cat /etc/ghostport/current-mode 2>/dev/null || echo isp)}"
+MODE="${1:-$(cat /etc/phantom/current-mode 2>/dev/null || echo isp)}"
 DNSMASQ_CONF="/etc/dnsmasq.d/10-ghostport-core.conf"
 
 case "$MODE" in

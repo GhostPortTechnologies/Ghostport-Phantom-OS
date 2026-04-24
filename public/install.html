@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GhostPort OS — Setup</title>
+<title>Phantom OS — Setup</title>
 <style>
   :root {
     --bg: #0a0a0a;
@@ -351,7 +351,7 @@
 
     <div id="error-msg" class="error-msg"></div>
 
-    <a href="/" class="skip">Skip &mdash; use without subscription</a>
+    <a href="#" class="skip" id="skip-link">Skip &mdash; use without subscription</a>
   </div>
 
   <!-- Success State -->
@@ -381,9 +381,28 @@
       </div>
     </div>
 
+    <!-- TOTP Setup -->
+    <div id="totp-section" style="display:none;margin-bottom:12px">
+      <div style="text-align:center;margin-bottom:8px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">Two-Factor Authentication</div>
+        <div style="font-size:12px;color:var(--text-dim)">Scan with your authenticator app</div>
+      </div>
+      <div style="text-align:center;position:relative;display:inline-block;width:100%;margin-bottom:8px">
+        <div style="position:relative;display:inline-block">
+          <img id="cred-totp-qr" style="width:180px;height:180px;border-radius:8px;border:1px solid var(--card-border)"/>
+          <img src="/logo.png" alt="" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;border-radius:50%;border:2px solid var(--bg);background:var(--bg)"/>
+        </div>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim);text-align:center;margin-bottom:4px">Manual key:</div>
+      <div id="cred-totp-secret" style="font-family:var(--mono);font-size:12px;color:var(--accent);text-align:center;letter-spacing:2px;padding:6px;background:var(--bg);border:1px solid var(--card-border);border-radius:6px;margin-bottom:8px;word-break:break-all"></div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">Backup codes (save these!):</div>
+      <div id="cred-totp-backup" style="font-family:var(--mono);font-size:11px;color:var(--text);padding:6px;background:var(--bg);border:1px solid var(--card-border);border-radius:6px;display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-bottom:8px"></div>
+      <div style="font-size:11px;color:var(--text-dim);text-align:center">Complete setup after login in Settings > Two-Factor Authentication</div>
+    </div>
+
     <div class="copy-all-wrap">
       <button class="btn btn-copy" id="copy-all-btn">Copy All</button>
-      <a href="/" class="btn btn-go">Open Dashboard</a>
+      <a href="/login.html" class="btn btn-go">Open Dashboard</a>
     </div>
   </div>
 </div>

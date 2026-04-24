@@ -1,0 +1,10 @@
+[Unit]
+Description=GhostPort OTA Update Check Timer
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

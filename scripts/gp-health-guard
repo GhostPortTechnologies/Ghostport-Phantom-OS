@@ -1,0 +1,204 @@
+#!/bin/bash
+# gp-health-guard — System health monitor and self-healer
+# Monitors: WireGuard tunnels, services, temperature, memory, disk, conntrack, interfaces
+# Runs every 60s via systemd timer alongside gp-dns-guard
+#
+# gp-dns-guard handles: DNS config, cloudflared, nftables, Pi-hole upstream
+# gp-health-guard handles: everything else that can fail silently
+
+set -uo pipefail
+LOCK="/run/ghostport/health-guard.lock"
+mkdir -p /run/ghostport 2>/dev/null || true
+exec 9>"$LOCK"
+flock -n 9 || { echo "Already running"; exit 0; }
+TAG="gp-health-guard"
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+SKIP_TUNNEL=false
+FIXES=0
+WARNINGS=0
+STATE_DIR="/etc/phantom"
+HEALTH_STATE="$STATE_DIR/health-state.json"
+
+# Detect WAN interface: wlan0 if WiFi WAN configured, else eth0
+wan_if() {
+  local wtype
+  wtype=$(jq -r '.type // "ethernet"' /etc/phantom/wan.json 2>/dev/null)
+  if [[ "$wtype" == "wireless" ]]; then echo "wlan1"; else echo "eth0"; fi
+}
+
+log() { logger -t "$TAG" "$1"; }
+warn() { logger -t "$TAG" "WARN: $1"; WARNINGS=$((WARNINGS + 1)); }
+fix() { logger -t "$TAG" "FIX: $1"; FIXES=$((FIXES + 1)); }
+
+# ─── 0. Boot Grace Period ─────────────────────────────────────
+# Skip WireGuard recovery if system just booted — let gp-mode-boot handle it
+UPTIME_SEC=$(awk "{printf \"%.0f\", \$1}" /proc/uptime)
+if [[ "$UPTIME_SEC" -lt 120 ]]; then
+  log "Boot grace period (uptime=${UPTIME_SEC}s) — skipping tunnel checks"
+  # Still do service/temp/mem/disk checks below, just skip WG recovery
+  SKIP_TUNNEL=true
+fi
+
+# ─── 1. WireGuard Tunnel Health (tunnel modes only) ──────────
+if [[ "$SKIP_TUNNEL" != "true" && ( "$MODE" == "doublehop" || "$MODE" == "zhop" ) ]]; then
+  # Check wg1 (data plane) — carries all internet traffic
+  if ! ip link show wg1 2>/dev/null | grep -qE "state (UP|UNKNOWN)"; then
+    fix "wg1 (data plane) DOWN in $MODE — recovering"
+    sudo ip link del wg1 2>/dev/null || true
+    # Re-run mode switch to bring everything back cleanly
+    sudo /usr/local/bin/gp-mode "$MODE" --no-rollback 2>/dev/null || true
+  else
+    # wg1 is up — check if it's actually passing traffic (handshake within last 3 min)
+    LAST_HANDSHAKE=$(sudo wg show wg1 latest-handshakes 2>/dev/null | awk '{print $2}')
+    NOW=$(date +%s)
+    if [[ -n "$LAST_HANDSHAKE" && "$LAST_HANDSHAKE" -gt 0 ]]; then
+      AGE=$(( NOW - LAST_HANDSHAKE ))
+      if [[ "$AGE" -gt 180 ]]; then
+        warn "wg1 handshake stale (${AGE}s ago) — tunnel may be dead"
+        # Bounce the interface to force re-handshake
+        sudo ip link set wg1 down 2>/dev/null && sudo ip link set wg1 up 2>/dev/null
+        fix "Bounced wg1 to force re-handshake"
+      fi
+    fi
+  fi
+
+  # Check wg0 (control plane) — fleet heartbeat
+  if ! ip link show wg0 2>/dev/null | grep -qE "state (UP|UNKNOWN)"; then
+    fix "wg0 (control plane) DOWN in $MODE — recovering"
+    sudo ip link del wg0 2>/dev/null || true
+    sudo /usr/local/bin/gp-mode "$MODE" --no-rollback 2>/dev/null || true
+  fi
+
+  # Verify routing table has default via wg1
+  if ! ip route show default 2>/dev/null | grep -q "wg1"; then
+    fix "Default route missing wg1 — restoring"
+    sudo ip route replace default dev wg1 metric 10 2>/dev/null || true
+  fi
+fi
+
+# ─── 2. Critical Service Health ──────────────────────────────
+for svc in pihole-FTL hostapd ghostport; do
+  if ! systemctl is-active --quiet "$svc" 2>/dev/null; then
+    # Check if it's in a start-limit-hit state
+    if systemctl show "$svc" -p ActiveState --value 2>/dev/null | grep -q "failed"; then
+      SUB=$(systemctl show "$svc" -p SubState --value 2>/dev/null)
+      if [[ "$SUB" == "start-limit-hit" ]]; then
+        fix "$svc hit start limit — resetting failure counter and restarting"
+        sudo systemctl reset-failed "$svc" 2>/dev/null || true
+        sudo systemctl start "$svc" 2>/dev/null || true
+      else
+        fix "$svc is failed (SubState=$SUB) — restarting"
+        sudo systemctl restart "$svc" 2>/dev/null || true
+      fi
+    fi
+  fi
+done
+
+# Tailscale — never allowed to die
+if ! systemctl is-active --quiet tailscaled 2>/dev/null; then
+  fix "tailscaled DOWN — this is the management plane, must recover"
+  sudo systemctl reset-failed tailscaled 2>/dev/null || true
+  sudo systemctl start tailscaled 2>/dev/null || true
+fi
+
+# ─── 3. Network Interface Health ─────────────────────────────
+# Check wlan0 (LAN AP) — must always be up
+if ! ip link show wlan0 2>/dev/null | grep -qE "state (UP|UNKNOWN)"; then
+  fix "wlan0 (LAN AP) is DOWN — restarting hostapd"
+  sudo systemctl restart hostapd 2>/dev/null || true
+fi
+
+# Check WAN interface in tunnel modes — required for WireGuard endpoints
+WAN_IF=$(wan_if)
+if [[ "$MODE" == "doublehop" || "$MODE" == "zhop" ]]; then
+  if ! ip link show "$WAN_IF" 2>/dev/null | grep -qE "state UP"; then
+    warn "$WAN_IF (WAN) is DOWN — WireGuard tunnels will fail until ISP connectivity returns"
+    # Can't fix ISP outage, but log it for diagnostics
+  fi
+fi
+
+# ─── 4. Temperature Monitoring ───────────────────────────────
+TEMP_RAW=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null || echo "0")
+TEMP_C=$((TEMP_RAW / 1000))
+
+if [[ "$TEMP_C" -ge 80 ]]; then
+  warn "CPU temperature CRITICAL: ${TEMP_C}°C — thermal throttling active"
+elif [[ "$TEMP_C" -ge 70 ]]; then
+  warn "CPU temperature HIGH: ${TEMP_C}°C — approaching throttle threshold"
+fi
+
+# ─── 5. Memory Pressure ──────────────────────────────────────
+MEM_AVAIL_KB=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+MEM_TOTAL_KB=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+MEM_USED_PCT=$(( (MEM_TOTAL_KB - MEM_AVAIL_KB) * 100 / MEM_TOTAL_KB ))
+
+if [[ "$MEM_USED_PCT" -ge 90 ]]; then
+  warn "Memory pressure CRITICAL: ${MEM_USED_PCT}% used — OOM risk"
+  # Clear caches to buy time
+  sudo sh -c 'echo 3 > /proc/sys/vm/drop_caches' 2>/dev/null || true
+  fix "Dropped kernel caches to relieve memory pressure"
+elif [[ "$MEM_USED_PCT" -ge 80 ]]; then
+  warn "Memory pressure HIGH: ${MEM_USED_PCT}% used"
+fi
+
+# ─── 6. Disk Space ───────────────────────────────────────────
+DISK_USED_PCT=$(df / | awk 'NR==2 {gsub(/%/,""); print $5}')
+
+if [[ "$DISK_USED_PCT" -ge 90 ]]; then
+  warn "Disk space CRITICAL: ${DISK_USED_PCT}% used"
+  # Emergency cleanup
+  sudo journalctl --vacuum-size=50M 2>/dev/null || true
+  sudo find /var/log -name "*.gz" -mtime +7 -delete 2>/dev/null || true
+  sudo find /var/log -name "*.1" -mtime +7 -delete 2>/dev/null || true
+  sudo apt-get clean 2>/dev/null || true
+  fix "Emergency disk cleanup (journals, old logs, apt cache)"
+elif [[ "$DISK_USED_PCT" -ge 80 ]]; then
+  warn "Disk space HIGH: ${DISK_USED_PCT}% used"
+fi
+
+# ─── 7. Conntrack Table ──────────────────────────────────────
+CT_MAX=$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || echo "262144")
+CT_COUNT=$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || echo "0")
+CT_PCT=$(( CT_COUNT * 100 / CT_MAX ))
+
+if [[ "$CT_PCT" -ge 80 ]]; then
+  warn "Conntrack table ${CT_PCT}% full ($CT_COUNT/$CT_MAX) — new connections may fail"
+  if [[ "$CT_PCT" -ge 95 ]]; then
+    # Flush stale entries for AP clients to free space
+    sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
+    fix "Flushed AP client conntrack entries to prevent exhaustion"
+  fi
+fi
+
+# ─── 8. Journal Size Check ───────────────────────────────────
+JOURNAL_SIZE=$(journalctl --disk-usage 2>/dev/null | grep -oP '\d+\.\d+[MG]' | head -1)
+# Keep journal under 100M
+if journalctl --disk-usage 2>/dev/null | grep -qP '[2-9]\d{2}\.\d+M|[0-9]+\.\d+G'; then
+  sudo journalctl --vacuum-size=100M 2>/dev/null || true
+  fix "Trimmed journal to 100M"
+fi
+
+# ─── 9. Write Health State ───────────────────────────────────
+cat > /tmp/health-state.json << HEOF
+{
+  "timestamp": "$(date -Iseconds)",
+  "mode": "$MODE",
+  "temp_c": $TEMP_C,
+  "mem_used_pct": $MEM_USED_PCT,
+  "disk_used_pct": $DISK_USED_PCT,
+  "conntrack_pct": $CT_PCT,
+  "fixes": $FIXES,
+  "warnings": $WARNINGS
+}
+HEOF
+sudo cp /tmp/health-state.json "$HEALTH_STATE" 2>/dev/null || true
+
+# ─── Report ──────────────────────────────────────────────────
+if [[ "$FIXES" -gt 0 || "$WARNINGS" -gt 0 ]]; then
+  log "mode=$MODE temp=${TEMP_C}C mem=${MEM_USED_PCT}% disk=${DISK_USED_PCT}% ct=${CT_PCT}% fixes=$FIXES warnings=$WARNINGS"
+else
+  MINUTE=$(date +%-M)
+  if [[ "$(( 10#$MINUTE % 10 ))" -eq 0 ]]; then
+    log "OK mode=$MODE temp=${TEMP_C}C mem=${MEM_USED_PCT}% disk=${DISK_USED_PCT}%"
+  fi
+fi

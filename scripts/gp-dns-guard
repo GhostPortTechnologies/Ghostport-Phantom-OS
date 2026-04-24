@@ -1,0 +1,148 @@
+#!/bin/bash
+# gp-dns-guard — DNS integrity monitor and self-healer
+# Continuously verifies DNS configuration matches the current mode.
+# If drift is detected, auto-corrects and logs the fix.
+# Replaces gp-dns-watchdog with mode-aware config validation.
+#
+# Run via systemd timer every 60 seconds.
+
+set -uo pipefail
+LOCK_FILE="/run/ghostport/guard-mode.lock"
+
+# Acquire shared guard lock before any mode-switching operations
+guard_mode_switch() {
+  if ! mkdir "$LOCK_FILE" 2>/dev/null; then
+    # Clear stale lock if older than 120s (crash recovery)
+    if [[ -d "$LOCK_FILE" ]] && find "$LOCK_FILE" -maxdepth 0 -mmin +2 -print -quit | grep -q .; then
+      log "Removing stale lock directory (older than 120s)"
+      rmdir "$LOCK_FILE" 2>/dev/null
+      mkdir "$LOCK_FILE" 2>/dev/null || { log "Still cannot acquire lock"; return 1; }
+    else
+      log "Another guard is running a mode switch — skipping recovery"
+      return 1
+    fi
+  fi
+  trap 'rmdir "$LOCK_FILE" 2>/dev/null' EXIT
+  return 0
+}
+TAG="gp-dns-guard"
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+DNSMASQ_CONF="/etc/dnsmasq.d/10-ghostport-core.conf"
+PIHOLE_CONF="/etc/pihole/pihole.toml"
+FIXES=0
+
+log() { logger -t "$TAG" "$1"; }
+fix() { log "FIX: $1"; FIXES=$((FIXES + 1)); }
+
+# ─── 1. Verify Pi-hole upstream matches mode ─────────────────
+case "$MODE" in
+  doublehop|zhop)
+    EXPECTED_SERVER="server=10.66.67.1#53"
+    EXPECTED_UPSTREAM='"10.66.67.1#53"'
+    ;;
+  *)
+    EXPECTED_SERVER="server=127.0.0.1#5053"
+    EXPECTED_UPSTREAM='"127.0.0.1#5053"'
+    ;;
+esac
+
+# Check dnsmasq config
+if [ -f "$DNSMASQ_CONF" ] && ! grep -q "^${EXPECTED_SERVER}$" "$DNSMASQ_CONF"; then
+  CURRENT=$(grep "^server=" "$DNSMASQ_CONF" | head -1)
+  if [ -n "$CURRENT" ]; then
+    fix "dnsmasq upstream wrong for $MODE: was '$CURRENT', setting '$EXPECTED_SERVER'"
+    cp "$DNSMASQ_CONF" "${DNSMASQ_CONF}.bak"
+    cp "$DNSMASQ_CONF" "${DNSMASQ_CONF}.bak"
+    sed -i "s|^server=.*|${EXPECTED_SERVER}|" "$DNSMASQ_CONF"
+  else
+    fix "dnsmasq upstream missing for $MODE — adding '$EXPECTED_SERVER'"
+    echo "$EXPECTED_SERVER" >> "$DNSMASQ_CONF"
+  fi
+  sudo pihole reloaddns 2>/dev/null || true
+fi
+
+# Check pihole.toml upstream
+if [ -f "$PIHOLE_CONF" ]; then
+  CURRENT_UPSTREAM=$(grep -A2 'upstreams' "$PIHOLE_CONF" | grep '"' | tr -d ' ' | head -1)
+  if [ -n "$CURRENT_UPSTREAM" ] && [ "$CURRENT_UPSTREAM" != "$EXPECTED_UPSTREAM" ]; then
+    fix "pihole.toml upstream wrong for $MODE: was '$CURRENT_UPSTREAM', expected '$EXPECTED_UPSTREAM'"
+    sudo gp-dns-upstream "$MODE" 2>/dev/null || true
+  fi
+fi
+
+# ─── 2. Verify cloudflared state matches mode ────────────────
+case "$MODE" in
+  doublehop|zhop)
+    # cloudflared should be STOPPED in tunnel modes
+    if systemctl is-active --quiet cloudflared 2>/dev/null; then
+      fix "cloudflared running in $MODE — stopping (DNS leak vector)"
+      sudo systemctl stop cloudflared 2>/dev/null || true
+    fi
+    ;;
+  isp|zerotrust)
+    # cloudflared should be RUNNING in non-tunnel modes
+    if ! systemctl is-active --quiet cloudflared 2>/dev/null; then
+      fix "cloudflared not running in $MODE — starting"
+      sudo systemctl start cloudflared 2>/dev/null || true
+      sleep 1
+    fi
+    ;;
+esac
+
+# ─── 3. Verify nftables DNS leak prevention in tunnel modes ──
+case "$MODE" in
+  doublehop|zhop)
+    # Output chain must have "dport 53 drop" rules to prevent DNS leaks
+    if ! sudo nft list chain inet filter output 2>/dev/null | grep -q 'dport 53 drop'; then
+      fix "nftables output chain missing DNS leak prevention — reapplying $MODE profile"
+      guard_mode_switch && sudo nft -c -f "/etc/gpmodes/${MODE}.nft" 2>/dev/null && sudo nft -f "/etc/gpmodes/${MODE}.nft" 2>/dev/null || true
+      sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
+    fi
+
+    # Prerouting must redirect LAN DNS to Pi-hole
+    if ! sudo nft list chain inet nat prerouting 2>/dev/null | grep -q 'redirect to :53'; then
+      fix "nftables prerouting DNS redirect missing — reapplying $MODE profile"
+      guard_mode_switch && sudo nft -c -f "/etc/gpmodes/${MODE}.nft" 2>/dev/null && sudo nft -f "/etc/gpmodes/${MODE}.nft" 2>/dev/null || true
+      sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
+    fi
+
+    # WireGuard data tunnel must be up
+    if ! ip link show wg1 2>/dev/null | grep -q "UP"; then
+      fix "wg1 (data plane) is down in $MODE — this breaks DNS and internet"
+      log "Attempting tunnel recovery..."
+      guard_mode_switch && sudo /usr/local/bin/gp-mode "$MODE" --no-rollback 2>/dev/null || true
+    fi
+    ;;
+esac
+
+# ─── 4. Verify resolv.conf doesn't have public DNS fallbacks ─
+if grep -qE '^nameserver\s+(8\.8\.8\.8|1\.1\.1\.1|9\.9\.9\.9|208\.67\.)' /etc/resolv.conf 2>/dev/null; then
+  fix "resolv.conf has public DNS fallback — removing"
+  sudo sed -i '/^nameserver\s*\(8\.8\.8\.8\|1\.1\.1\.1\|9\.9\.9\.9\|208\.67\.\)/d' /etc/resolv.conf
+fi
+
+# ─── 5. Test actual DNS resolution ───────────────────────────
+if ! dig +short +timeout=3 +tries=1 cloudflare.com @127.0.0.1 > /dev/null 2>&1; then
+  fix "DNS resolution FAILED on 127.0.0.1:53 — restarting pihole-FTL"
+  sudo systemctl restart pihole-FTL 2>/dev/null || true
+  sleep 2
+
+  # Retry after restart
+  if ! dig +short +timeout=3 +tries=1 cloudflare.com @127.0.0.1 > /dev/null 2>&1; then
+    fix "DNS still failing after pihole-FTL restart — full DNS stack reset"
+    sudo gp-dns-upstream "$MODE" 2>/dev/null || true
+    sudo systemctl restart pihole-FTL 2>/dev/null || true
+  fi
+fi
+
+# ─── Report ──────────────────────────────────────────────────
+if [ "$FIXES" -gt 0 ]; then
+  log "Applied $FIXES fix(es) for mode=$MODE"
+else
+  # Suppress routine OK logs — only log on first success after a fix
+  # or every 10 minutes to show we're alive
+  MINUTE=$(date +%M)
+  if [ "$(( 10#$MINUTE % 10 ))" -eq 0 ]; then
+    log "OK mode=$MODE upstream=$(grep '^server=' "$DNSMASQ_CONF" 2>/dev/null | head -1)"
+  fi
+fi

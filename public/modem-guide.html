@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GhostPort — Kill WiFi Sensing</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --green: #39ff8f; --green-dim: #1a6a3a; --green-glow: #39ff8f44;
+      --bg: #060a06; --bg2: #0a140a; --bg3: #0d1f0d;
+      --border: #1a2e1a; --text: #c8f0c8; --text-dim: #4a7a4a; --text-faint: #2a4a2a;
+      --red: #ff4444; --yellow: #ffcc00;
+      --green-20: #39ff8f33; --green-33: #39ff8f55; --green-13: #39ff8f22;
+    }
+    body {
+      background: var(--bg); color: var(--text);
+      font-family: 'Share Tech Mono', monospace;
+      min-height: 100vh; padding: 0; margin: 0;
+      line-height: 1.7;
+    }
+    body::before {
+      content: ''; position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+      pointer-events: none; z-index: 999;
+    }
+    @keyframes flicker { 0%,100%{opacity:1} 92%{opacity:1} 93%{opacity:0.6} 94%{opacity:1} 97%{opacity:0.8} 98%{opacity:1} }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(12px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+    .container {
+      max-width: 820px; margin: 0 auto; padding: 40px 24px 60px;
+      animation: fadeIn 0.6s ease;
+    }
+
+    .page-header { text-align: center; margin-bottom: 48px; }
+    .page-skull { font-size: 48px; margin-bottom: 12px; filter: drop-shadow(0 0 12px var(--green)); }
+    .page-title {
+      font-family: 'Cinzel', serif; font-size: 20px; font-weight: 900;
+      color: var(--green); letter-spacing: 3px;
+      text-shadow: 0 0 20px var(--green-glow); animation: flicker 8s infinite;
+      text-transform: uppercase;
+    }
+    .page-subtitle {
+      font-size: 10px; color: var(--text-dim); letter-spacing: 3px; margin-top: 6px;
+      text-transform: uppercase;
+    }
+
+    .section {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: 28px 24px; margin-bottom: 24px;
+    }
+    .section-title {
+      font-size: 13px; color: var(--green); letter-spacing: 2px; text-transform: uppercase;
+      margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    .section-title .num {
+      display: inline-block; background: var(--green); color: var(--bg); font-size: 10px;
+      width: 20px; height: 20px; line-height: 20px; text-align: center; border-radius: 3px;
+      margin-right: 8px; font-weight: bold;
+    }
+    .section p {
+      font-size: 12px; color: var(--text); line-height: 1.8; margin-bottom: 12px;
+    }
+    .section p:last-child { margin-bottom: 0; }
+
+    .warn {
+      color: var(--yellow); font-size: 11px; padding: 10px 14px;
+      background: rgba(255,204,0,0.06); border: 1px solid rgba(255,204,0,0.15);
+      border-radius: 4px; margin-top: 12px;
+    }
+    .warn::before { content: "WARNING: "; font-weight: bold; }
+
+    .note {
+      color: var(--green); font-size: 11px; padding: 10px 14px;
+      background: var(--green-13); border: 1px solid var(--green-20);
+      border-radius: 4px; margin-top: 12px;
+    }
+
+    /* Table */
+    .modem-table-wrap { overflow-x: auto; margin-top: 12px; }
+    table {
+      width: 100%; border-collapse: collapse; font-size: 11px;
+      font-family: 'Share Tech Mono', monospace;
+    }
+    thead th {
+      background: var(--bg3); color: var(--green); font-size: 10px; letter-spacing: 1.5px;
+      text-transform: uppercase; padding: 10px 12px; text-align: left;
+      border-bottom: 1px solid var(--green-dim);
+    }
+    tbody td {
+      padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text);
+      vertical-align: top;
+    }
+    tbody tr:hover { background: var(--green-13); }
+    .model-name { color: var(--green); font-weight: bold; white-space: nowrap; }
+    .price { color: var(--yellow); white-space: nowrap; }
+
+    /* ISP instructions */
+    .isp-block { margin-bottom: 20px; }
+    .isp-block:last-child { margin-bottom: 0; }
+    .isp-name {
+      font-size: 12px; color: var(--green); font-weight: bold; letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+    .isp-steps {
+      list-style: none; padding: 0; margin: 0; font-size: 11px;
+    }
+    .isp-steps li {
+      padding: 4px 0 4px 20px; position: relative; color: var(--text);
+    }
+    .isp-steps li::before {
+      content: attr(data-step); position: absolute; left: 0; color: var(--green-dim);
+      font-size: 10px; font-weight: bold;
+    }
+    .isp-steps li em {
+      font-style: normal; color: var(--text-dim); font-size: 10px;
+    }
+    .isp-tip {
+      font-size: 10px; color: var(--text-dim); margin-top: 6px; padding-left: 20px;
+    }
+
+    /* Footer */
+    .page-footer {
+      text-align: center; margin-top: 40px; padding-top: 24px;
+      border-top: 1px solid var(--border);
+    }
+    .back-link {
+      display: inline-block; font-size: 11px; color: var(--green); text-decoration: none;
+      letter-spacing: 2px; padding: 10px 20px; border: 1px solid var(--border);
+      border-radius: 4px; transition: all 0.2s;
+    }
+    .back-link:hover {
+      border-color: var(--green); background: var(--green-dim);
+      box-shadow: 0 0 14px var(--green-glow);
+    }
+    .footer-brand {
+      margin-top: 20px; font-size: 9px; color: var(--text-faint); letter-spacing: 3px;
+    }
+
+    /* Mobile */
+    @media (max-width: 600px) {
+      .container { padding: 24px 14px 40px; }
+      .section { padding: 20px 16px; }
+      .page-title { font-size: 16px; letter-spacing: 2px; }
+      table { font-size: 10px; }
+      thead th, tbody td { padding: 8px 8px; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div class="page-header">
+    <div class="page-skull">&#x1F480;</div>
+    <div class="page-title">Kill WiFi Sensing</div>
+    <div class="page-subtitle">Replace Your ISP Router</div>
+  </div>
+
+  <!-- Section 1: What Is WiFi Sensing? -->
+  <div class="section">
+    <div class="section-title"><span class="num">1</span> What Is WiFi Sensing?</div>
+    <p>Your ISP router can use WiFi signals to detect your physical presence, movement, and even breathing patterns inside your home. Products like Xfinity WiFi Motion, eero Motion, Linksys Aware, and Plume Motion already ship this technology. IEEE 802.11bf is standardizing WiFi sensing as a built-in capability for future routers and access points. The only way to fully eliminate this surveillance vector is to remove the ISP's WiFi radio from your home entirely.</p>
+    <div class="warn">Your ISP router is a sensor inside your home that you do not control. Disabling WiFi in software may not prevent the radio from operating in passive sensing mode.</div>
+  </div>
+
+  <!-- Section 2: Recommended Cable Modems -->
+  <div class="section">
+    <div class="section-title"><span class="num">2</span> Recommended Cable Modems (No WiFi)</div>
+    <div class="modem-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>ISP Compatibility</th>
+            <th>DOCSIS</th>
+            <th>Price</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="model-name">Motorola MB8600</td>
+            <td>Cox, Comcast, Spectrum</td>
+            <td>3.1</td>
+            <td class="price">~$70</td>
+            <td>Most popular, reliable</td>
+          </tr>
+          <tr>
+            <td class="model-name">Arris SB8200</td>
+            <td>Cox, Comcast, Spectrum</td>
+            <td>3.1</td>
+            <td class="price">~$80</td>
+            <td>Dual ethernet ports</td>
+          </tr>
+          <tr>
+            <td class="model-name">Netgear CM1000</td>
+            <td>Cox, Comcast, Spectrum</td>
+            <td>3.1</td>
+            <td class="price">~$90</td>
+            <td>Good performance</td>
+          </tr>
+          <tr>
+            <td class="model-name">Motorola MB7621</td>
+            <td>Cox, Comcast, Spectrum</td>
+            <td>3.0</td>
+            <td class="price">~$50</td>
+            <td>Budget option, up to 600Mbps</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note">These are modem-only devices with NO WiFi radio. They convert your coax cable to Ethernet. GhostPort handles everything else.</div>
+  </div>
+
+  <!-- Section 3: Fiber Users -->
+  <div class="section">
+    <div class="section-title"><span class="num">3</span> Fiber Users</div>
+    <p>If you have fiber internet (Verizon FiOS, AT&amp;T Fiber, Google Fiber), your ISP provides an ONT (Optical Network Terminal). ONTs are typically passive converters with no WiFi radio &mdash; your main concern is the separate router/gateway they provide. Ask your ISP if you can use the ONT in bridge/passthrough mode and connect GhostPort directly.</p>
+  </div>
+
+  <!-- Section 4: If You Can't Replace Your Router -->
+  <div class="section">
+    <div class="section-title"><span class="num">4</span> If You Can't Replace Your Router</div>
+    <p>If you're stuck with an ISP gateway, disable its WiFi radios. Per-ISP instructions below:</p>
+
+    <div class="isp-block">
+      <div class="isp-name">Cox Panoramic Gateway</div>
+      <ol class="isp-steps">
+        <li data-step="1.">Open browser to <strong>192.168.0.1</strong></li>
+        <li data-step="2.">Login <em>(default: admin/password on sticker)</em></li>
+        <li data-step="3.">Go to WiFi &rarr; WiFi Settings</li>
+        <li data-step="4.">Disable both 2.4GHz and 5GHz bands</li>
+        <li data-step="5.">Or call Cox and request <strong>"Bridge Mode"</strong></li>
+      </ol>
+    </div>
+
+    <div class="isp-block">
+      <div class="isp-name">Xfinity xFi Gateway</div>
+      <ol class="isp-steps">
+        <li data-step="1.">Open Xfinity app or go to <strong>10.0.0.1</strong></li>
+        <li data-step="2.">Navigate to WiFi settings</li>
+        <li data-step="3.">Disable WiFi on both bands</li>
+        <li data-step="4.">Better: Call Comcast and request <strong>"Bridge Mode"</strong> &mdash; this fully disables routing and WiFi</li>
+      </ol>
+    </div>
+
+    <div class="isp-block">
+      <div class="isp-name">AT&amp;T Gateway</div>
+      <ol class="isp-steps">
+        <li data-step="1.">Open browser to <strong>192.168.1.254</strong></li>
+        <li data-step="2.">Login with credentials on device label</li>
+        <li data-step="3.">Go to Home Network &rarr; WiFi</li>
+        <li data-step="4.">Disable both bands</li>
+        <li data-step="5.">For passthrough: Firewall &rarr; IP Passthrough &rarr; enable</li>
+      </ol>
+    </div>
+
+    <div class="isp-block">
+      <div class="isp-name">Spectrum Router</div>
+      <ol class="isp-steps">
+        <li data-step="1.">Open browser to <strong>192.168.1.1</strong></li>
+        <li data-step="2.">Login <em>(default on sticker)</em></li>
+        <li data-step="3.">Disable WiFi</li>
+        <li data-step="4.">Or return the router to Spectrum <em>(they charge $5/month rental)</em> and buy your own modem</li>
+      </ol>
+    </div>
+
+    <div class="isp-block">
+      <div class="isp-name">Verizon FiOS Gateway</div>
+      <ol class="isp-steps">
+        <li data-step="1.">Open browser to <strong>192.168.1.1</strong></li>
+        <li data-step="2.">Login <em>(admin / password on sticker)</em></li>
+        <li data-step="3.">WiFi &rarr; disable both bands</li>
+        <li data-step="4.">Note: FiOS may require their router for TV service</li>
+      </ol>
+    </div>
+  </div>
+
+  <!-- Section 5: Verify It's Off -->
+  <div class="section">
+    <div class="section-title"><span class="num">5</span> Verify It's Off</div>
+    <p>After disabling your ISP router's WiFi, use GhostPort's WiFi Sensing Check (Dashboard &rarr; Diagnostics) to verify no ISP networks are still broadcasting from your home.</p>
+  </div>
+
+  <!-- Footer -->
+  <div class="page-footer">
+    <a href="/" class="back-link">&larr; Return to Command Deck</a>
+    <div class="footer-brand">GHOSTPORT TECHNOLOGIES</div>
+  </div>
+
+</div>
+</body>
+</html>

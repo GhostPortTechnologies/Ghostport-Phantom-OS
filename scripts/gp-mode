@@ -4,7 +4,7 @@ MODE="${1:-}"
 NFT="/usr/sbin/nft"
 RULEDIR="/etc/gpmodes"
 BACKUP="/tmp/nft.ruleset.backup"
-MODEFILE="/etc/ghostport/current-mode"
+MODEFILE="/etc/phantom/current-mode"
 ROLLBACK_PID_FILE="/tmp/gp-rollback.pid"
 
 die() { echo "ERROR: $*" >&2; exit 1; }

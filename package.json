@@ -11,6 +11,8 @@
   "description": "",
   "dependencies": {
     "cors": "^2.8.6",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "otpauth": "^9.5.0",
+    "qrcode": "^1.5.4"
   }
 }

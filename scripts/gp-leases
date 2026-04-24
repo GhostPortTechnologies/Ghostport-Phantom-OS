@@ -1,0 +1,84 @@
+#!/bin/bash
+# gp-leases — canonical DHCP lease reader
+# Dev comment: centralizes lease access so a moved/renamed lease file
+# (e.g. Pi-hole-FTL takeover) can't silently starve device detection.
+# Falls back to `ip neigh` synthesis when the lease file is stale or missing.
+# Output format matches dnsmasq: `<expiry> <mac> <ip> <name> <client_id>`
+set -euo pipefail
+
+case "${1:-}" in
+    --help|-h)
+        cat <<EOF
+Usage: gp-leases [--json|--source]
+  (no args)   Print DHCP leases in dnsmasq format: <expiry> <mac> <ip> <name> <client_id>
+  --source    Print where the data came from (pihole|dnsmasq-legacy|arp-fallback|none)
+  --json      Print leases as a JSON array
+EOF
+        exit 0
+        ;;
+esac
+
+# Candidates in priority order — first fresh one wins
+CANDIDATES=(
+    "/etc/pihole/dhcp.leases"
+    "/var/lib/misc/dnsmasq.leases"
+)
+MAX_AGE_SEC=14400   # 4h; lease TTL is 24h, so 4h stale is already suspicious
+LAN_IF="wlan0"
+
+now=$(date +%s)
+source="none"
+lease_data=""
+
+for f in "${CANDIDATES[@]}"; do
+    [[ -r "$f" ]] || continue
+    mtime=$(stat -c '%Y' "$f" 2>/dev/null || echo 0)
+    age=$(( now - mtime ))
+    [[ $age -gt $MAX_AGE_SEC ]] && continue
+    data=$(cat "$f" 2>/dev/null || true)
+    [[ -z "$data" ]] && continue
+    lease_data="$data"
+    case "$f" in
+        /etc/pihole/*)       source="pihole" ;;
+        /var/lib/misc/*)     source="dnsmasq-legacy" ;;
+    esac
+    break
+done
+
+# Fallback: synthesize lease-format lines from ARP table on the AP interface.
+# Every REACHABLE/STALE/DELAY neighbor becomes a pseudo-lease (name/client unknown).
+if [[ -z "$lease_data" ]]; then
+    # `ip neigh show dev <if>` output format: "<ip> lladdr <mac> <STATE>"
+    while read -r ip _lladdr_kw mac _state; do
+        [[ "$ip" =~ ^192\.168\.50\. ]] || continue
+        [[ "$_lladdr_kw" == "lladdr" ]] || continue
+        [[ "$mac" =~ ^[0-9a-fA-F:]{17}$ ]] || continue
+        lease_data+="0 ${mac} ${ip} * *"$'\n'
+    done < <(ip neigh show dev "$LAN_IF" 2>/dev/null | grep -E 'REACHABLE|STALE|DELAY|PROBE')
+    if [[ -n "$lease_data" ]]; then
+        source="arp-fallback"
+        echo "gp-leases: WARN lease file stale or unreadable, synthesized ${source} from ${LAN_IF}" >&2
+    fi
+fi
+
+if [[ "${1:-}" == "--source" ]]; then
+    echo "$source"
+    exit 0
+fi
+
+if [[ "${1:-}" == "--json" ]]; then
+    printf '['
+    first=1
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        read -r expiry mac ip name cid <<<"$line"
+        [[ -z "${ip:-}" ]] && continue
+        [[ $first -eq 1 ]] && first=0 || printf ','
+        printf '{"expiry":"%s","mac":"%s","ip":"%s","name":"%s","client_id":"%s","source":"%s"}' \
+            "${expiry:-0}" "${mac:-}" "${ip:-}" "${name:-*}" "${cid:-*}" "$source"
+    done <<<"$lease_data"
+    printf ']\n'
+    exit 0
+fi
+
+printf '%s' "$lease_data"

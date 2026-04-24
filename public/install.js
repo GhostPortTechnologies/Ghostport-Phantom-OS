@@ -81,6 +81,21 @@
     document.getElementById('cred-wifi-pw').textContent = data.wifi_password || '—';
     document.getElementById('cred-fleet').textContent = data.fleet_status || 'registered';
 
+    // Show TOTP setup if provided
+    if (data.totp && data.totp.qrDataUri) {
+      document.getElementById('cred-totp-qr').src = data.totp.qrDataUri;
+      document.getElementById('cred-totp-secret').textContent = data.totp.secret.replace(/(.{4})/g, '$1 ').trim();
+      var backupEl = document.getElementById('cred-totp-backup');
+      backupEl.textContent = '';
+      data.totp.backupCodes.forEach(function(c) {
+        var span = document.createElement('span');
+        span.style.padding = '1px 2px';
+        span.textContent = c;
+        backupEl.appendChild(span);
+      });
+      document.getElementById('totp-section').style.display = 'block';
+    }
+
     activateView.style.display = 'none';
     successView.style.display = 'block';
   }
@@ -88,14 +103,21 @@
   // Copy all credentials
   document.getElementById('copy-all-btn').addEventListener('click', function() {
     if (!credentials) return;
-    const text = [
+    var lines = [
       'GhostPort Device Credentials',
       '============================',
       'Passcode:      ' + (credentials.passcode || '—'),
       'WiFi Network:  ' + (credentials.wifi_ssid || '—'),
       'WiFi Password: ' + (credentials.wifi_password || '—'),
       'Fleet Status:  ' + (credentials.fleet_status || '—')
-    ].join('\n');
+    ];
+    if (credentials.totp) {
+      lines.push('');
+      lines.push('Two-Factor Auth (TOTP)');
+      lines.push('Secret Key:    ' + credentials.totp.secret);
+      lines.push('Backup Codes:  ' + credentials.totp.backupCodes.join(', '));
+    }
+    const text = lines.join('\n');
 
     copyToClipboard(text, this);
   });
@@ -132,5 +154,28 @@
       button.textContent = orig;
       button.classList.remove('copied');
     }, 1500);
+  }
+
+  // Skip activation — use without subscription
+  var skipLink = document.getElementById('skip-link');
+  if (skipLink) {
+    skipLink.addEventListener('click', async function(e) {
+      e.preventDefault();
+      try {
+        const res = await fetch('/api/fleet/skip-activation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (data.ok || res.status === 409) {
+          window.location.href = '/login.html';
+        } else {
+          errorMsg.textContent = data.error || 'Failed to skip activation';
+          errorMsg.style.display = 'block';
+        }
+      } catch {
+        window.location.href = '/login.html';
+      }
+    });
   }
 })();

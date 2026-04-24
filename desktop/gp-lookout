@@ -1,0 +1,644 @@
+#!/bin/bash
+# gp-lookout — Behavioral Baseline Monitor
+# Learns normal traffic patterns over 7 days, alerts on anomalies.
+# Daemon collects metrics; TUI viewer shows current-vs-baseline.
+#
+# Usage:
+#   gp-lookout             — interactive TUI viewer
+#   gp-lookout collect     — collect one sample (called by systemd timer)
+#   gp-lookout status      — one-shot baseline status
+#   gp-lookout reset       — clear all baseline data
+#   gp-lookout --help
+
+set -euo pipefail
+
+# ── Help guard ──────────────────────────────────────────
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'HELPEOF'
+gp-lookout — Behavioral Baseline Monitor
+
+Learns normal traffic patterns over 7 days. Compares current metrics
+to baseline and alerts on significant deviations.
+
+USAGE:
+  gp-lookout             Interactive TUI viewer
+  gp-lookout collect     Collect one data sample (for systemd timer)
+  gp-lookout status      One-shot baseline summary
+  gp-lookout reset       Clear all baseline data
+  gp-lookout --help      This help
+
+METRICS TRACKED:
+  - Bandwidth (RX/TX bytes per interface)
+  - DNS query rate (Pi-hole)
+  - Connected client count
+  - Conntrack flow count
+  - ARP table size
+
+CONTROLS (TUI mode):
+  r  Refresh now
+  p  Pause / resume auto-refresh
+  q  Quit
+
+NOTES:
+  - Needs 24+ hours of data before baselines are meaningful
+  - Data stored in /etc/phantom/baseline.json (200KB cap)
+  - Rolling 7-day window — old data pruned automatically
+HELPEOF
+    exit 0
+fi
+
+# Theme colors (mandatory — functions like gp_header depend on this)
+source /usr/local/lib/gp-theme-colors.sh || { echo "ERROR: gp-theme-colors.sh not found"; exit 1; }
+
+# ── Config ──────────────────────────────────────────────
+BASELINE_FILE="/etc/phantom/baseline.json"
+MAX_FILE_SIZE=204800  # 200KB
+REFRESH_INTERVAL=10
+PAUSED=false
+RUNNING=true
+
+# Metric names for display
+METRIC_NAMES=("bandwidth_rx" "bandwidth_tx" "dns_queries" "client_count" "flow_count" "arp_size")
+METRIC_LABELS=("Bandwidth RX" "Bandwidth TX" "DNS Queries/5m" "Connected Clients" "Active Flows" "ARP Table Size")
+
+# ── Helpers ─────────────────────────────────────────────
+ensure_baseline_file() {
+    if [[ ! -f "$BASELINE_FILE" ]]; then
+        sudo tee "$BASELINE_FILE" >/dev/null <<< '{"samples":[],"baselines":{}}'
+        sudo chmod 644 "$BASELINE_FILE"
+    fi
+}
+
+get_bandwidth() {
+    # Returns rx_bytes tx_bytes for primary interfaces
+    local rx=0 tx=0
+    for iface in eth0 wlan0 wg1; do
+        if [[ -d "/sys/class/net/$iface" ]]; then
+            local irx itx
+            irx=$(cat "/sys/class/net/$iface/statistics/rx_bytes" 2>/dev/null || echo 0)
+            itx=$(cat "/sys/class/net/$iface/statistics/tx_bytes" 2>/dev/null || echo 0)
+            rx=$((rx + irx))
+            tx=$((tx + itx))
+        fi
+    done
+    echo "$rx $tx"
+}
+
+get_dns_queries() {
+    # Pi-hole total queries (current) — timeout wraps the full pipeline
+    local q
+    q=$(timeout 10 bash -c 'curl -s --max-time 3 "http://localhost/admin/api.php?summary" 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get(\"dns_queries_today\",0))"' 2>/dev/null) || q=0
+    echo "$q"
+}
+
+get_client_count() {
+    local c
+    c=$(arp -an 2>/dev/null | grep -c 'ether') || c=0
+    echo "$c"
+}
+
+get_flow_count() {
+    # NOTE: Requires sudo access to conntrack. The ghostport-admin user has
+    # passwordless sudo configured for gp-* commands and system utilities.
+    # If sudo conntrack is not in sudoers, this will return 0 gracefully.
+    local f
+    f=$(timeout 5 sudo conntrack -C 2>/dev/null) || f=0
+    echo "$f"
+}
+
+get_arp_size() {
+    local a
+    a=$(arp -an 2>/dev/null | wc -l) || a=0
+    echo "$a"
+}
+
+fmt_bytes() {
+    local b=$1
+    if ((b >= 1073741824)); then
+        printf "%d.%dG" "$((b / 1073741824))" "$((b % 1073741824 * 10 / 1073741824))"
+    elif ((b >= 1048576)); then
+        printf "%d.%dM" "$((b / 1048576))" "$((b % 1048576 * 10 / 1048576))"
+    elif ((b >= 1024)); then
+        printf "%d.%dK" "$((b / 1024))" "$((b % 1024 * 10 / 1024))"
+    else
+        printf "%d" "$b"
+    fi
+}
+
+# ── Collect mode ────────────────────────────────────────
+do_collect() {
+    ensure_baseline_file
+
+    local ts
+    ts=$(date +%s)
+    local hour
+    hour=$(date +%H)
+    local dow
+    dow=$(date +%u)  # 1=Mon, 7=Sun
+
+    # Read raw cumulative counters
+    read -r raw_rx raw_tx <<< "$(get_bandwidth)"
+    local raw_dns client_c flow_c arp_s
+    raw_dns=$(get_dns_queries)
+    client_c=$(get_client_count)
+    flow_c=$(get_flow_count)
+    arp_s=$(get_arp_size)
+
+    # Compute deltas for cumulative counters (bandwidth, DNS)
+    # Read previous raw values from baseline file
+    local prev_rx=0 prev_tx=0 prev_dns=0
+    if [[ -f "$BASELINE_FILE" ]]; then
+        read -r prev_rx prev_tx prev_dns <<< "$(python3 -c "
+import json
+try:
+    with open('$BASELINE_FILE') as f:
+        d = json.load(f)
+    r = d.get('prev_raw', {})
+    print(r.get('rx', 0), r.get('tx', 0), r.get('dns', 0))
+except:
+    print(0, 0, 0)
+" 2>/dev/null)" || true
+    fi
+
+    # Delta = current - previous (handle counter reset/reboot: if negative, use raw)
+    local bw_rx=0 bw_tx=0 dns_q=0
+    if ((prev_rx > 0 && raw_rx >= prev_rx)); then
+        bw_rx=$((raw_rx - prev_rx))
+    else
+        bw_rx=$raw_rx  # First sample or reboot — store raw as-is
+    fi
+    if ((prev_tx > 0 && raw_tx >= prev_tx)); then
+        bw_tx=$((raw_tx - prev_tx))
+    else
+        bw_tx=$raw_tx
+    fi
+    if ((prev_dns > 0 && raw_dns >= prev_dns)); then
+        dns_q=$((raw_dns - prev_dns))
+    elif ((prev_dns > 0 && raw_dns < prev_dns)); then
+        # Midnight reset: raw_dns is the count since midnight.
+        # If small (<1000), it just reset — use it as the delta.
+        # If large, something is off — report 0 to avoid false anomaly spike.
+        if ((raw_dns < 1000)); then
+            dns_q=$raw_dns
+        else
+            dns_q=0
+        fi
+    else
+        dns_q=$raw_dns  # First sample — store raw as-is
+    fi
+
+    # Build sample JSON (deltas for bandwidth/DNS, snapshots for others)
+    local sample
+    sample=$(printf '{"ts":%d,"hour":%d,"dow":%d,"bandwidth_rx":%d,"bandwidth_tx":%d,"dns_queries":%d,"client_count":%d,"flow_count":%d,"arp_size":%d}' \
+        "$ts" "$hour" "$dow" "$bw_rx" "$bw_tx" "$dns_q" "$client_c" "$flow_c" "$arp_s")
+
+    # Append sample and prune old data (>7 days), recalculate baselines
+    # NOTE: Shell variables interpolated into Python below are all integers or fixed
+    # filesystem paths (no user input), so shell injection is not a concern here.
+    # Using sudo -E with env vars is not viable because sudo strips the environment.
+    sudo python3 -c "
+import json, sys, os
+
+BASELINE_FILE = '$BASELINE_FILE'
+MAX_SIZE = $MAX_FILE_SIZE
+WEEK = 7 * 86400
+now = $ts
+
+try:
+    with open(BASELINE_FILE, 'r') as f:
+        data = json.load(f)
+except:
+    data = {'samples': [], 'baselines': {}}
+
+# Add new sample
+sample = $sample
+data['samples'].append(sample)
+
+# Prune samples older than 7 days
+data['samples'] = [s for s in data['samples'] if now - s.get('ts', 0) < WEEK]
+
+# Cap at 2016 samples (~7 days at 5 min intervals)
+if len(data['samples']) > 2016:
+    data['samples'] = data['samples'][-2016:]
+
+# Recalculate baselines (per-hour averages)
+metrics = ['bandwidth_rx', 'bandwidth_tx', 'dns_queries', 'client_count', 'flow_count', 'arp_size']
+baselines = {}
+for m in metrics:
+    hourly = {}
+    for s in data['samples']:
+        h = s.get('hour', 0)
+        if h not in hourly:
+            hourly[h] = []
+        hourly[h].append(s.get(m, 0))
+    avg = {}
+    p90 = {}
+    for h, vals in hourly.items():
+        vals_sorted = sorted(vals)
+        avg[str(h)] = int(sum(vals) / len(vals))
+        idx = int(len(vals_sorted) * 0.9)
+        p90[str(h)] = vals_sorted[min(idx, len(vals_sorted)-1)]
+    baselines[m] = {'avg': avg, 'p90': p90}
+data['baselines'] = baselines
+data['sample_count'] = len(data['samples'])
+data['last_collect'] = now
+data['prev_raw'] = {'rx': $raw_rx, 'tx': $raw_tx, 'dns': $raw_dns}
+
+# Size check
+output = json.dumps(data, separators=(',', ':'))
+if len(output) > MAX_SIZE:
+    # Prune oldest quarter of samples
+    cut = len(data['samples']) // 4
+    data['samples'] = data['samples'][cut:]
+    output = json.dumps(data, separators=(',', ':'))
+
+with open(BASELINE_FILE, 'w') as f:
+    f.write(output)
+" 2>/dev/null
+
+    # Check for anomalies and notify
+    check_anomalies "$bw_rx" "$bw_tx" "$dns_q" "$client_c" "$flow_c" "$arp_s"
+}
+
+check_anomalies() {
+    local bw_rx=$1 bw_tx=$2 dns_q=$3 client_c=$4 flow_c=$5 arp_s=$6
+    local hour
+    hour=$(date +%H)
+
+    # Read baselines
+    # NOTE: Shell interpolation is safe — all values are integers or fixed paths (no user input).
+    local baselines
+    baselines=$(python3 -c "
+import json
+try:
+    with open('$BASELINE_FILE', 'r') as f:
+        data = json.load(f)
+    b = data.get('baselines', {})
+    sc = data.get('sample_count', 0)
+    if sc < 288:  # Need 24h minimum (288 samples at 5min)
+        print('INSUFFICIENT')
+    else:
+        # Check each metric against p90 baseline
+        alerts = []
+        metrics = [('bandwidth_rx', $bw_rx, 'RX Bandwidth'),
+                   ('bandwidth_tx', $bw_tx, 'TX Bandwidth'),
+                   ('dns_queries', $dns_q, 'DNS Queries'),
+                   ('client_count', $client_c, 'Client Count'),
+                   ('flow_count', $flow_c, 'Active Flows'),
+                   ('arp_size', $arp_s, 'ARP Table')]
+        for key, val, label in metrics:
+            if key in b and '$hour' in b[key].get('p90', {}):
+                p90 = b[key]['p90']['$hour']
+                if p90 > 0 and val > p90 * 2:
+                    alerts.append(f'{label}: {val} (baseline p90: {p90})')
+        if alerts:
+            print('ALERT:' + '|'.join(alerts))
+        else:
+            print('OK')
+except Exception as e:
+    print('ERROR')
+" 2>/dev/null) || return 0
+
+    if [[ "$baselines" == ALERT:* ]]; then
+        local alert_text="${baselines#ALERT:}"
+        IFS='|' read -ra alert_items <<< "$alert_text"
+        for item in "${alert_items[@]}"; do
+            notify-send -u critical "GhostPort Lookout" "Anomaly: $item" 2>/dev/null || true
+        done
+    fi
+}
+
+# ── Status mode ─────────────────────────────────────────
+do_status() {
+    ensure_baseline_file
+    gp_header "LOOKOUT — Baseline Status"
+
+    python3 -c "
+import json, time
+try:
+    with open('$BASELINE_FILE', 'r') as f:
+        data = json.load(f)
+except:
+    data = {'samples': [], 'baselines': {}}
+
+sc = len(data.get('samples', []))
+last = data.get('last_collect', 0)
+hours = sc * 5 / 60 if sc > 0 else 0
+
+print(f'  Samples collected:  {sc}')
+print(f'  Data span:          {hours:.1f} hours')
+if last > 0:
+    ago = int(time.time() - last)
+    if ago < 60:
+        print(f'  Last collection:    {ago}s ago')
+    elif ago < 3600:
+        print(f'  Last collection:    {ago//60}m ago')
+    else:
+        print(f'  Last collection:    {ago//3600}h {(ago%3600)//60}m ago')
+else:
+    print('  Last collection:    never')
+
+if sc < 288:
+    needed = 288 - sc
+    print(f'  Baseline status:    Learning ({needed} more samples needed)')
+else:
+    print('  Baseline status:    Active')
+
+# Show current baselines for this hour
+import datetime
+hour = str(datetime.datetime.now().hour)
+baselines = data.get('baselines', {})
+if baselines:
+    print()
+    print('  Current hour baselines (avg / p90):')
+    labels = {'bandwidth_rx': 'RX Bandwidth', 'bandwidth_tx': 'TX Bandwidth',
+              'dns_queries': 'DNS Queries', 'client_count': 'Clients',
+              'flow_count': 'Flows', 'arp_size': 'ARP Size'}
+    for key, label in labels.items():
+        if key in baselines and hour in baselines[key].get('avg', {}):
+            avg = baselines[key]['avg'][hour]
+            p90 = baselines[key]['p90'].get(hour, 0)
+            print(f'    {label:20s} {avg:>10} / {p90:>10}')
+" 2>/dev/null
+
+    echo
+}
+
+# ── Reset mode ──────────────────────────────────────────
+do_reset() {
+    if gp_confirm "Clear all baseline data?"; then
+        sudo tee "$BASELINE_FILE" >/dev/null <<< '{"samples":[],"baselines":{}}'
+        echo -e "  ${SUCCESS}Baseline data cleared.${RESET}"
+    else
+        echo -e "  ${TEXT_DIM}Cancelled.${RESET}"
+    fi
+}
+
+# ── TUI viewer ──────────────────────────────────────────
+draw_viewer() {
+    local rows cols
+    rows=$(tput lines)
+    cols=$(tput cols)
+
+    tput cup 0 0
+    tput ed
+
+    # Header
+    echo -e "  ${BOLD}${AC}╔$(printf '═%.0s' $(seq 1 $((cols - 6))))╗${RESET}"
+    printf "  ${BOLD}${AC}║  🔭 LOOKOUT — Behavioral Baseline%-$((cols - 40))s║${RESET}\n" ""
+    echo -e "  ${BOLD}${AC}╚$(printf '═%.0s' $(seq 1 $((cols - 6))))╝${RESET}"
+
+    # Load baseline data (use cache if file hasn't changed)
+    local viewer_data
+    current_mtime=$(stat -c %Y "$BASELINE_FILE" 2>/dev/null || echo 0)
+    if [[ "$current_mtime" != "$last_mtime" || -z "$cached_viewer_data" ]]; then
+        last_mtime="$current_mtime"
+        cached_viewer_data=$(python3 -c "
+import json, time, datetime
+
+try:
+    with open('$BASELINE_FILE', 'r') as f:
+        data = json.load(f)
+except:
+    data = {'samples': [], 'baselines': {}}
+
+sc = len(data.get('samples', []))
+last = data.get('last_collect', 0)
+hour = str(datetime.datetime.now().hour)
+baselines = data.get('baselines', {})
+hours_span = sc * 5 / 60 if sc > 0 else 0
+mature = sc >= 288
+
+# Get latest sample
+latest = data['samples'][-1] if data.get('samples') else {}
+
+print(f'SAMPLES={sc}')
+print(f'HOURS={hours_span:.1f}')
+print(f'MATURE={\"yes\" if mature else \"no\"}')
+
+if last > 0:
+    ago = int(time.time() - last)
+    print(f'LAST_AGO={ago}')
+else:
+    print('LAST_AGO=-1')
+
+# Output current values and baselines for each metric
+metrics = ['bandwidth_rx', 'bandwidth_tx', 'dns_queries', 'client_count', 'flow_count', 'arp_size']
+for m in metrics:
+    current = latest.get(m, 0)
+    avg = 0
+    p90 = 0
+    if m in baselines and hour in baselines[m].get('avg', {}):
+        avg = baselines[m]['avg'][hour]
+        p90 = baselines[m].get('p90', {}).get(hour, 0)
+    deviation = 0
+    if avg > 0:
+        deviation = int((current - avg) * 100 / avg)
+    print(f'METRIC|{m}|{current}|{avg}|{p90}|{deviation}')
+" 2>/dev/null) || cached_viewer_data=""
+    fi
+    viewer_data="$cached_viewer_data"
+
+    # Parse viewer data
+    local samples=0 hours_span="0.0" mature="no" last_ago=-1
+    declare -A CURR AVG P90 DEV
+
+    while IFS= read -r line; do
+        case "$line" in
+            SAMPLES=*) samples="${line#SAMPLES=}" ;;
+            HOURS=*) hours_span="${line#HOURS=}" ;;
+            MATURE=*) mature="${line#MATURE=}" ;;
+            LAST_AGO=*) last_ago="${line#LAST_AGO=}" ;;
+            METRIC\|*)
+                IFS='|' read -r _ name curr avg p90 dev <<< "$line"
+                CURR[$name]=$curr
+                AVG[$name]=$avg
+                P90[$name]=$p90
+                DEV[$name]=$dev
+                ;;
+        esac
+    done <<< "$viewer_data"
+
+    # Status bar
+    local last_str="never"
+    if ((last_ago >= 0 && last_ago < 60)); then
+        last_str="${last_ago}s ago"
+    elif ((last_ago >= 60 && last_ago < 3600)); then
+        last_str="$((last_ago / 60))m ago"
+    elif ((last_ago >= 3600)); then
+        last_str="$((last_ago / 3600))h ago"
+    fi
+
+    local status_color="$WARNING"
+    [[ "$mature" == "yes" ]] && status_color="$SUCCESS"
+
+    local status_pause=""
+    $PAUSED && status_pause=" ${WARNING}[PAUSED]${RESET}"
+
+    printf "  ${AC}Samples:${RESET} ${TEXT}%s${RESET}  ${AC}Span:${RESET} ${TEXT}%sh${RESET}  ${AC}Last:${RESET} ${TEXT}%s${RESET}  ${AC}Status:${RESET} %b%s${RESET}%b\n" \
+        "$samples" "$hours_span" "$last_str" "$status_color" \
+        "$([[ "$mature" == "yes" ]] && echo "Active" || echo "Learning")" \
+        "$status_pause"
+    echo -e "  ${AC_DIM}$(printf '─%.0s' $(seq 1 $((cols - 4))))${RESET}"
+
+    # Metric display
+    if [[ "$samples" == "0" ]]; then
+        echo
+        echo -e "  ${TEXT_DIM}No data collected yet.${RESET}"
+        echo -e "  ${TEXT_DIM}Run 'gp-lookout collect' or wait for the systemd timer.${RESET}"
+    else
+        echo
+        printf "  ${BOLD}${AC}%-20s %10s %10s %10s  %-20s${RESET}\n" \
+            "METRIC" "CURRENT" "AVG" "P90" "DEVIATION"
+        echo -e "  ${AC_DIM}$(printf '─%.0s' $(seq 1 $((cols - 4))))${RESET}"
+
+        local labels=("Bandwidth RX" "Bandwidth TX" "DNS Queries" "Connected Clients" "Active Flows" "ARP Table Size")
+        local keys=("bandwidth_rx" "bandwidth_tx" "dns_queries" "client_count" "flow_count" "arp_size")
+
+        for i in "${!keys[@]}"; do
+            local key="${keys[$i]}"
+            local label="${labels[$i]}"
+            local curr="${CURR[$key]:-0}"
+            local avg="${AVG[$key]:-0}"
+            local p90="${P90[$key]:-0}"
+            local dev="${DEV[$key]:-0}"
+
+            # Format values (bandwidth in human-readable)
+            local curr_fmt="$curr" avg_fmt="$avg" p90_fmt="$p90"
+            if [[ "$key" == bandwidth_* ]]; then
+                curr_fmt=$(fmt_bytes "$curr")
+                avg_fmt=$(fmt_bytes "$avg")
+                p90_fmt=$(fmt_bytes "$p90")
+            fi
+
+            # Deviation color and bar
+            local dev_color="$TEXT"
+            local dev_indicator=""
+            if [[ "$mature" == "yes" && "$avg" != "0" ]]; then
+                if ((dev > 100)); then
+                    dev_color="$DANGER"
+                    dev_indicator="▲▲ +${dev}%"
+                elif ((dev > 50)); then
+                    dev_color="$WARNING"
+                    dev_indicator="▲  +${dev}%"
+                elif ((dev > 0)); then
+                    dev_color="$SUCCESS"
+                    dev_indicator="▲  +${dev}%"
+                elif ((dev < -50)); then
+                    dev_color="$WARNING"
+                    dev_indicator="▼  ${dev}%"
+                elif ((dev < 0)); then
+                    dev_color="$TEXT_DIM"
+                    dev_indicator="▼  ${dev}%"
+                else
+                    dev_indicator="=  0%"
+                fi
+            elif [[ "$mature" != "yes" ]]; then
+                dev_indicator="—  learning"
+                dev_color="$TEXT_DIM"
+            fi
+
+            printf "  ${AC}%-20s${RESET} ${TEXT}%10s${RESET} ${TEXT_DIM}%10s${RESET} ${TEXT_DIM}%10s${RESET}  %b%-20s${RESET}\n" \
+                "$label" "$curr_fmt" "$avg_fmt" "$p90_fmt" "$dev_color" "$dev_indicator"
+        done
+
+        # Visual deviation bars
+        if [[ "$mature" == "yes" ]]; then
+            echo
+            echo -e "  ${BOLD}${AC}Deviation Bars:${RESET}"
+            echo -e "  ${AC_DIM}$(printf '─%.0s' $(seq 1 $((cols - 4))))${RESET}"
+
+            for i in "${!keys[@]}"; do
+                local key="${keys[$i]}"
+                local label="${labels[$i]}"
+                local dev="${DEV[$key]:-0}"
+
+                # Clamp to -100..200 for display
+                local bar_val=$((dev + 100))
+                ((bar_val < 0)) && bar_val=0
+                ((bar_val > 300)) && bar_val=300
+
+                local bar_width=40
+                local center=$((bar_width * 100 / 300))
+                local pos=$((bar_val * bar_width / 300))
+
+                local bar=""
+                local bc="$SUCCESS"
+                ((dev > 50)) && bc="$WARNING"
+                ((dev > 100)) && bc="$DANGER"
+                ((dev < -50)) && bc="$WARNING"
+
+                for ((j=0; j<bar_width; j++)); do
+                    if ((j == center)); then
+                        bar+="│"
+                    elif ((j >= center && j <= pos && dev >= 0)); then
+                        bar+="█"
+                    elif ((j <= center && j >= pos && dev < 0)); then
+                        bar+="█"
+                    else
+                        bar+="░"
+                    fi
+                done
+
+                printf "  %-18s %b%s${RESET}\n" "$label" "$bc" "$bar"
+            done
+        fi
+    fi
+
+    # Footer
+    tput cup $((rows - 1)) 0
+    echo -ne "  ${TEXT_DIM}[r]efresh [p]ause [q]uit${RESET}"
+}
+
+# ── Dispatch ────────────────────────────────────────────
+case "${1:-}" in
+    collect)
+        do_collect
+        exit 0
+        ;;
+    status)
+        do_status
+        exit 0
+        ;;
+    reset)
+        do_reset
+        exit 0
+        ;;
+esac
+
+# ── Interactive TUI ─────────────────────────────────────
+cleanup() {
+    RUNNING=false
+    tput cnorm 2>/dev/null
+    tput rmcup 2>/dev/null
+    stty echo 2>/dev/null
+    echo -e "${RESET:-}"
+}
+trap cleanup EXIT INT TERM
+
+tput smcup
+tput civis
+stty -echo
+
+ensure_baseline_file
+
+last_refresh=0
+last_mtime=0
+cached_viewer_data=""
+
+while $RUNNING; do
+    local_now=$(date +%s)
+
+    if ! $PAUSED && ((local_now - last_refresh >= REFRESH_INTERVAL)); then
+        draw_viewer
+        last_refresh=$local_now
+    fi
+
+    if read -r -n1 -t 1 key 2>/dev/null; then
+        case "$key" in
+            q|Q) break ;;
+            r|R) last_refresh=0 ;;
+            p|P) $PAUSED && PAUSED=false || PAUSED=true ;;
+        esac
+    fi
+done

@@ -6,18 +6,30 @@ define LAN_SUBNET = "192.168.50.0/24"
 
 table inet management {
     chain input {
-        type filter hook input priority -100; policy accept;
+        type filter hook input priority -100; policy drop;
         iifname "lo" accept
         ct state established,related accept
         ct state invalid drop
+        # SSH from LAN and Tailscale only
         iifname { $LAN_IF, $TS_IF } tcp dport 22 accept
+        # Dashboard from LAN, Tailscale, localhost
         iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201, 4202 } accept
+        # Tailscale WireGuard (peer discovery)
         udp dport 41641 accept
+        # DNS + DHCP from LAN (Pi-hole)
         iifname $LAN_IF udp dport { 53, 67 } accept
         iifname $LAN_IF tcp dport { 53, 80 } accept
+        # Pi-hole admin + DNS from Tailscale
         iifname $TS_IF tcp dport { 53, 80 } accept
         iifname $TS_IF udp dport 53 accept
-        # Log dropped packets for anomaly detection (rate-limited)
+        # WireGuard tunnel traffic (when doublehop/zhop active)
+        iifname $WG_IF accept
+        # ICMP (ping, path MTU discovery)
+        ip protocol icmp accept
+        ip6 nexthdr icmpv6 accept
+        # DHCP client on WAN (needed for both eth0 and wlan1)
+        iifname $WAN_IF udp sport 67 udp dport 68 accept
+        # Log dropped packets (rate-limited)
         limit rate 5/minute log prefix "[GhostPort-DROP] " level warn
     }
 }

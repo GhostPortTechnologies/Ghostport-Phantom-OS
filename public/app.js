@@ -657,6 +657,132 @@
   // Poll status every 5 seconds (faster to catch rollback countdown)
   setInterval(fetchStatus, 5000);
 
+  // ── Traffic Monitor ──────────────────────────────────────────
+
+  // DECISION: Poll every 2s as requested. The /rate endpoint itself takes ~1s (server-side delta),
+  // so effective update cycle is ~3s. This avoids overlapping requests.
+  const TM_IFACE_LABELS = { eth0: "WAN", wlan0: "AP", wg0: "Control", wg1: "Data Tunnel", tailscale0: "Tailscale" };
+  const TM_IFACE_ORDER = ["eth0", "wlan0", "wg1", "wg0", "tailscale0"];
+  let tmInterval = null;
+  let tmFetching = false;
+
+  function isBandwidthVisible() {
+    const section = document.getElementById("bandwidth-section");
+    if (!section) return false;
+    // Hidden if simple mode is active (tech-only elements are display:none)
+    if (document.body.classList.contains("simple-mode")) return false;
+    // Check if element is visible in viewport (not scrolled away — but we poll anyway if section exists)
+    return section.offsetParent !== null;
+  }
+
+  function formatTmRate(humanStr) {
+    // humanStr is like "1.23 Mbps" or "456 Kbps" or "0 bps"
+    if (!humanStr) return { val: "0", unit: "bps" };
+    const parts = humanStr.split(" ");
+    return { val: parts[0] || "0", unit: parts[1] || "bps" };
+  }
+
+  async function fetchTrafficData() {
+    if (tmFetching) return; // skip if previous request still in flight
+    tmFetching = true;
+    const dot = document.getElementById("tm-dot");
+    const rxEl = document.getElementById("tm-rx-total");
+    const txEl = document.getElementById("tm-tx-total");
+    const ifacesEl = document.getElementById("tm-ifaces");
+    const errorsEl = document.getElementById("tm-errors");
+
+    try {
+      const res = await fetch(API + "/api/tools/bandwidth/rate");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "unknown");
+
+      // Update live dot
+      if (dot) { dot.classList.add("live"); dot.classList.remove("offline"); }
+
+      // Total throughput
+      const rxTotal = formatTmRate(data.total.rx_rate_human);
+      const txTotal = formatTmRate(data.total.tx_rate_human);
+      if (rxEl) rxEl.innerHTML = esc(rxTotal.val) + '<span class="tm-total-unit">' + esc(rxTotal.unit) + '</span>';
+      if (txEl) txEl.innerHTML = esc(txTotal.val) + '<span class="tm-total-unit">' + esc(txTotal.unit) + '</span>';
+
+      // Find max rate for bar scaling
+      let maxRate = 0;
+      for (const iface of TM_IFACE_ORDER) {
+        const d = data.interfaces[iface];
+        if (!d) continue;
+        maxRate = Math.max(maxRate, d.rx_rate_bps, d.tx_rate_bps);
+      }
+      if (maxRate === 0) maxRate = 1; // avoid division by zero
+
+      // Per-interface rows
+      let html = "";
+      let errorParts = [];
+      for (const iface of TM_IFACE_ORDER) {
+        const d = data.interfaces[iface];
+        const label = TM_IFACE_LABELS[iface] || iface;
+        const isDim = !d || (d.rx_rate_bps === 0 && d.tx_rate_bps === 0);
+        const dimCls = isDim ? " dim" : "";
+        const rxH = d ? formatTmRate(d.rx_rate_human) : { val: "---", unit: "" };
+        const txH = d ? formatTmRate(d.tx_rate_human) : { val: "---", unit: "" };
+        const barPct = d ? Math.max(d.rx_rate_bps, d.tx_rate_bps) / maxRate * 100 : 0;
+
+        html += '<div class="tm-iface-row">';
+        html += '<div class="tm-iface-name' + dimCls + '">' + esc(label) + '<br><span class="tm-iface-label">' + esc(iface) + '</span></div>';
+        html += '<div class="tm-bar-wrap"><div class="tm-bar' + dimCls + '" style="width:' + barPct.toFixed(1) + '%"></div></div>';
+        html += '<div class="tm-rate tm-rate-rx' + dimCls + '"><span class="tm-arrow">▼</span>' + esc(rxH.val) + ' ' + esc(rxH.unit) + '</div>';
+        html += '<div class="tm-rate tm-rate-tx' + dimCls + '"><span class="tm-arrow">▲</span>' + esc(txH.val) + ' ' + esc(txH.unit) + '</div>';
+        html += '</div>';
+
+        // Collect errors/drops (only non-zero)
+        if (d) {
+          const totalErr = (d.rx_errors || 0) + (d.tx_errors || 0);
+          const totalDrop = (d.rx_dropped || 0) + (d.tx_dropped || 0);
+          if (totalErr > 0) errorParts.push('<span class="has-errors">' + esc(label) + ': ' + totalErr + ' err</span>');
+          if (totalDrop > 0) errorParts.push('<span class="has-errors">' + esc(label) + ': ' + totalDrop + ' drop</span>');
+        }
+      }
+      if (ifacesEl) ifacesEl.innerHTML = html;
+
+      // Error/drop counters
+      if (errorsEl) {
+        if (errorParts.length > 0) {
+          errorsEl.innerHTML = errorParts.join("");
+          errorsEl.style.display = "block";
+        } else {
+          errorsEl.style.display = "none";
+        }
+      }
+    } catch (e) {
+      // Show offline state
+      if (dot) { dot.classList.remove("live"); dot.classList.add("offline"); }
+      if (rxEl) rxEl.textContent = "---";
+      if (txEl) txEl.textContent = "---";
+      if (ifacesEl) ifacesEl.innerHTML = '<div class="tm-offline">OFFLINE — waiting for data</div>';
+      if (errorsEl) errorsEl.style.display = "none";
+    }
+    tmFetching = false;
+  }
+
+  function startTrafficMonitor() {
+    if (tmInterval) return;
+    fetchTrafficData(); // initial fetch
+    tmInterval = setInterval(function() {
+      // DECISION: Only poll when bandwidth section is visible to save CPU/network on Pi
+      if (isBandwidthVisible()) {
+        fetchTrafficData();
+      }
+    }, 2000);
+  }
+
+  function stopTrafficMonitor() {
+    if (tmInterval) { clearInterval(tmInterval); tmInterval = null; }
+  }
+
+  // Start traffic monitor after initial status fetch completes
+  // DECISION: Small delay (2s) so the dashboard loads first, then traffic monitor kicks in
+  setTimeout(startTrafficMonitor, 2000);
+
   // ── WiFi Network ──────────────────────────────────────────
 
   function toggleWifiPassVisibility() {

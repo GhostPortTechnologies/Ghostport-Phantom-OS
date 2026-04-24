@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>GhostPort — User Guide</title>
+<meta name="description" content="The complete beginner-friendly guide to using your GhostPort privacy router. No tech knowledge required."/>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --green: #39ff8f; --green-dim: #1a6a3a; --green-glow: #39ff8f44;
+    --bg: #060a06; --bg2: #0a140a; --bg3: #0d1f0d;
+    --border: #1a2e1a; --text: #c8f0c8; --text-dim: #4a7a4a; --text-faint: #2a4a2a;
+    --red: #ff4444; --amber: #ffaa00;
+  }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.8; padding: 0;
+  }
+  body::before {
+    content: ''; position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.03) 2px, rgba(0,0,0,0.03) 4px);
+    pointer-events: none; z-index: 999;
+  }
+  .guide { max-width: 720px; margin: 0 auto; padding: 32px 20px 60px; }
+  .back { display: inline-block; font-size: 13px; color: var(--text-dim); text-decoration: none; margin-bottom: 20px; }
+  .back:hover { color: var(--green); }
+  h1 { font-size: 28px; font-weight: 800; color: var(--green); letter-spacing: 2px; margin-bottom: 4px; }
+  .subtitle { font-size: 14px; color: var(--text-dim); margin-bottom: 32px; }
+  h2 {
+    font-size: 20px; color: var(--green); margin: 40px 0 16px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); letter-spacing: 1px;
+  }
+  h3 { font-size: 15px; color: #fff; margin: 24px 0 8px; }
+  p { font-size: 14px; color: var(--text-dim); margin: 10px 0; }
+  a { color: var(--green); }
+
+  .warning {
+    background: rgba(255,68,68,0.08); border: 1px solid rgba(255,68,68,0.3);
+    border-left: 4px solid var(--red); padding: 16px 18px; margin: 20px 0;
+    border-radius: 4px;
+  }
+  .warning strong { color: var(--red); }
+  .warning p { color: var(--text); margin: 4px 0; }
+
+  .tip {
+    background: rgba(57,255,143,0.06); border: 1px solid var(--green-dim);
+    border-left: 4px solid var(--green); padding: 16px 18px; margin: 20px 0;
+    border-radius: 4px;
+  }
+  .tip strong { color: var(--green); }
+  .tip p { color: var(--text); margin: 4px 0; }
+
+  .step-list { list-style: none; padding: 0; counter-reset: steps; }
+  .step-list li {
+    counter-increment: steps; position: relative;
+    padding: 12px 16px 12px 52px; margin: 8px 0;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 14px; color: var(--text);
+  }
+  .step-list li::before {
+    content: counter(steps); position: absolute; left: 14px; top: 12px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--green); color: var(--bg); font-weight: 700;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+  }
+
+  .mode-card {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 18px; margin: 10px 0;
+  }
+  .mode-card .mode-name { font-size: 16px; font-weight: 700; color: var(--green); margin-bottom: 4px; }
+  .mode-card .mode-desc { font-size: 13px; color: var(--text-dim); }
+  .mode-card .mode-score { font-size: 12px; color: var(--text-faint); margin-top: 6px; }
+
+  .faq { margin: 12px 0; }
+  .faq-q {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 14px 18px; cursor: pointer; font-size: 14px; color: #fff;
+    position: relative; padding-right: 40px;
+  }
+  .faq-q::after { content: '+'; position: absolute; right: 16px; top: 14px; color: var(--green); font-size: 18px; }
+  .faq-q.open::after { content: '-'; }
+  .faq-a {
+    display: none; padding: 14px 18px; font-size: 13px; color: var(--text-dim);
+    border: 1px solid var(--border); border-top: none; border-radius: 0 0 6px 6px;
+    background: var(--bg3);
+  }
+  .faq-a.open { display: block; }
+
+  .device-steps { margin: 12px 0; }
+  .device-steps summary {
+    font-size: 14px; color: var(--green); cursor: pointer; padding: 8px 0;
+    list-style: none;
+  }
+  .device-steps summary::before { content: '> '; }
+  .device-steps[open] summary::before { content: 'v '; }
+  .device-steps .inner { padding: 8px 0 8px 16px; font-size: 13px; color: var(--text-dim); }
+  .device-steps .inner ol { padding-left: 20px; }
+  .device-steps .inner ol li { margin: 6px 0; }
+
+  .toc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; margin: 24px 0; }
+  .toc-title { font-size: 12px; color: var(--green); letter-spacing: 2px; margin-bottom: 10px; text-transform: uppercase; }
+  .toc a { display: block; font-size: 14px; color: var(--text-dim); text-decoration: none; padding: 4px 0; }
+  .toc a:hover { color: var(--green); }
+
+  @media print {
+    body { background: #fff; color: #111; }
+    body::before { display: none; }
+    .back { display: none; }
+    h1 { color: #1a7a45; }
+    h2 { color: #1a7a45; border-color: #ccc; }
+    h3 { color: #333; }
+    p { color: #444; }
+    .warning { border-color: #cc3333; background: #fff5f5; }
+    .tip { border-color: #1a7a45; background: #f0f9f0; }
+    .step-list li { background: #f9f9f9; border-color: #ddd; color: #333; }
+    .mode-card { background: #f9f9f9; border-color: #ddd; }
+    .mode-card .mode-name { color: #1a7a45; }
+    .toc { background: #f5f5f5; border-color: #ddd; }
+  }
+</style>
+</head>
+<body>
+<div class="guide">
+
+<a href="/" class="back">&larr; Back to Dashboard</a>
+
+<h1>GhostPort User Guide</h1>
+<p class="subtitle">Everything you need to know to use your GhostPort privacy router. Written for humans, not engineers.</p>
+
+<div class="toc">
+  <div class="toc-title">Table of Contents</div>
+  <a href="#first-things-first">1. First Things First</a>
+  <a href="#connecting">2. Connecting Your Devices</a>
+  <a href="#dashboard">3. Using the Dashboard</a>
+  <a href="#modes">4. Privacy Modes (The Big Feature)</a>
+  <a href="#family-shield">5. Family Shield (Parental Controls)</a>
+  <a href="#tools">6. Security Tools</a>
+  <a href="#wifi-settings">7. WiFi Settings</a>
+  <a href="#pwa">8. Installing the App</a>
+  <a href="#troubleshooting">9. Troubleshooting</a>
+  <a href="#faq">10. Frequently Asked Questions</a>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="first-things-first">1. First Things First</h2>
+
+<div class="warning">
+  <strong>IMPORTANT: Turn off cellular data on your phone.</strong>
+  <p>GhostPort only protects traffic that goes through its WiFi. If your phone's cellular data (4G/5G) is turned on, your phone may use that instead of WiFi &mdash; especially for background apps. This means ads and trackers will get through because they're bypassing GhostPort entirely.</p>
+  <p><strong>This is the #1 reason people think GhostPort "isn't working."</strong> It IS working &mdash; your phone is just using a different road.</p>
+</div>
+
+<h3>How to turn off cellular data:</h3>
+
+<details class="device-steps">
+  <summary>iPhone / iPad</summary>
+  <div class="inner">
+    <ol>
+      <li>Open <strong>Settings</strong></li>
+      <li>Tap <strong>Cellular</strong> (or <strong>Mobile Data</strong> outside the US)</li>
+      <li>Turn OFF the <strong>Cellular Data</strong> toggle at the top</li>
+      <li>You'll still receive calls and texts &mdash; only internet traffic is affected</li>
+    </ol>
+    <p style="margin-top:8px">Alternatively, you can leave cellular on but disable it for specific apps &mdash; scroll down in the same screen and toggle off apps individually.</p>
+  </div>
+</details>
+
+<details class="device-steps">
+  <summary>Android</summary>
+  <div class="inner">
+    <ol>
+      <li>Swipe down from the top of your screen to open Quick Settings</li>
+      <li>Tap the <strong>Mobile Data</strong> icon to turn it off</li>
+      <li>Or: Settings > Network & Internet > SIMs > turn off <strong>Mobile data</strong></li>
+    </ol>
+  </div>
+</details>
+
+<div class="tip">
+  <strong>Think of it this way:</strong>
+  <p>GhostPort is a security guard at your front door. If someone climbs through the window (cellular data), the guard can't check them. Turn off the window and everyone uses the door.</p>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="connecting">2. Connecting Your Devices</h2>
+
+<h3>First-time setup</h3>
+<ol class="step-list">
+  <li>Plug GhostPort into power using the USB-C cable</li>
+  <li>Connect the ethernet cable from your modem/router to GhostPort's ethernet port</li>
+  <li>Wait about 60 seconds for it to boot up</li>
+  <li>On your phone or laptop, look for a WiFi network called <strong>GhostPortRouter</strong> (you can change this name later)</li>
+  <li>Connect to it using the password on the card that came with your device</li>
+  <li>Open any web browser and go to <strong>ghostport.local</strong></li>
+  <li>Enter your license key (format: GP-XXXX-XXXX-XXXX) from the card</li>
+  <li>That's it. You're protected.</li>
+</ol>
+
+<h3>Connecting other devices</h3>
+<p>Every device that connects to GhostPort's WiFi is automatically protected. No apps to install. No settings to change. Just connect to the WiFi and you're done.</p>
+<p>This includes:</p>
+<ul style="list-style:none;padding:0">
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Phones and tablets</li>
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Laptops and desktops</li>
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Smart TVs (Samsung, LG, Roku, Apple TV, Fire Stick)</li>
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Gaming consoles (PlayStation, Xbox, Nintendo Switch)</li>
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Smart home devices (Ring, Nest, Alexa, etc.)</li>
+  <li style="padding:4px 0;font-size:14px;color:var(--text-dim)">&#9656; Baby monitors, security cameras &mdash; anything with WiFi</li>
+</ul>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="dashboard">3. Using the Dashboard</h2>
+
+<p>The dashboard is your control center. Open it anytime at <strong>ghostport.local</strong> in any browser on a device connected to GhostPort's WiFi.</p>
+
+<h3>Logging in</h3>
+<p>You'll need your passcode (format: GP-XXXX-XXXX-XXXX). This was shown during setup. If you set up two-factor authentication (2FA), you'll also need the 6-digit code from your authenticator app.</p>
+
+<div class="tip">
+  <strong>Forgot your passcode?</strong>
+  <p>Hold the reset button on the GhostPort device for 10 seconds. This resets your passcode to a new one displayed on the dashboard login screen. Your settings and WiFi password are NOT affected.</p>
+</div>
+
+<h3>The four navigation tabs (mobile)</h3>
+<p>On your phone, you'll see four buttons at the bottom of the screen:</p>
+
+<div class="mode-card">
+  <div class="mode-name">&#9760; STATUS</div>
+  <div class="mode-desc">Shows your current privacy mode, public IP address, encryption level, how many ads have been blocked, and which devices are connected.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#9881; MODES</div>
+  <div class="mode-desc">Switch between the four privacy modes (see next section). This is the main feature of GhostPort.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#128737; TOOLS</div>
+  <div class="mode-desc">Security tools, DNS leak test, speed test, blocklist management, WiFi settings, Family Shield parental controls, VPN setup, backups, and system diagnostics.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#128202; STATS</div>
+  <div class="mode-desc">Ship stats (ads blocked, IP address, encryption), activity log, bandwidth monitor, and connected devices list.</div>
+</div>
+
+<h3>Desktop view</h3>
+<p>On a laptop or desktop, all four sections are visible at once &mdash; modes on the left, stats on the right, tools below.</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="modes">4. Privacy Modes (The Big Feature)</h2>
+
+<p>GhostPort has four privacy modes. Think of them as security levels. You switch between them with one tap.</p>
+
+<div class="mode-card">
+  <div class="mode-name">&#9875; ISP Mode &mdash; Open Waters</div>
+  <div class="mode-desc">Normal internet. No encryption, no filtering. Your ISP can see everything. Use this if you need maximum speed or are troubleshooting.</div>
+  <div class="mode-score">Privacy Score: 15/100 &mdash; You are fully exposed.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#128123; Zero Trust &mdash; Ghost Cloak</div>
+  <div class="mode-desc">All DNS (the lookups your device makes to find websites) is encrypted. Pi-hole blocks 1M+ ad and tracker domains. Apps on your devices cannot bypass the DNS filter &mdash; even if they try to use their own DNS servers, GhostPort intercepts and redirects all DNS traffic through Pi-hole. Note: a VPN app on a device can tunnel traffic outside GhostPort's network; see the Family Shield section for how to mitigate this.</div>
+  <div class="mode-score">Privacy Score: 50/100 &mdash; Your ISP can't see your DNS lookups, but can still see IP destinations and that you're online.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#128128; Double Hop &mdash; Dead Man's Route</div>
+  <div class="mode-desc">Everything goes through a VPN tunnel (WireGuard). Your ISP sees only encrypted noise &mdash; they can't see what you're browsing, what you're downloading, or what services you're using. DNS is also encrypted inside the tunnel.</div>
+  <div class="mode-score">Privacy Score: 80/100 &mdash; Your ISP sees nothing useful. Requires VPN setup (see Tools).</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">&#127988; Z-HOP &mdash; Davy Jones</div>
+  <div class="mode-desc">Maximum privacy. VPN tunnel + strict DNS lockdown. All DNS that doesn't go through Pi-hole is blocked at the firewall. No leaks. No exceptions. Full blackout.</div>
+  <div class="mode-score">Privacy Score: 95/100 &mdash; The closest thing to invisible. Requires VPN setup.</div>
+</div>
+
+<h3>How to switch modes</h3>
+<ol class="step-list">
+  <li>Tap the mode card you want (on mobile: go to the MODES tab first)</li>
+  <li>You can also use the floating skull button in the bottom-left corner for quick switching</li>
+  <li>A 60-second countdown bar will appear at the top</li>
+  <li>Tap <strong>CONFIRM</strong> to keep the new mode, or <strong>REVERT</strong> to go back</li>
+  <li>If you do nothing for 60 seconds, it automatically reverts to your previous mode</li>
+</ol>
+
+<div class="tip">
+  <strong>Why the 60-second timer?</strong>
+  <p>This is a safety feature. If switching modes breaks your internet (wrong VPN config, etc.), GhostPort automatically goes back to what was working. You can never permanently break your connection by switching modes.</p>
+</div>
+
+<div class="warning">
+  <strong>Double Hop and Z-HOP require VPN setup first.</strong>
+  <p>These modes route all your traffic through a VPN tunnel. If you haven't set up WireGuard in the Tools section, these modes won't have a tunnel to use. Set up your VPN first, then switch.</p>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="family-shield">5. Family Shield (Parental Controls)</h2>
+
+<p>Family Shield blocks content categories for specific devices on your network. It works at the network level &mdash; no app needed on the child's device, and they can't bypass it by using a different browser or DNS app.</p>
+
+<h3>How to set it up</h3>
+<ol class="step-list">
+  <li>Go to <strong>Tools</strong> and scroll down to <strong>Family Shield</strong></li>
+  <li>Turn on the master toggle</li>
+  <li>Select which categories to block: Adult, Gambling, Facebook/Meta, TikTok, Twitter/X</li>
+  <li>Tap <strong>DISCOVER</strong> to see devices on your network</li>
+  <li>Toggle on the shield for each device you want to filter (e.g., your kids' tablets)</li>
+</ol>
+
+<div class="tip">
+  <strong>How it actually works:</strong>
+  <p>Family Shield uses three layers of blocking:</p>
+  <p>1. <strong>DNS blocking</strong> &mdash; Pi-hole blocks the domain names (like tiktok.com)</p>
+  <p>2. <strong>IP blocking</strong> &mdash; Some apps (like TikTok) use hardcoded IP addresses to bypass DNS. GhostPort blocks those IPs directly at the firewall.</p>
+  <p>3. <strong>SNI inspection</strong> &mdash; If something still tries to sneak through, GhostPort reads the hostname from the encrypted connection handshake and blocks it.</p>
+  <p>The only way around it is to leave the GhostPort WiFi entirely (use cellular data or a neighbor's WiFi).</p>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="tools">6. Security Tools</h2>
+
+<p>Under the <strong>Tools</strong> tab, you'll find:</p>
+
+<h3>Security toggles</h3>
+<div class="mode-card">
+  <div class="mode-name">Kill Switch</div>
+  <div class="mode-desc">If your VPN tunnel drops, kill switch cuts your internet completely rather than letting unprotected traffic through. Enable this if you're in Double Hop or Z-HOP mode and privacy is critical.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">Encrypted DNS</div>
+  <div class="mode-desc">Encrypts all DNS lookups using DNS-over-HTTPS (DoH). This is ON by default in Zero Trust mode and above. Your ISP cannot see which websites you visit.</div>
+</div>
+
+<div class="mode-card">
+  <div class="mode-name">QUIC Blocking</div>
+  <div class="mode-desc">Blocks the QUIC protocol (UDP port 443). Some apps like Chrome use QUIC to bypass standard DNS-based filtering. Blocking it forces those apps back to regular HTTPS, where GhostPort can see and filter the DNS lookups and SNI (server name) information.</div>
+</div>
+
+<h3>Testing tools</h3>
+<p><strong>DNS Leak Test</strong> &mdash; Checks if your DNS queries are leaking outside the encrypted tunnel. If it shows your ISP's DNS servers, something is misconfigured.</p>
+<p><strong>Speed Test</strong> &mdash; Tests your download and upload speed through GhostPort.</p>
+<p><strong>Ping Test</strong> &mdash; Tests latency (how fast your connection responds).</p>
+<p><strong>IP Leak Check</strong> &mdash; Shows what the internet sees as your IP address. In VPN mode, this should show the VPN server's IP, not your real one.</p>
+<p><strong>Security Scan</strong> &mdash; Runs a quick check of your GhostPort's security settings.</p>
+
+<h3>Blocklist management</h3>
+<p>You can manually block or allow specific websites. Type a domain name (like "example.com") and tap BLOCK or ALLOW. Blocked domains are filtered for every device on the network.</p>
+
+<h3>Scheduled mode switching</h3>
+<p>Set GhostPort to automatically switch privacy modes at specific times. Example: Switch to Z-HOP every night at 10 PM, back to Zero Trust at 7 AM.</p>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="wifi-settings">7. WiFi Settings</h2>
+
+<p>Scroll down in Tools to find <strong>WiFi Network</strong>. Here you can:</p>
+
+<ul style="list-style:none;padding:0">
+  <li style="padding:6px 0;font-size:14px;color:var(--text-dim)">&#9656; <strong>Change your network name (SSID)</strong> &mdash; the name that shows up when you search for WiFi</li>
+  <li style="padding:6px 0;font-size:14px;color:var(--text-dim)">&#9656; <strong>Change your WiFi password</strong> &mdash; all devices will need to reconnect with the new password</li>
+  <li style="padding:6px 0;font-size:14px;color:var(--text-dim)">&#9656; <strong>Change the WPA security protocol</strong>:
+    <ul style="list-style:none;padding:8px 0 0 20px">
+      <li style="padding:3px 0;font-size:13px"><strong>WPA2</strong> &mdash; works with everything (recommended)</li>
+      <li style="padding:3px 0;font-size:13px"><strong>WPA2/WPA3 transition</strong> &mdash; newer devices use WPA3, older ones use WPA2</li>
+      <li style="padding:3px 0;font-size:13px"><strong>WPA3 only</strong> &mdash; strongest security, but some older devices can't connect</li>
+    </ul>
+  </li>
+</ul>
+
+<div class="warning">
+  <strong>After changing WiFi settings, all devices will be disconnected.</strong>
+  <p>You'll need to reconnect every device with the new network name and/or password. Make sure you remember the new password before saving!</p>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="pwa">8. Installing the App</h2>
+
+<p>GhostPort doesn't use the App Store or Google Play. Instead, it installs directly from your browser as a Progressive Web App (PWA). It looks and feels like a regular app on your home screen.</p>
+
+<details class="device-steps">
+  <summary>iPhone / iPad (Safari only)</summary>
+  <div class="inner">
+    <ol>
+      <li>Open <strong>Safari</strong> and go to <strong>ghostport.local</strong></li>
+      <li>Tap the <strong>Share</strong> button (the square with an arrow pointing up)</li>
+      <li>Scroll down and tap <strong>Add to Home Screen</strong></li>
+      <li>Tap <strong>Add</strong></li>
+      <li>The GhostPort icon now appears on your home screen</li>
+    </ol>
+    <p style="margin-top:8px"><strong>Important:</strong> This only works in Safari. Chrome on iPhone does not support Add to Home Screen.</p>
+  </div>
+</details>
+
+<details class="device-steps">
+  <summary>Android (Chrome)</summary>
+  <div class="inner">
+    <ol>
+      <li>Open <strong>Chrome</strong> and go to <strong>ghostport.local</strong></li>
+      <li>You may see a banner at the bottom saying "Add GhostPort to Home screen" &mdash; tap it</li>
+      <li>If no banner: tap the <strong>three dots menu</strong> in the top right</li>
+      <li>Tap <strong>Add to Home screen</strong> or <strong>Install app</strong></li>
+      <li>Tap <strong>Install</strong></li>
+    </ol>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="troubleshooting">9. Troubleshooting</h2>
+
+<h3>"I'm still seeing ads!"</h3>
+<div class="mode-card">
+  <div class="mode-desc">
+    <strong>1. Is your phone using cellular data instead of WiFi?</strong><br>
+    This is the most common cause. Check your phone's status bar &mdash; you should see a WiFi icon, NOT a 4G/5G icon. Go to Settings and turn off cellular data.<br><br>
+    <strong>2. Are you connected to GhostPort's WiFi?</strong><br>
+    Check that your WiFi network name matches (default: GhostPortRouter). If you're on your neighbor's WiFi or your ISP router's WiFi, GhostPort can't protect you.<br><br>
+    <strong>3. Are you in ISP Mode?</strong><br>
+    ISP Mode doesn't block anything. Switch to Zero Trust or higher.<br><br>
+    <strong>4. Some ads are served from the same domain as the content.</strong><br>
+    YouTube ads, for example, come from youtube.com itself. Pi-hole can block third-party trackers, but can't block ads that come from the same domain as the video you're watching. This is normal and true for all network-level ad blockers.
+  </div>
+</div>
+
+<h3>"My internet stopped working!"</h3>
+<div class="mode-card">
+  <div class="mode-desc">
+    <strong>1. Wait 60 seconds.</strong> If you just switched modes, GhostPort will automatically revert if connectivity is lost.<br><br>
+    <strong>2. Switch to ISP Mode.</strong> This is the "safe mode" &mdash; it always works because it's just passing traffic straight through with no filtering.<br><br>
+    <strong>3. Use the floating skull button.</strong> The skull in the bottom-left corner lets you quick-switch modes without navigating the dashboard.<br><br>
+    <strong>4. Power cycle.</strong> Unplug GhostPort, wait 10 seconds, plug it back in. It remembers your last working mode and restores it on boot.
+  </div>
+</div>
+
+<h3>"I can't reach the dashboard"</h3>
+<div class="mode-card">
+  <div class="mode-desc">
+    <strong>1. Make sure you're on GhostPort's WiFi</strong> (not your ISP router's WiFi).<br><br>
+    <strong>2. Try the IP address directly:</strong> Open your browser and go to <strong>192.168.50.1:4200</strong><br><br>
+    <strong>3. Clear your browser cache</strong> or try a private/incognito window.<br><br>
+    <strong>4. If all else fails:</strong> Connect a laptop to GhostPort via ethernet cable and go to 192.168.50.1:4200.
+  </div>
+</div>
+
+<h3>"I forgot my passcode"</h3>
+<div class="mode-card">
+  <div class="mode-desc">
+    Hold the reset button on the GhostPort device for 10 seconds. A new passcode will be generated. Your WiFi password, mode settings, and all other configuration are preserved.
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════ -->
+<h2 id="faq">10. Frequently Asked Questions</h2>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Do I need a subscription to use GhostPort?</div>
+  <div class="faq-a">No. Core features (ad blocking, encrypted DNS, privacy modes, parental controls, dashboard) work without any subscription. The optional GhostSupport subscription ($5-$15/month) adds VPN hosting and priority support. The maximum you'll ever pay is $15/month. That's the ceiling.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Does GhostPort replace my router?</div>
+  <div class="faq-a">It can, but it doesn't have to. GhostPort creates its own WiFi network (WiFi 6). You can either connect devices directly to GhostPort's WiFi, or place it between your modem and existing router. Devices on GhostPort's WiFi are protected. Devices on your old router's WiFi are not.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Will this slow down my internet?</div>
+  <div class="faq-a">ISP Mode and Zero Trust: no speed loss at all. VPN modes (Double Hop, Z-HOP) add minimal overhead &mdash; WireGuard is the fastest VPN protocol available, typically under 5ms of additional latency. Pi-hole actually makes browsing feel faster because it blocks ad requests before they load.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What happens if GhostPort loses power?</div>
+  <div class="faq-a">When power returns, GhostPort boots up automatically (about 60 seconds) and restores your last privacy mode. You don't need to do anything. All settings are saved to disk.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can my kids bypass the parental controls?</div>
+  <div class="faq-a">Family Shield blocks at the network level using DNS filtering, IP range blocking, and SNI inspection. No browser setting or DNS change on the device can bypass it. The main ways around it are: connecting to a different WiFi network, using cellular data, or using a VPN app on the device (which tunnels traffic outside GhostPort's reach). For younger kids this is very effective; for tech-savvy teens, combine it with device management to restrict VPN app installs.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What if the company shuts down?</div>
+  <div class="faq-a">Core privacy features &mdash; ad blocking, DNS encryption, VPN tunneling, and parental controls &mdash; run entirely on your hardware and continue working without any internet connection to our servers. If GhostPort Technologies disappeared tomorrow, your router keeps doing its job. The hardware is yours. The software is yours. Some features like initial device activation, automatic updates, and remote TOTP recovery do use our cloud server, but day-to-day operation is fully local.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How do I update GhostPort?</div>
+  <div class="faq-a">GhostPort checks for updates automatically every 30 minutes. When an update is available, you'll see it in the Tools section. Tap UPDATE and it handles the rest. You can also check manually anytime.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Can I use GhostPort with a VPN I already pay for?</div>
+  <div class="faq-a">Yes! GhostPort supports WireGuard configs from any provider &mdash; Mullvad, ProtonVPN, NordVPN, Surfshark, IVPN, and more. Go to Tools > WireGuard VPN and follow the guided setup for your provider. Once configured, Double Hop and Z-HOP modes will route all traffic through your VPN.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">How many devices can connect?</div>
+  <div class="faq-a">GhostPort supports 30+ simultaneous devices for typical household use (browsing, streaming, gaming). Every connected device is automatically protected &mdash; no per-device setup needed. The WiFi 6 access point handles device density well; in VPN modes, throughput is shared across the encrypted tunnel.</div>
+</div>
+
+<div class="faq">
+  <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">What's the WiFi range?</div>
+  <div class="faq-a">GhostPort uses the Raspberry Pi 5's built-in WiFi 6 radio (5GHz, 802.11ax). Range is similar to a standard home router &mdash; typically covers a 2-3 bedroom apartment or one floor of a house. For larger spaces, GhostPort Pods (range extenders) are coming soon.</div>
+</div>
+
+<div style="margin-top:40px;padding:20px;border:1px solid var(--border);border-radius:8px;text-align:center">
+  <p style="color:var(--text-faint);font-size:12px;letter-spacing:1px">GHOSTPORT TECHNOLOGIES &copy; 2026</p>
+  <p style="color:var(--text-faint);font-size:11px">Need help? Email <a href="mailto:support@ghostporttechnologies.com">support@ghostporttechnologies.com</a></p>
+</div>
+
+</div>
+</body>
+</html>

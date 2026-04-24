@@ -1,0 +1,12 @@
+[Unit]
+Description=GhostPort Auto-Update (Pi-hole, system packages, Node.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-auto-update run
+User=root
+TimeoutStartSec=600
+Nice=10
+IOSchedulingClass=idle

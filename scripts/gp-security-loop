@@ -1,0 +1,80 @@
+#!/bin/bash
+# GhostPort Security Scan Loop — automated security validation
+set -uo pipefail
+
+RESULT_FILE="/etc/phantom/security-scan.json"
+EXPECTED_PORTS="22 25 53 80 443 4200 4201 5053 8443 41641"
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ISSUES=0
+
+log() { logger -t gp-security-loop "$1"; }
+log "Security scan starting"
+
+# 1. Port scan — verify only expected ports open
+OPEN_PORTS=$(ss -tlnp 2>/dev/null | awk 'NR>1{print $4}' | grep -oE '[0-9]+$' | sort -un | tr '\n' ' ')
+UNEXPECTED=""
+for port in $OPEN_PORTS; do
+  if ! echo "$EXPECTED_PORTS 4202" | grep -qw "$port"; then
+    # Skip ports owned by Tailscale
+    if ss -tlnp 2>/dev/null | grep ":$port " | grep -qE "tailscaled|cloudflared"; then continue; fi
+    UNEXPECTED="$UNEXPECTED $port"
+    ((ISSUES++))
+  fi
+done
+
+# 2. DNS leak test — verify DNS goes through Pi-hole
+DNS_OK=true
+DNS_SERVER=$(dig +short +time=2 whoami.akamai.net @127.0.0.1 2>/dev/null | head -1)
+if [ -z "$DNS_SERVER" ]; then DNS_OK=false; ((ISSUES++)); fi
+
+# 3. nftables validation — verify rules loaded
+NFT_OK=true
+NFT_OUT=$(nft list ruleset 2>&1 || true)
+if ! echo "$NFT_OUT" | grep -q "chain input"; then
+  NFT_OK=false; ((ISSUES++))
+fi
+
+# 4. Mode-specific checks
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+MODE_OK=true
+if [ "$MODE" = "doublehop" ] || [ "$MODE" = "zhop" ]; then
+  if ! ip link show wg1 2>/dev/null | grep -q "UNKNOWN\|UP"; then
+    MODE_OK=false; ((ISSUES++))
+  fi
+fi
+
+# 5. CVE check — upgradable packages
+UPGRADABLE=$(apt list --upgradable 2>/dev/null | tail -n +2 | wc -l)
+
+# 6. Anti-fingerprint check
+FINGERPRINT_BLOCKED=false
+if [ -f /etc/dnsmasq.d/30-anti-fingerprint.conf ]; then FINGERPRINT_BLOCKED=true; fi
+
+# 7. Services health
+SERVICES_DOWN=""
+for svc in ghostport pihole-FTL hostapd; do
+  if ! systemctl is-active "$svc" >/dev/null 2>&1; then
+    SERVICES_DOWN="$SERVICES_DOWN $svc"
+    ((ISSUES++))
+  fi
+done
+
+# Build JSON
+cat > "$RESULT_FILE" << EOF
+{
+  "timestamp": "$TIMESTAMP",
+  "issues": $ISSUES,
+  "ports": { "open": "$(echo $OPEN_PORTS | xargs)", "unexpected": "$(echo $UNEXPECTED | xargs)" },
+  "dns": { "resolving": $DNS_OK, "server": "$DNS_SERVER" },
+  "nftables": $NFT_OK,
+  "mode": "$MODE",
+  "modeHealthy": $MODE_OK,
+  "upgradablePackages": $UPGRADABLE,
+  "antiFingerprintDns": $FINGERPRINT_BLOCKED,
+  "servicesDown": "$(echo $SERVICES_DOWN | xargs)",
+  "verdict": "$([ $ISSUES -eq 0 ] && echo SECURE || echo ISSUES_FOUND)"
+}
+EOF
+
+log "Scan complete: $ISSUES issues found"
+cat "$RESULT_FILE"

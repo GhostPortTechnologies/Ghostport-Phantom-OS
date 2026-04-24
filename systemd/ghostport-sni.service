@@ -1,0 +1,22 @@
+[Unit]
+Description=GhostPort SNI Inspector — Family Shield HTTPS blocking
+After=network-online.target ghostport.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/phantom/sni-inspector.py
+ExecStartPost=/usr/local/bin/gp-ssl-inspect restore
+PIDFile=/run/ghostport-sni.pid
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ghostport-sni
+
+# Needs CAP_NET_ADMIN for IP_TRANSPARENT and SO_ORIGINAL_DST
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

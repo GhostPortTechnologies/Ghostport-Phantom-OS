@@ -1,13 +1,13 @@
 
-# GhostPort OS
+# Phantom OS
 
 > **Your data never leaves your hands.**
 
-GhostPort OS turns a Raspberry Pi 5 into a full privacy router with four switchable modes, Pi-hole ad blocking, WireGuard VPN routing, and forced DNS lockdown — all controllable from a browser or mobile app.
+Phantom OS turns a Raspberry Pi 5 into a full privacy router with four switchable modes, Pi-hole ad blocking, WireGuard VPN routing, and forced DNS lockdown — all controllable from a browser or mobile app.
 
 Unlike VPN services, **your traffic never passes through a third-party server**. You own the hardware. You own the network. You own the data.
 
-> **License Notice:** GhostPort OS is **source available**, not open source. The source code is publicly viewable and free to use for personal builds. Commercial use, resale, and redistribution as a competing product or service are not permitted under the Elastic License 2.0. See [LICENSE](LICENSE) for full terms.
+> **License Notice:** Phantom OS is **source available**, not open source. The source code is publicly viewable and free to use for personal builds. Commercial use, resale, and redistribution as a competing product or service are not permitted under the Elastic License 2.0. See [LICENSE](LICENSE) for full terms.
 
 ---
 
@@ -122,7 +122,7 @@ curl -X POST http://YOUR_PI_IP:4200/api/mode \
 
 ## Built With
 
-GhostPort OS is built on top of these outstanding projects:
+Phantom OS is built on top of these outstanding projects:
 
 | Project | License | What it does |
 |---------|---------|-------------|
@@ -148,16 +148,16 @@ Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 
 ## License
 
-GhostPort OS is licensed under the **Elastic License 2.0 (ELv2)**.
+Phantom OS is licensed under the **Elastic License 2.0 (ELv2)**.
 
 **You are free to:**
 - View and study the source code
-- Build and run GhostPort OS for personal use on your own hardware
+- Build and run Phantom OS for personal use on your own hardware
 - Contribute improvements back to this repository
 
 **You are NOT permitted to:**
-- Sell, resell, or commercially distribute GhostPort OS or derivatives
-- Offer GhostPort OS as a hosted or managed service to third parties
+- Sell, resell, or commercially distribute Phantom OS or derivatives
+- Offer Phantom OS as a hosted or managed service to third parties
 - Remove or alter licensing or copyright notices
 
 This is **source available** software, not open source. The distinction matters — see [elastic.co/licensing/elastic-license](https://www.elastic.co/licensing/elastic-license) for full terms.
@@ -177,7 +177,7 @@ For commercial licensing inquiries contact: licensing@ghostporttechnologies.com
 
 <div align="center">
 
-**GhostPort OS**
+**Phantom OS**
 
 *Your data never leaves your hands.*
 

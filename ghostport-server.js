@@ -5,21 +5,47 @@
  */
 
 const express = require("express");
-const { exec } = require("child_process");
+const { exec, execSync } = require("child_process");
 const path = require("path");
 const crypto = require("crypto");
 const https = require("https");
 const fs = require("fs");
-
 const http = require("http");
+const { TOTP, Secret } = require("otpauth");
+const QRCode = require("qrcode");
 
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", false);
 const PORT = 4200;
 
+// ── Device Activity Log ─────────────────────────────────
+const ACTIVITY_FILE = "/etc/phantom/activity.json";
+const ACTIVITY_MAX = 200;
+let activityLog = [];
+
+function loadActivity() {
+  try { activityLog = JSON.parse(fs.readFileSync(ACTIVITY_FILE, "utf8")); }
+  catch { activityLog = []; }
+}
+
+function saveActivity() {
+  try { fs.writeFileSync(ACTIVITY_FILE, JSON.stringify(activityLog), "utf8"); }
+  catch (e) { console.error("[Activity] Save failed:", e.message); }
+}
+
+function logActivity(type, message, detail) {
+  const entry = { ts: new Date().toISOString(), type, message };
+  if (detail) entry.detail = detail;
+  activityLog.unshift(entry);
+  if (activityLog.length > ACTIVITY_MAX) activityLog.length = ACTIVITY_MAX;
+  saveActivity();
+}
+
+loadActivity();
+
 // ── Pi-hole API integration ─────────────────────────────
-const PIHOLE_FILE = "/etc/ghostport/pihole.json";
+const PIHOLE_FILE = "/etc/phantom/pihole.json";
 let piholeSid = null;
 
 function readPiholeConfig() {
@@ -72,11 +98,15 @@ async function piholeAuth() {
   }
 }
 
+let piholeReauthPromise = null;
 async function piholeApi(method, apiPath, body) {
   let res = await piholeRequest(method, apiPath, body);
-  // Re-auth on 401
+  // Re-auth on 401 (mutex prevents stampeding herd)
   if (res.status === 401) {
-    if (await piholeAuth()) {
+    if (!piholeReauthPromise) {
+      piholeReauthPromise = piholeAuth().finally(() => { piholeReauthPromise = null; });
+    }
+    if (await piholeReauthPromise) {
       res = await piholeRequest(method, apiPath, body);
     }
   }
@@ -89,7 +119,7 @@ piholeAuth();
 // ── Privacy-preserving ads tally ─────────────────────────
 // Counts blocked/total queries without storing any query data.
 // Pi-hole privacy level stays at 3 (anonymous everything).
-const TALLY_FILE = "/etc/ghostport/ads-tally.json";
+const TALLY_FILE = "/etc/phantom/ads-tally.json";
 
 function readTally() {
   try { return JSON.parse(fs.readFileSync(TALLY_FILE, "utf8")); }
@@ -150,6 +180,50 @@ setTimeout(initTally, 5000);
 
 app.use(express.json({ limit: "10kb" }));
 
+// ── Control tag sanitization (Claude Code source leak hardening) ──
+// Strips XML control tags that could hijack Claude agent behavior if injected into data
+const CONTROL_TAG_RE = /<\/?(?:system-reminder|command-name|command-message|antml:function_calls|antml:invoke|antml:parameter|tool_use_error|persisted-output|functions|function)\b[^>]*>/gi;
+const INJECTION_PATTERNS = [
+  /ignore\s+(?:all\s+)?previous\s+instructions/i,
+  /you\s+are\s+now/i,
+  /disregard\s+(?:all\s+)?prior/i,
+  /override\s+instructions/i,
+  /new\s+instructions:/i,
+  /\bsystem:\s/i,
+];
+
+function sanitizeString(str) {
+  if (typeof str !== "string") return str;
+  const cleaned = str.replace(CONTROL_TAG_RE, "");
+  // Log injection attempts (don't block — false positive risk)
+  for (const pat of INJECTION_PATTERNS) {
+    if (pat.test(str)) {
+      console.warn(`[SECURITY] PROMPT_INJECTION_ATTEMPT detected in input: ${str.substring(0, 120)}`);
+      logActivity("security", "Prompt injection pattern detected in request input");
+      break;
+    }
+  }
+  return cleaned;
+}
+
+function sanitizeObject(obj) {
+  if (typeof obj === "string") return sanitizeString(obj);
+  if (Array.isArray(obj)) return obj.map(sanitizeObject);
+  if (obj && typeof obj === "object") {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[sanitizeString(k)] = sanitizeObject(v);
+    return out;
+  }
+  return obj;
+}
+
+app.use((req, res, next) => {
+  if (req.body && typeof req.body === "object") {
+    req.body = sanitizeObject(req.body);
+  }
+  next();
+});
+
 // Security headers
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
@@ -158,17 +232,54 @@ app.use((req, res, next) => {
   res.setHeader("X-XSS-Protection", "0");
   res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  if (req.secure) res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   next();
 });
 
 // ── authentication ────────────────────────────────────────
 
-const AUTH_FILE = "/etc/ghostport/auth.json";
+const AUTH_FILE = "/etc/phantom/auth.json";
 const SESSION_TTL = 24 * 60 * 60 * 1000;
-const LOCKOUT_MS = 60000;
+const LOCKOUT_TIERS = [60000, 120000, 300000, 900000]; // 1m, 2m, 5m, 15m
 const MAX_ATTEMPTS = 5;
+const LOCKOUT_STATE_FILE = "/etc/phantom/lockout.json";
 const sessions = new Map();
 const failedAttempts = new Map();
+
+// ── Local widget token (localhost-only auth bypass) ───────
+const LOCAL_TOKEN_FILE = "/run/ghostport/widget-token";
+let localWidgetToken = null;
+function generateLocalToken() {
+  try {
+    localWidgetToken = crypto.randomBytes(32).toString("hex");
+    fs.writeFileSync(LOCAL_TOKEN_FILE, localWidgetToken, { mode: 0o600 });
+  } catch (e) { console.error("[Auth] Local widget token write failed:", e.message); }
+}
+generateLocalToken();
+
+// Persist lockout state across restarts
+function loadLockoutState() {
+  try {
+    const data = JSON.parse(fs.readFileSync(LOCKOUT_STATE_FILE, "utf8"));
+    for (const [ip, record] of Object.entries(data)) {
+      // Only restore if lockout hasn't expired
+      const tier = Math.min(record.lockouts || 0, LOCKOUT_TIERS.length - 1);
+      const lockoutMs = LOCKOUT_TIERS[tier];
+      if (Date.now() - record.lastAttempt < lockoutMs + 60000) {
+        failedAttempts.set(ip, record);
+      }
+    }
+  } catch { /* no state file yet */ }
+}
+function saveLockoutState() {
+  try {
+    const obj = {};
+    for (const [ip, record] of failedAttempts) obj[ip] = record;
+    fs.writeFileSync(LOCKOUT_STATE_FILE, JSON.stringify(obj));
+    fs.chmodSync(LOCKOUT_STATE_FILE, 0o600);
+  } catch { /* best effort */ }
+}
+loadLockoutState();
 
 const PASSCODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -202,42 +313,123 @@ function getCookie(req, name) {
   return match ? match.substring(name.length + 1) : null;
 }
 
+function getLockoutMs(ip) {
+  const record = failedAttempts.get(ip);
+  if (!record) return 0;
+  const tier = Math.min(record.lockouts || 0, LOCKOUT_TIERS.length - 1);
+  return LOCKOUT_TIERS[tier];
+}
+
 function isLockedOut(ip) {
   const record = failedAttempts.get(ip);
   if (!record) return false;
-  if (record.count >= MAX_ATTEMPTS && (Date.now() - record.lastAttempt) < LOCKOUT_MS) return true;
-  if ((Date.now() - record.lastAttempt) >= LOCKOUT_MS) { failedAttempts.delete(ip); return false; }
+  const lockoutMs = getLockoutMs(ip);
+  if (record.count >= MAX_ATTEMPTS && (Date.now() - record.lastAttempt) < lockoutMs) return true;
+  if ((Date.now() - record.lastAttempt) >= lockoutMs) {
+    // Don't delete — preserve lockout tier for escalation
+    if (record.count >= MAX_ATTEMPTS) {
+      record.count = 0; // Reset attempt count but keep tier
+    }
+    return false;
+  }
   return false;
 }
 
 function recordFailedAttempt(ip) {
-  const record = failedAttempts.get(ip) || { count: 0, lastAttempt: 0 };
+  const record = failedAttempts.get(ip) || { count: 0, lastAttempt: 0, lockouts: 0 };
   record.count++;
   record.lastAttempt = Date.now();
+  if (record.count >= MAX_ATTEMPTS) {
+    record.lockouts = (record.lockouts || 0) + 1;
+    saveLockoutState();
+  }
   failedAttempts.set(ip, record);
 }
 
-// Generate passcode on first boot
+function getLockoutMessage(ip) {
+  const ms = getLockoutMs(ip);
+  if (ms >= 60000) return `Too many attempts. Locked out for ${Math.ceil(ms / 60000)} minute${ms > 60000 ? "s" : ""}.`;
+  return "Too many attempts. Try again in 60 seconds.";
+}
+
+// Generate passcode on first boot (provisioned=false until activation)
 (function initAuth() {
   let auth = readAuth();
   if (auth && auth.hash && auth.salt) {
-    console.log("[Auth] Passcode configured");
+    console.log(`[Auth] Passcode configured (provisioned: ${auth.provisioned === true})`);
     return;
   }
   const passcode = generatePasscode();
   const salt = crypto.randomBytes(32).toString("hex");
   const hash = hashPasscode(passcode, salt);
-  writeAuth({ hash, salt });
+  // No plaintext passcode stored — only hash and salt
+  writeAuth({ hash, salt, provisioned: false });
+  // Write passcode to a temp file readable only by root (auto-deleted after 5 min)
+  try {
+    fs.writeFileSync("/etc/phantom/initial-passcode.txt", passcode + "\n", { mode: 0o600 });
+    exec("(sleep 300 && rm -f /etc/phantom/initial-passcode.txt) &");
+  } catch {}
   console.log("");
   console.log("  ╔═══════════════════════════════════════════╗");
-  console.log("  ║   DEVICE PASSCODE (save this!)            ║");
-  console.log(`  ║   ${passcode}                      ║`);
+  console.log("  ║   DEVICE PASSCODE GENERATED               ║");
+  console.log("  ║   View: sudo cat /etc/phantom/initial-passcode.txt  ║");
   console.log("  ╚═══════════════════════════════════════════╝");
-  console.log("");
-  console.log("  Use this to log into the Command Deck.");
   console.log("  Reset via SSH: sudo gp-passcode reset");
   console.log("");
 })();
+
+// Helper: check if device has been provisioned (activated by customer)
+function isProvisioned() {
+  const auth = readAuth();
+  return auth && auth.provisioned === true;
+}
+
+// ── TOTP (Two-Factor Authentication) ─────────────────────
+const TOTP_ISSUER = "GhostPort";
+const TOTP_LABEL = "CommandDeck";
+const BACKUP_CODE_COUNT = 8;
+const pendingTotp = new Map(); // partial auth tokens awaiting TOTP verification
+
+function createTOTPInstance(secret) {
+  return new TOTP({ issuer: TOTP_ISSUER, label: TOTP_LABEL, algorithm: "SHA1", digits: 6, period: 30, secret });
+}
+
+function generateTOTPSecret() {
+  return new Secret({ size: 20 });
+}
+
+const usedTOTPCodes = new Map(); // code -> expiry timestamp (replay prevention)
+function validateTOTPCode(code, secret) {
+  // Prevent replay attacks — reject codes already used in this window
+  const codeKey = code + ":" + Math.floor(Date.now() / 30000);
+  if (usedTOTPCodes.has(codeKey)) return false;
+  const totp = createTOTPInstance(Secret.fromBase32(secret));
+  // Allow 1 step window (90s total) for clock drift
+  const delta = totp.validate({ token: code, window: 1 });
+  if (delta !== null) {
+    usedTOTPCodes.set(codeKey, Date.now() + 120000);
+    // Prune expired entries
+    for (const [k, exp] of usedTOTPCodes) { if (Date.now() > exp) usedTOTPCodes.delete(k); }
+    return true;
+  }
+  return false;
+}
+
+function generateBackupCodes() {
+  const codes = [];
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  for (let i = 0; i < BACKUP_CODE_COUNT; i++) {
+    let code = "";
+    for (let j = 0; j < 12; j++) code += chars[crypto.randomInt(chars.length)];
+    codes.push({ code, used: false });
+  }
+  return codes;
+}
+
+function isTOTPConfigured() {
+  const auth = readAuth();
+  return auth && auth.totp && auth.totp.setupComplete === true && auth.totp.secret;
+}
 
 // ── public auth routes (no session required) ──────────────
 
@@ -250,6 +442,7 @@ app.get("/manifest.json", (req, res) => res.sendFile(path.join(__dirname, "publi
 app.get("/icon-192.png", (req, res) => res.sendFile(path.join(__dirname, "public", "icon-192.png")));
 app.get("/icon-512.png", (req, res) => res.sendFile(path.join(__dirname, "public", "icon-512.png")));
 app.get("/apple-touch-icon.png", (req, res) => res.sendFile(path.join(__dirname, "public", "apple-touch-icon.png")));
+app.get("/offline.html", (req, res) => res.sendFile(path.join(__dirname, "public", "offline.html")));
 app.get(/^\/login\/?$/, (req, res) => res.redirect("/login.html"));
 app.get("/install.html", (req, res) => res.sendFile(path.join(__dirname, "public", "install.html")));
 app.get(/^\/install\/?$/, (req, res) => res.redirect("/install.html"));
@@ -258,11 +451,11 @@ app.use("/qr", express.static(path.join(__dirname, "public", "qr")));
 app.post("/api/auth/login", (req, res) => {
   const ip = req.ip;
   if (isLockedOut(ip)) {
-    return res.status(429).json({ ok: false, error: "Too many attempts. Try again in 60 seconds." });
+    return res.status(429).json({ ok: false, error: getLockoutMessage(ip) });
   }
 
   const { passcode } = req.body;
-  if (!passcode) return res.status(400).json({ ok: false, error: "Passcode required" });
+  if (!passcode || typeof passcode !== "string" || passcode.length > 128) return res.status(400).json({ ok: false, error: "Passcode required" });
 
   const auth = readAuth();
   if (!auth || !auth.hash) return res.status(500).json({ ok: false, error: "Auth not configured" });
@@ -273,20 +466,183 @@ app.post("/api/auth/login", (req, res) => {
     const record = failedAttempts.get(ip);
     const remaining = MAX_ATTEMPTS - record.count;
     console.log(`[Auth] Failed login from ${ip} (${remaining} attempts remaining)`);
+    logActivity("auth", "Failed login attempt", ip);
     if (remaining <= 0) {
-      return res.status(429).json({ ok: false, error: "Too many attempts. Locked out for 60 seconds." });
+      logActivity("security", "Account locked — too many attempts", ip);
+      return res.status(429).json({ ok: false, error: getLockoutMessage(ip) });
     }
     return res.status(401).json({ ok: false, error: `Invalid passcode. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.` });
   }
 
-  failedAttempts.delete(ip);
+  // Successful login — reset attempt count but preserve escalation tier
+  const lockRecord = failedAttempts.get(ip);
+  if (lockRecord) { lockRecord.count = 0; }
+
+  // If TOTP is configured, require second factor
+  if (auth.totp && auth.totp.setupComplete && auth.totp.secret) {
+    const partialToken = crypto.randomBytes(32).toString("hex");
+    pendingTotp.set(partialToken, { ip, created: Date.now() });
+    console.log(`[Auth] Passcode OK from ${ip} — awaiting TOTP`);
+    return res.json({ ok: true, requireTotp: true, partialToken });
+  }
+
+  // No TOTP — complete login
   const token = crypto.randomBytes(32).toString("hex");
   const csrfToken = crypto.randomBytes(32).toString("hex");
   sessions.set(token, { created: Date.now(), ip, absoluteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000, csrf: csrfToken });
   console.log(`[Auth] Successful login from ${ip}`);
+  logActivity("auth", "Login successful", ip);
 
   res.setHeader("Set-Cookie", `gp-session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${req.secure ? "; Secure" : ""}`);
   res.json({ ok: true, csrfToken });
+});
+
+// TOTP verification (second step of login)
+app.post("/api/auth/totp/verify", (req, res) => {
+  const ip = req.ip;
+  if (isLockedOut(ip)) {
+    return res.status(429).json({ ok: false, error: getLockoutMessage(ip) });
+  }
+
+  const { partialToken, code } = req.body;
+  if (!partialToken || !code) return res.status(400).json({ ok: false, error: "Token and code required" });
+
+  const pending = pendingTotp.get(partialToken);
+  if (!pending || Date.now() - pending.created > 300000) {
+    pendingTotp.delete(partialToken);
+    return res.status(401).json({ ok: false, error: "Session expired. Please start over." });
+  }
+
+  // Verify TOTP completion from same IP as passcode entry
+  if (pending.ip && pending.ip !== ip) {
+    pendingTotp.delete(partialToken);
+    return res.status(401).json({ ok: false, error: "Session expired. Please start over." });
+  }
+
+  const auth = readAuth();
+  if (!auth || !auth.totp || !auth.totp.secret) {
+    return res.status(500).json({ ok: false, error: "TOTP not configured" });
+  }
+
+  // Check TOTP code
+  const codeStr = String(code).replace(/\s/g, "");
+  let valid = false;
+
+  if (/^\d{6}$/.test(codeStr)) {
+    valid = validateTOTPCode(codeStr, auth.totp.secret);
+  }
+
+  // Check backup codes if TOTP didn't match (constant-time comparison)
+  if (!valid && auth.totp.backupCodes) {
+    const upper = codeStr.toUpperCase();
+    const upperBuf = Buffer.from(upper);
+    let matchIdx = -1;
+    for (let i = 0; i < auth.totp.backupCodes.length; i++) {
+      const bc = auth.totp.backupCodes[i];
+      if (bc.used) continue;
+      const codeBuf = Buffer.from(bc.code);
+      if (upperBuf.length === codeBuf.length && crypto.timingSafeEqual(upperBuf, codeBuf)) {
+        matchIdx = i;
+      }
+    }
+    if (matchIdx >= 0) {
+      auth.totp.backupCodes[matchIdx].used = true;
+      writeAuth(auth);
+      valid = true;
+      console.log(`[Auth] Backup code used from ${ip} (${auth.totp.backupCodes.filter(bc => !bc.used).length} remaining)`);
+    }
+  }
+
+  if (!valid) {
+    recordFailedAttempt(ip);
+    const record = failedAttempts.get(ip);
+    const remaining = MAX_ATTEMPTS - record.count;
+    if (remaining <= 0) {
+      pendingTotp.delete(partialToken);
+      return res.status(429).json({ ok: false, error: getLockoutMessage(ip) });
+    }
+    return res.status(401).json({ ok: false, error: `Invalid code. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.` });
+  }
+
+  // TOTP valid — complete login
+  pendingTotp.delete(partialToken);
+  const lockRec = failedAttempts.get(ip);
+  if (lockRec) { lockRec.count = 0; }
+  const token = crypto.randomBytes(32).toString("hex");
+  const csrfToken = crypto.randomBytes(32).toString("hex");
+  sessions.set(token, { created: Date.now(), ip, absoluteExpiry: Date.now() + 7 * 24 * 60 * 60 * 1000, csrf: csrfToken });
+  console.log(`[Auth] TOTP verified — login complete from ${ip}`);
+  logActivity("auth", "Login successful (2FA)", ip);
+
+  res.setHeader("Set-Cookie", `gp-session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400${req.secure ? "; Secure" : ""}`);
+  res.json({ ok: true, csrfToken });
+});
+
+// TOTP status (public — lets login page know which UI to show)
+app.get("/api/auth/totp/status", (req, res) => {
+  const auth = readAuth();
+  res.json({
+    ok: true,
+    totpConfigured: !!(auth && auth.totp && auth.totp.setupComplete),
+    provisioned: !!(auth && auth.provisioned)
+  });
+});
+
+// Fleet TOTP reset request (public — consumer "forgot access?" flow)
+let resetRequestAttempts = { count: 0, resetAt: 0 };
+app.post("/api/auth/totp/reset-request", async (req, res) => {
+  // Rate limit: 3 per hour
+  const now = Date.now();
+  if (now > resetRequestAttempts.resetAt) { resetRequestAttempts = { count: 0, resetAt: now + 3600000 }; }
+  resetRequestAttempts.count++;
+  if (resetRequestAttempts.count > 3) {
+    return res.status(429).json({ ok: false, error: "Too many reset requests. Try again in an hour." });
+  }
+
+  const fleet = getFleetConfig();
+  if (!fleet || !fleet.fleet_server || !fleet.device_id) {
+    return res.status(503).json({ ok: false, error: "Device not registered with fleet. Contact support." });
+  }
+
+  try {
+    const body = JSON.stringify({ device_id: fleet.device_id });
+    const result = await new Promise((resolve, reject) => {
+      const req = http.request(`${fleet.fleet_server}/fleet/devices/${encodeURIComponent(fleet.device_id)}/reset-totp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          "Authorization": "Bearer " + fleet.fleet_token
+        },
+        timeout: 15000
+      }, response => {
+        let data = "";
+        response.on("data", c => data += c);
+        response.on("end", () => {
+          try { resolve({ status: response.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: response.statusCode, body: {} }); }
+        });
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+      req.write(body);
+      req.end();
+    });
+
+    if (result.status === 200) {
+      console.log("[Fleet] TOTP reset request submitted");
+      res.json({ ok: true, message: "Reset request submitted. Your TOTP will be cleared within 60 seconds." });
+    } else {
+      console.error("[Fleet] Reset request failed:", result.status, result.body);
+      res.status(result.status >= 400 ? result.status : 500).json({
+        ok: false,
+        error: result.body.error || "Reset request failed. Contact support."
+      });
+    }
+  } catch (e) {
+    console.error("[Fleet] Reset request error:", e.message);
+    res.status(503).json({ ok: false, error: "Could not reach fleet server. Check your connection." });
+  }
 });
 
 app.post("/api/auth/logout", (req, res) => {
@@ -314,7 +670,10 @@ function escapeHtml(s) {
 }
 
 function gpTmpFile(prefix) {
-  return `/tmp/${prefix}-${crypto.randomBytes(8).toString("hex")}`;
+  // Use /run/ghostport/ for temp files — PrivateTmp=true makes /tmp invisible to sudo
+  const dir = "/run/ghostport";
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  return `${dir}/${prefix}-${crypto.randomBytes(8).toString("hex")}`;
 }
 
 
@@ -336,19 +695,9 @@ app.post("/api/fleet/activate", async (req, res) => {
       return res.status(400).json({ ok: false, error: "Invalid license key format" });
     }
 
-    // Check if device is already activated
-    const authFile = "/etc/ghostport/auth.json";
-    if (fs.existsSync(authFile)) {
-      try {
-        const auth = JSON.parse(fs.readFileSync(authFile, "utf8"));
-        if (auth.hash) {
-          return res.status(409).json({ ok: false, error: "Device already activated. Use the login page." });
-        }
-      } catch {}
-    }
-    // Also block if fleet.json already exists (already registered)
-    if (fs.existsSync("/etc/ghostport/fleet.json")) {
-      return res.status(409).json({ ok: false, error: "Device already registered. Use the login page." });
+    // Check if device is already activated (provisioned flag, not hash existence)
+    if (isProvisioned()) {
+      return res.status(409).json({ ok: false, error: "Device already activated. Use the login page." });
     }
 
     // Generate device passcode
@@ -361,11 +710,17 @@ app.post("/api/fleet/activate", async (req, res) => {
     }
     const passcode = "GP-" + passParts.join("-");
 
-    // Hash and save passcode
+    // Hash and save passcode (including plaintext for gp-passcode show)
     const salt = crypto.randomBytes(32).toString("hex");
     const hash = crypto.scryptSync(passcode, salt, 64).toString("hex");
-    fs.mkdirSync("/etc/ghostport", { recursive: true });
-    fs.writeFileSync(authFile, JSON.stringify({ hash, salt }, null, 2));
+    const authFile = "/etc/phantom/auth.json";
+    fs.mkdirSync("/etc/phantom", { recursive: true });
+    // Preserve existing TOTP/2FA config if user set it up before activation
+    let existingAuth = {};
+    try { existingAuth = JSON.parse(fs.readFileSync(authFile, "utf8")); } catch {}
+    const newAuth = { hash, salt, provisioned: true };
+    if (existingAuth.totp) newAuth.totp = existingAuth.totp;
+    fs.writeFileSync(authFile, JSON.stringify(newAuth, null, 2));
     fs.chmodSync(authFile, 0o600);
     // Clear any existing sessions from before activation
     sessions.clear();
@@ -375,8 +730,8 @@ app.post("/api/fleet/activate", async (req, res) => {
     let piholePw = "";
     for (let i = 0; i < 24; i++) piholePw += phChars[crypto.randomInt(phChars.length)];
     exec("sudo pihole setpassword " + JSON.stringify(piholePw), () => {});
-    fs.writeFileSync("/etc/ghostport/pihole.json", JSON.stringify({ password: piholePw }));
-    fs.chmodSync("/etc/ghostport/pihole.json", 0o600);
+    fs.writeFileSync("/etc/phantom/pihole.json", JSON.stringify({ password: piholePw }));
+    fs.chmodSync("/etc/phantom/pihole.json", 0o600);
 
     // Randomize WiFi password
     let wifiPw = "";
@@ -404,7 +759,14 @@ app.post("/api/fleet/activate", async (req, res) => {
 
     try {
       const fleetServer = "http://10.66.66.1:8080";
-      const fleetToken = (() => { try { const t = JSON.parse(fs.readFileSync("/etc/ghostport/fleet.json","utf8")).fleet_token; if (!t) throw new Error("No fleet token"); return t; } catch(e) { throw new Error("Fleet token not found in /etc/ghostport/fleet.json: " + e.message); } })();
+      // Use provisioning auth (baked during manufacturing) — fleet.json doesn't exist yet at activation time
+      const fleetToken = (() => {
+        // Try fleet-auth.json first (manufacturing provisioned), then fleet.json as fallback
+        for (const f of ["/etc/phantom/fleet-auth.json", "/etc/phantom/fleet.json"]) {
+          try { const t = JSON.parse(fs.readFileSync(f, "utf8")).fleet_token; if (t) return t; } catch {}
+        }
+        throw new Error("Fleet token not found — device needs fleet-auth.json from provisioning");
+      })();
       const regBody = JSON.stringify({
         serial, name: hostname, firmware_version: "0.1.0",
         hardware: "pi5", license_key
@@ -439,12 +801,12 @@ app.post("/api/fleet/activate", async (req, res) => {
           license_key,
           fleet_server: "http://10.66.66.1:8080"
         };
-        fs.writeFileSync("/etc/ghostport/fleet.json", JSON.stringify(fleetConf, null, 2));
-        fs.chmodSync("/etc/ghostport/fleet.json", 0o600);
+        fs.writeFileSync("/etc/phantom/fleet.json", JSON.stringify(fleetConf, null, 2));
+        fs.chmodSync("/etc/phantom/fleet.json", 0o600);
         fleetStatus = "registered";
         console.log("[Fleet] Device registered:", regResult.device.id);
       } else {
-        console.log("[Fleet] Registration response:", JSON.stringify(regResult));
+        console.log("[Fleet] Registration response: status", regResult.status || "unknown");
         fleetStatus = "registration pending";
       }
     } catch (e) {
@@ -452,14 +814,35 @@ app.post("/api/fleet/activate", async (req, res) => {
       fleetStatus = "offline — will retry";
     }
 
+    // Auto-generate TOTP for new activations
+    const totpSecret = generateTOTPSecret();
+    const totpInstance = createTOTPInstance(totpSecret);
+    const totpBackupCodes = generateBackupCodes();
+    const authData = JSON.parse(fs.readFileSync(authFile, "utf8"));
+    authData.totp = { secret: totpSecret.base32, setupComplete: false, backupCodes: totpBackupCodes };
+    fs.writeFileSync(authFile, JSON.stringify(authData, null, 2));
+    fs.chmodSync(authFile, 0o600);
+
+    let totpQr = null;
+    try {
+      totpQr = await QRCode.toDataURL(totpInstance.toString(), { width: 300, margin: 2, errorCorrectionLevel: "H" });
+    } catch {}
+
     console.log("[Setup] Device activated with passcode GP-****-****-****");
+
+    logActivity("system", "Device activated via fleet", fleetStatus);
 
     res.json({
       ok: true,
       passcode,
       wifi_ssid: "GhostPort Router",
       wifi_password: wifiPw,
-      fleet_status: fleetStatus
+      fleet_status: fleetStatus,
+      totp: {
+        qrDataUri: totpQr,
+        secret: totpSecret.base32,
+        backupCodes: totpBackupCodes.map(bc => bc.code)
+      }
     });
   } catch (e) {
     console.error("[Setup] Activation error:", e.message);
@@ -467,16 +850,62 @@ app.post("/api/fleet/activate", async (req, res) => {
   }
 });
 
+// ── skip activation (use without subscription) ───────────
+let skipActivationLast = 0;
+app.post("/api/fleet/skip-activation", (req, res) => {
+  if (Date.now() - skipActivationLast < 60000) return res.status(429).json({ ok: false, error: "Too many attempts" });
+  skipActivationLast = Date.now();
+  if (isProvisioned()) {
+    return res.status(409).json({ ok: false, error: "Device already activated" });
+  }
+  const auth = readAuth();
+  if (!auth) return res.status(500).json({ ok: false, error: "Auth not configured" });
+  auth.provisioned = false; // keep as unprovisioned but mark as skipped
+  auth.skippedActivation = true;
+  writeAuth(auth);
+  console.log("[Setup] Activation skipped — using without subscription");
+  res.json({ ok: true });
+});
+
+// ── auto-redirect to install.html if not provisioned ──────
+app.use((req, res, next) => {
+  if (!isProvisioned() && req.path === "/" && req.method === "GET") {
+    const auth = readAuth();
+    if (auth && auth.skippedActivation) return next(); // skip was chosen — let them through
+    return res.redirect("/install.html");
+  }
+  next();
+});
+
+// ── public read-only API routes (no auth, used by waybar/widgets) ────
+const PUBLIC_API_ROUTES = ["/api/status", "/api/threat/summary", "/api/system/version"];
+
 // ── session middleware (everything below requires auth) ────
 
 app.use((req, res, next) => {
+  // Allow public read-only endpoints through without auth
+  if (req.method === "GET" && PUBLIC_API_ROUTES.includes(req.path)) {
+    return next();
+  }
+  // Local widget token bypass (localhost only, no CSRF needed for bearer auth)
+  if (localWidgetToken && (req.ip === "127.0.0.1" || req.ip === "::1" || req.ip === "::ffff:127.0.0.1")) {
+    const authHeader = req.headers["authorization"];
+    if (authHeader && authHeader === "Bearer " + localWidgetToken) {
+      return next();
+    }
+  }
   const token = getCookie(req, "gp-session");
   if (token && sessions.has(token)) {
     const session = sessions.get(token);
     if (Date.now() - session.created < SESSION_TTL && (!session.absoluteExpiry || Date.now() < session.absoluteExpiry)) {
-      session.created = Date.now(); // sliding window — extend on activity
-      // CSRF protection provided by SameSite=Strict cookie attribute
-      // (separate token check removed — SameSite=Strict prevents cross-origin POST)
+      session.lastActivity = Date.now(); // track activity for logging
+      // CSRF: validate token on state-changing requests (defense-in-depth alongside SameSite=Strict)
+      if (req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+        const csrfHeader = req.headers["x-csrf-token"];
+        if (!csrfHeader || csrfHeader !== session.csrf) {
+          return res.status(403).json({ ok: false, error: "Invalid CSRF token" });
+        }
+      }
       return next();
     }
     sessions.delete(token);
@@ -496,9 +925,164 @@ app.get("/api/auth/csrf", (req, res) => {
   res.status(401).json({ ok: false, error: "Not authenticated" });
 });
 
+// ── TOTP setup endpoints (protected — requires session) ──
+
+app.post("/api/auth/totp/setup", async (req, res) => {
+  const auth = readAuth();
+  if (!auth) return res.status(500).json({ ok: false, error: "Auth not configured" });
+  if (auth.totp && auth.totp.setupComplete) {
+    return res.status(409).json({ ok: false, error: "TOTP already configured. Disable it first." });
+  }
+
+  const secret = generateTOTPSecret();
+  const totp = createTOTPInstance(secret);
+  const otpauthUri = totp.toString();
+  const backupCodes = generateBackupCodes();
+
+  // Store secret with setupComplete=false until verified
+  auth.totp = {
+    secret: secret.base32,
+    setupComplete: false,
+    backupCodes
+  };
+  writeAuth(auth);
+
+  try {
+    const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 300, margin: 2, errorCorrectionLevel: "H" });
+    res.json({
+      ok: true,
+      qrDataUri,
+      secret: secret.base32,
+      backupCodes: backupCodes.map(bc => bc.code),
+      otpauthUri
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to generate QR code" });
+  }
+});
+
+app.post("/api/auth/totp/confirm-setup", (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ ok: false, error: "Verification code required" });
+
+  const auth = readAuth();
+  if (!auth || !auth.totp || !auth.totp.secret) {
+    return res.status(400).json({ ok: false, error: "No TOTP setup in progress" });
+  }
+  if (auth.totp.setupComplete) {
+    return res.status(409).json({ ok: false, error: "TOTP already active" });
+  }
+
+  const codeStr = String(code).replace(/\s/g, "");
+  if (!validateTOTPCode(codeStr, auth.totp.secret)) {
+    return res.status(401).json({ ok: false, error: "Invalid code. Check your authenticator app and try again." });
+  }
+
+  auth.totp.setupComplete = true;
+  auth.totp.setupAt = new Date().toISOString();
+  writeAuth(auth);
+  console.log("[Auth] TOTP setup confirmed");
+  logActivity("security", "Two-factor authentication enabled");
+
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/totp/disable", (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ ok: false, error: "Current TOTP code required to disable" });
+
+  const auth = readAuth();
+  if (!auth || !auth.totp || !auth.totp.setupComplete) {
+    return res.status(400).json({ ok: false, error: "TOTP is not configured" });
+  }
+
+  const codeStr = String(code).replace(/\s/g, "");
+  if (!validateTOTPCode(codeStr, auth.totp.secret)) {
+    return res.status(401).json({ ok: false, error: "Invalid TOTP code" });
+  }
+
+  delete auth.totp;
+  writeAuth(auth);
+  console.log("[Auth] TOTP disabled");
+  logActivity("security", "Two-factor authentication disabled");
+
+  res.json({ ok: true });
+});
+
+app.post("/api/auth/totp/resync", async (req, res) => {
+  const auth = readAuth();
+  if (!auth) return res.status(500).json({ ok: false, error: "Auth not configured" });
+
+  // Require passcode re-verification for resync (prevents session-theft account takeover)
+  const { passcode } = req.body;
+  if (!passcode) return res.status(400).json({ ok: false, error: "Passcode required to resync 2FA" });
+  const hash = hashPasscode(passcode.toUpperCase().trim(), auth.salt);
+  if (!crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(auth.hash, "hex"))) {
+    return res.status(401).json({ ok: false, error: "Invalid passcode" });
+  }
+
+  // Clear old TOTP and generate fresh secret
+  const secret = generateTOTPSecret();
+  const totp = createTOTPInstance(secret);
+  const otpauthUri = totp.toString();
+  const backupCodes = generateBackupCodes();
+
+  auth.totp = {
+    secret: secret.base32,
+    setupComplete: false,
+    backupCodes
+  };
+  writeAuth(auth);
+
+  try {
+    const qrDataUri = await QRCode.toDataURL(otpauthUri, { width: 300, margin: 2, errorCorrectionLevel: "H" });
+    console.log("[Auth] TOTP resync — new secret generated");
+    res.json({
+      ok: true,
+      qrDataUri,
+      secret: secret.base32,
+      backupCodes: backupCodes.map(bc => bc.code),
+      otpauthUri
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to generate QR code" });
+  }
+});
+
+app.get("/api/auth/totp/backup-codes", (req, res) => {
+  const auth = readAuth();
+  if (!auth || !auth.totp || !auth.totp.setupComplete) {
+    return res.status(400).json({ ok: false, error: "TOTP is not configured" });
+  }
+  const remaining = (auth.totp.backupCodes || []).filter(bc => !bc.used).length;
+  res.json({ ok: true, remaining, total: BACKUP_CODE_COUNT });
+});
+
+app.post("/api/auth/totp/regenerate-backup", (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ ok: false, error: "Current TOTP code required" });
+
+  const auth = readAuth();
+  if (!auth || !auth.totp || !auth.totp.setupComplete) {
+    return res.status(400).json({ ok: false, error: "TOTP is not configured" });
+  }
+
+  const codeStr = String(code).replace(/\s/g, "");
+  if (!validateTOTPCode(codeStr, auth.totp.secret)) {
+    return res.status(401).json({ ok: false, error: "Invalid TOTP code" });
+  }
+
+  const newCodes = generateBackupCodes();
+  auth.totp.backupCodes = newCodes;
+  writeAuth(auth);
+  console.log("[Auth] Backup codes regenerated");
+
+  res.json({ ok: true, backupCodes: newCodes.map(bc => bc.code) });
+});
+
 app.use(express.static(path.join(__dirname, "public")));
 
-// Prune expired sessions every 10 minutes
+// Prune expired sessions + pending TOTP tokens every 10 minutes
 setInterval(() => {
   const now = Date.now();
   let pruned = 0;
@@ -509,13 +1093,32 @@ setInterval(() => {
     }
   }
   if (pruned > 0) console.log(`[Auth] Pruned ${pruned} expired session(s)`);
+  // Prune expired pending TOTP tokens (5min TTL)
+  for (const [tok, pending] of pendingTotp) {
+    if (now - pending.created > 300000) pendingTotp.delete(tok);
+  }
+  // Prune expired failedAttempts entries (lockout expired + 15min grace)
+  let prunedLockouts = 0;
+  for (const [ip, record] of failedAttempts) {
+    const tier = Math.min(record.lockouts || 0, LOCKOUT_TIERS.length - 1);
+    const lockoutMs = LOCKOUT_TIERS[tier];
+    if (now - record.lastAttempt > lockoutMs + 900000) {
+      failedAttempts.delete(ip);
+      prunedLockouts++;
+    }
+  }
+  if (prunedLockouts > 0) {
+    console.log(`[Auth] Pruned ${prunedLockouts} expired lockout(s)`);
+    saveLockoutState();
+  }
 }, 600000);
 
 // ── change passcode (protected) ───────────────────────────
 
 app.post("/api/auth/change-passcode", (req, res) => {
   const { currentPasscode, newPasscode } = req.body;
-  if (!currentPasscode) return res.status(400).json({ ok: false, error: "Current passcode required" });
+  if (!currentPasscode || typeof currentPasscode !== "string" || currentPasscode.length > 128) return res.status(400).json({ ok: false, error: "Current passcode required" });
+  if (newPasscode && (typeof newPasscode !== "string" || newPasscode.length > 128)) return res.status(400).json({ ok: false, error: "Passcode too long (max 128 characters)" });
 
   const auth = readAuth();
   if (!auth) return res.status(500).json({ ok: false, error: "Auth not configured" });
@@ -530,16 +1133,19 @@ app.post("/api/auth/change-passcode", (req, res) => {
     : generatePasscode();
   const salt = crypto.randomBytes(32).toString("hex");
   const hash = hashPasscode(passcode, salt);
-  writeAuth({ hash, salt });
+  // No plaintext passcode stored — only hash and salt
+  writeAuth({ hash, salt, provisioned: auth.provisioned === true, totp: auth.totp || undefined, skippedActivation: auth.skippedActivation || undefined });
 
-  // Invalidate all other sessions
+  // Invalidate all other sessions and pending TOTP tokens
   const myToken = getCookie(req, "gp-session");
   for (const [tok] of sessions) {
     if (tok !== myToken) sessions.delete(tok);
   }
+  pendingTotp.clear();
 
   const isGenerated = !newPasscode || newPasscode.trim().length < 6;
   console.log(`[Auth] Passcode changed from ${req.ip}`);
+  logActivity("security", "Device passcode changed", req.ip);
   res.json({ ok: true, passcode: isGenerated ? passcode : undefined, generated: isGenerated });
 });
 
@@ -553,6 +1159,34 @@ function run(cmd, timeout = 15000) {
   });
 }
 
+// Fast interface state check via sysfs (no process spawn)
+function ifaceUp(name) {
+  try {
+    const state = fs.readFileSync(`/sys/class/net/${name}/operstate`, "utf8").trim();
+    return { ok: true, out: (state === "up" || state === "unknown") ? "up" : "down" };
+  } catch { return { ok: true, out: "down" }; }
+}
+
+// Fast file read (no process spawn)
+function readFileOr(path, fallback) {
+  try { return { ok: true, out: fs.readFileSync(path, "utf8").trim() }; }
+  catch { return { ok: true, out: fallback }; }
+}
+
+// Canonical DHCP lease source. Always go through `sudo gp-leases` — it
+// auto-discovers the current lease file (dnsmasq legacy vs. pihole-FTL) and
+// falls back to ARP on wlan0 when the lease file goes stale. Never read
+// /var/lib/misc/dnsmasq.leases or /etc/pihole/dhcp.leases directly; paths
+// have moved silently before.
+let _leaseCache = { ts: 0, out: "" };
+async function getDhcpLeases() {
+  const now = Date.now();
+  if (now - _leaseCache.ts < 5000) return _leaseCache.out;
+  const r = await run("sudo gp-leases 2>/dev/null", 5000);
+  _leaseCache = { ts: now, out: r.ok ? r.out : "" };
+  return _leaseCache.out;
+}
+
 function formatUptime(seconds) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -560,6 +1194,14 @@ function formatUptime(seconds) {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+// ── version tracking ─────────────────────────────────────
+const VERSION_FILE = "/etc/phantom/version.json";
+
+function readVersion() {
+  try { return JSON.parse(fs.readFileSync(VERSION_FILE, "utf8")); }
+  catch { return { version: "0.1.0", buildDate: null, updateAvailable: null }; }
 }
 
 // ── rollback state ────────────────────────────────────────
@@ -596,27 +1238,50 @@ function scheduleRollback(previousMode, timeoutSec = 60) {
 // ── routes ─────────────────────────────────────────────────
 
 /**
+ * GET /api/activity
+ * Returns device activity log (last 200 events)
+ */
+app.get("/api/activity", (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, ACTIVITY_MAX);
+  const type = req.query.type || null;
+  let entries = type ? activityLog.filter(e => e.type === type) : activityLog;
+  res.json({ ok: true, events: entries.slice(0, limit) });
+});
+
+// ── Cached public IP (refresh every 60s, not every 5s poll) ───
+let cachedPublicIp = { ip: "unknown", ts: 0 };
+async function getPublicIp() {
+  if (Date.now() - cachedPublicIp.ts < 60000) return { ok: true, out: cachedPublicIp.ip };
+  const result = await run("curl -s --max-time 5 https://icanhazip.com || echo unknown");
+  cachedPublicIp = { ip: (result.out || "unknown").trim(), ts: Date.now() };
+  return { ok: result.ok, out: cachedPublicIp.ip };
+}
+
+/**
  * GET /api/status
  * Returns live system status
  */
 app.get("/api/status", async (req, res) => {
   try {
-    const [gpStatus, wg, ts, ip, uptime, pihole] = await Promise.all([
+    // Use fs reads where possible to avoid spawning ~8 processes every 5s poll
+    const wg = ifaceUp("wg0");
+    const wg1 = ifaceUp("wg1");
+    const ts = ifaceUp("tailscale0");
+    const uptimeRaw = readFileOr("/proc/uptime", "0");
+    const uptime = { ok: true, out: uptimeRaw.out.split(" ")[0] };
+    const modeFile = readFileOr("/etc/phantom/current-mode", "isp");
+
+    const [gpStatus, ip, pihole, wgHandshake] = await Promise.all([
       run("sudo gp-mode status"),
-      run("ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down"),
-      run("ip link show tailscale0 2>/dev/null | grep -q 'state UP\\|state UNKNOWN' && echo up || echo down"),
-      run("curl -s --max-time 5 https://icanhazip.com || echo unknown"),
-      run("awk '{print $1}' /proc/uptime"),
+      getPublicIp(),
       piholeApi("GET", "/stats/summary").then(r => {
         const live = r.data?.queries?.blocked || 0;
         const tally = readTally();
         const delta = Math.max(0, live - tallyBaseline.blocked);
         return { out: String(live), allTime: String(tally.blocked + delta), ok: true };
       }).catch(() => ({ out: "0", allTime: "0", ok: false })),
+      run("sudo wg show wg1 latest-handshakes 2>/dev/null | awk '{print $2}' | head -1"),
     ]);
-
-    // Read active mode from file written by gp-mode
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
     const activeMode = ["isp", "zerotrust", "doublehop", "zhop"].includes(modeFile.out.trim())
       ? modeFile.out.trim()
       : "isp";
@@ -628,12 +1293,51 @@ app.get("/api/status", async (req, res) => {
       remainingSec: rollbackDeadline ? Math.max(0, Math.round((rollbackDeadline - Date.now()) / 1000)) : 0,
     };
 
+    // ── Security Posture Score (0-100) ──
+    const arsenal = readArsenal();
+    const tsUp = ts.out.trim() === "up";
+    const wg1Up = wg1.out.trim() === "up";
+    const handshakeAge = (() => {
+      const ts = parseInt(wgHandshake.out?.trim());
+      return ts ? Math.floor(Date.now() / 1000) - ts : 9999;
+    })();
+
+    let score = 0;
+    const scoreBreakdown = [];
+    // Mode weight (base score)
+    const modeScores = { isp: 20, zerotrust: 50, doublehop: 75, zhop: 100 };
+    const modeBase = modeScores[activeMode] || 20;
+    score += modeBase;
+    scoreBreakdown.push({ name: "mode", value: modeBase, label: activeMode });
+    // Encrypted DNS
+    if (arsenal.encryptedDns) { score += 10; scoreBreakdown.push({ name: "encryptedDns", value: 10 }); }
+    // WireGuard handshake fresh (<60s)
+    if (wg1Up && handshakeAge < 180) { score += 5; scoreBreakdown.push({ name: "wgHandshake", value: 5 }); }
+    else if (wg1Up && handshakeAge >= 180) { score -= 10; scoreBreakdown.push({ name: "wgHandshake", value: -10, label: "stale" }); }
+    // Tailscale connected
+    if (tsUp) { score += 5; scoreBreakdown.push({ name: "tailscale", value: 5 }); }
+    // Pi-hole active (always up in our setup)
+    score += 5; scoreBreakdown.push({ name: "pihole", value: 5 });
+    // Kill switch
+    if (arsenal.killSwitch) { score += 5; scoreBreakdown.push({ name: "killSwitch", value: 5 }); }
+    // MAC randomization
+    if (arsenal.macRandomization) { score += 3; scoreBreakdown.push({ name: "macRandomization", value: 3 }); }
+    // WebRTC blocked
+    if (arsenal.webrtcBlock) { score += 3; scoreBreakdown.push({ name: "webrtcBlock", value: 3 }); }
+    // Anti-fingerprint DNS
+    if (arsenal.antiFingerprint) { score += 3; scoreBreakdown.push({ name: "antiFingerprint", value: 3 }); }
+    // Cover traffic
+    if (arsenal.coverTraffic) { score += 2; scoreBreakdown.push({ name: "coverTraffic", value: 2 }); }
+    // Normalize to 0-100
+    const securityScore = Math.max(0, Math.min(100, score));
+
     res.json({
       ok: true,
       activeMode,
       tunnels: {
         wg0: wg.out.trim() === "up" ? "up" : "down",
-        tailscale: ts.out.trim() === "up" ? "up" : "down",
+        wg1: wg1Up ? "up" : "down",
+        tailscale: tsUp ? "up" : "down",
         pihole: "up",
       },
       ip: ip.out.trim() || "unknown",
@@ -641,6 +1345,15 @@ app.get("/api/status", async (req, res) => {
       adsBlocked: parseInt(pihole.out.trim()) || 0,
       adsBlockedAllTime: parseInt(pihole.allTime?.trim()) || 0,
       rollback: rollbackInfo,
+      securityScore,
+      scoreBreakdown,
+      version: readVersion(),
+      wan: (() => {
+        try {
+          const w = JSON.parse(fs.readFileSync("/etc/phantom/wan.json", "utf8"));
+          return { type: w.type || "ethernet", ssid: w.ssid || "" };
+        } catch { return { type: "ethernet", ssid: "" }; }
+      })(),
       raw: gpStatus.out,
     });
   } catch (e) {
@@ -650,55 +1363,202 @@ app.get("/api/status", async (req, res) => {
 });
 
 /**
+ * GET /api/system/version
+ * Returns firmware version and update availability
+ */
+app.get("/api/system/version", (req, res) => {
+  const ver = readVersion();
+  res.json({ ok: true, ...ver });
+});
+
+/**
+ * GET /api/system/health
+ * Returns system health state from gp-health-guard
+ */
+app.get("/api/system/health", (req, res) => {
+  try {
+    const state = JSON.parse(fs.readFileSync("/etc/phantom/health-state.json", "utf8"));
+    res.json({ ok: true, ...state });
+  } catch {
+    res.json({ ok: true, temp_c: null, mem_used_pct: null, disk_used_pct: null, conntrack_pct: null });
+  }
+});
+
+/**
+ * GET /api/system/updates
+ * Returns auto-update state for all managed components
+ */
+app.get("/api/system/updates", (req, res) => {
+  try {
+    const state = JSON.parse(fs.readFileSync("/etc/phantom/auto-update-state.json", "utf8"));
+    res.json({ ok: true, ...state });
+  } catch {
+    res.json({ ok: true, last_run: null, last_success: null, components: {}, errors: [] });
+  }
+});
+
+/**
+ * POST /api/system/updates/run
+ * Triggers an immediate auto-update run
+ */
+app.post("/api/system/updates/run", async (req, res) => {
+  try {
+    const r = await run("sudo gp-auto-update run 2>&1 | tail -20");
+    res.json({ ok: true, output: r.out || "" });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Auto-update failed" });
+  }
+});
+
+/**
+ * GET /api/threat/summary
+ * Aggregates threat intelligence: blocked DNS, firewall drops, auth failures
+ */
+let threatCache = { data: null, ts: 0 };
+app.get("/api/threat/summary", async (req, res) => {
+  try {
+    // Cache for 60s (journalctl parsing is expensive)
+    if (threatCache.data && Date.now() - threatCache.ts < 60000) {
+      return res.json({ ok: true, ...threatCache.data, cached: true });
+    }
+
+    const [piholeStats, fwDrops, authFails, topBlocked] = await Promise.all([
+      // Pi-hole blocked count (last 24h)
+      piholeApi("GET", "/stats/summary").then(r => ({
+        blocked: r.data?.queries?.blocked || 0,
+        total: r.data?.queries?.total || 0,
+        pct: r.data?.queries?.percent_blocked || 0,
+      })).catch(() => ({ blocked: 0, total: 0, pct: 0 })),
+
+      // Firewall drops in last 24h
+      run("journalctl -k --since '24 hours ago' --no-pager 2>/dev/null | grep -c 'GhostPort-DROP' || echo 0"),
+
+      // Auth failures in last 24h
+      run("journalctl -u ghostport --since '24 hours ago' --no-pager 2>/dev/null | grep -ci 'invalid passcode\\|attempt.*failed\\|lockout' || echo 0"),
+
+      // Top 5 blocked domains from Pi-hole
+      piholeApi("GET", "/stats/top_domains?blocked=true&count=5").then(r => {
+        const domains = r.data?.top_domains || r.data?.domains || {};
+        return Object.entries(domains).slice(0, 5).map(([domain, count]) => ({ domain, count }));
+      }).catch(() => []),
+    ]);
+
+    const summary = {
+      dns: {
+        blocked24h: piholeStats.blocked,
+        total24h: piholeStats.total,
+        blockedPct: piholeStats.pct,
+        topBlocked,
+      },
+      firewall: {
+        drops24h: parseInt(fwDrops.out?.trim()) || 0,
+      },
+      auth: {
+        failures24h: parseInt(authFails.out?.trim()) || 0,
+      },
+      timestamp: new Date().toISOString(),
+    };
+
+    threatCache = { data: summary, ts: Date.now() };
+    res.json({ ok: true, ...summary });
+  } catch (e) {
+    console.error("[Threat] Summary failed:", e.message);
+    res.status(500).json({ ok: false, error: "Threat summary failed" });
+  }
+});
+
+/**
+ * GET /api/security/scan
+ * Returns latest security scan results from gp-security-loop
+ */
+app.get("/api/security/scan", (req, res) => {
+  try {
+    const scan = JSON.parse(fs.readFileSync("/etc/phantom/security-scan.json", "utf8"));
+    res.json({ ok: true, ...scan });
+  } catch {
+    res.json({ ok: true, timestamp: null, issues: -1, verdict: "NO_SCAN_YET" });
+  }
+});
+
+/**
+ * POST /api/security/scan/run
+ * Triggers an immediate security scan
+ */
+app.post("/api/security/scan/run", async (req, res) => {
+  try {
+    const r = await run("sudo gp-security-loop 2>&1 | tail -20");
+    const scan = JSON.parse(fs.readFileSync("/etc/phantom/security-scan.json", "utf8"));
+    res.json({ ok: true, ...scan });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Security scan failed" });
+  }
+});
+
+/**
  * POST /api/mode
  * Body: { mode: "isp" | "zerotrust" | "doublehop" | "zhop" }
  * Switches the active gp-mode with automatic rollback safety
  */
+let modeSwitchInProgress = false;
 app.post("/api/mode", async (req, res) => {
-  const { mode } = req.body;
+  const { mode, skipRollback } = req.body;
   const valid = ["isp", "zerotrust", "doublehop", "zhop"];
+
+  if (modeSwitchInProgress) {
+    return res.status(409).json({ ok: false, error: "Mode switch already in progress" });
+  }
 
   if (!valid.includes(mode)) {
     return res.status(400).json({ ok: false, error: `Invalid mode: ${mode}` });
   }
 
-  // Get current mode before switching
-  const prevFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+  // Get current mode before switching (fs read, no process spawn)
+  const prevFile = readFileOr("/etc/phantom/current-mode", "isp");
   const previousMode = valid.includes(prevFile.out.trim()) ? prevFile.out.trim() : "isp";
 
+  modeSwitchInProgress = true;
   console.log(`[GhostPort] Switching from ${previousMode} to ${mode}`);
-  const result = await run(`sudo gp-mode ${mode}`);
 
-  if (!result.ok) {
-    console.error(`[GhostPort] Mode switch failed: ${result.err}`);
-    return res.status(500).json({ ok: false, error: "Mode switch failed" });
+  try {
+    const result = await run(`sudo gp-mode ${mode}`);
+
+    if (!result.ok) {
+      console.error(`[GhostPort] Mode switch failed: ${result.err}`);
+      return res.status(500).json({ ok: false, error: "Mode switch failed" });
+    }
+
+    // Schedule rollback (ISP is always safe, no rollback needed)
+    const needsRollback = mode !== "isp" && !skipRollback;
+    if (needsRollback) {
+      scheduleRollback(previousMode, 60);
+    } else if (skipRollback && mode !== "isp") {
+      cancelRollback();
+      await run("sudo gp-mode confirm 2>/dev/null || true");
+    }
+
+    // Remove QUIC block rules if toggle is off
+    const arsenalAfter = readArsenal();
+    if (arsenalAfter.quicBlock === false && mode !== "isp") {
+      await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+      console.log("[Arsenal] QUIC block disabled — removed rules after mode switch");
+    }
+
+    console.log(`[GhostPort] Mode switched: ${result.out}`);
+    logActivity("mode", `Mode switched to ${mode.toUpperCase()}`, `from ${previousMode.toUpperCase()}`);
+    res.json({
+      ok: true,
+      mode,
+      previousMode,
+      message: result.out,
+      rollback: {
+        pending: needsRollback,
+        target: needsRollback ? previousMode : null,
+        remainingSec: needsRollback ? 60 : 0,
+      },
+    });
+  } finally {
+    modeSwitchInProgress = false;
   }
-
-  // Schedule rollback (ISP is always safe, no rollback needed)
-  const needsRollback = mode !== "isp";
-  if (needsRollback) {
-    scheduleRollback(previousMode, 60);
-  }
-
-  // Remove QUIC block rules if toggle is off
-  const arsenalAfter = readArsenal();
-  if (arsenalAfter.quicBlock === false && mode !== "isp") {
-    await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
-    console.log("[Arsenal] QUIC block disabled — removed rules after mode switch");
-  }
-
-  console.log(`[GhostPort] Mode switched: ${result.out}`);
-  res.json({
-    ok: true,
-    mode,
-    previousMode,
-    message: result.out,
-    rollback: {
-      pending: needsRollback,
-      target: needsRollback ? previousMode : null,
-      remainingSec: needsRollback ? 60 : 0,
-    },
-  });
 });
 
 /**
@@ -800,20 +1660,27 @@ const HOSTAPD_CONF = "/etc/hostapd/hostapd.conf";
 app.get("/api/hostapd/config", async (req, res) => {
   try {
     const confR = await run("sudo cat " + HOSTAPD_CONF);
-    if (!confR.ok) throw new Error("Could not read hostapd config");
+    if (!confR.ok) { console.error("[Hostapd] sudo cat failed:", confR.err); throw new Error("Could not read hostapd config"); }
     const conf = confR.out;
     const ssid = conf.match(/^ssid=(.+)$/m)?.[1] || "";
     const pass = conf.match(/^wpa_passphrase=(.+)$/m)?.[1] || "";
-    res.json({ ok: true, ssid, passphrase: pass });
+    const keyMgmt = conf.match(/^wpa_key_mgmt=(.+)$/m)?.[1] || "WPA-PSK";
+    let wpaMode = "wpa2";
+    if (keyMgmt.includes("SAE") && keyMgmt.includes("WPA-PSK")) wpaMode = "wpa2wpa3";
+    else if (keyMgmt.includes("SAE")) wpaMode = "wpa3";
+    res.json({ ok: true, ssid, passphrase: pass, wpaMode });
   } catch (e) {
     res.status(500).json({ ok: false, error: "Could not read hostapd config" });
   }
 });
 
 app.post("/api/hostapd/config", async (req, res) => {
-  const { ssid, passphrase } = req.body;
-  if (!ssid && !passphrase) {
-    return res.status(400).json({ ok: false, error: "Provide ssid and/or passphrase" });
+  const { ssid, passphrase, wpaMode } = req.body;
+  if (!ssid && !passphrase && !wpaMode) {
+    return res.status(400).json({ ok: false, error: "Provide ssid, passphrase, and/or wpaMode" });
+  }
+  if (wpaMode && !["wpa2", "wpa2wpa3", "wpa3"].includes(wpaMode)) {
+    return res.status(400).json({ ok: false, error: "wpaMode must be wpa2, wpa2wpa3, or wpa3" });
   }
   if (ssid !== undefined && (ssid.length < 1 || ssid.length > 32)) {
     return res.status(400).json({ ok: false, error: "SSID must be 1-32 characters" });
@@ -835,7 +1702,43 @@ app.post("/api/hostapd/config", async (req, res) => {
     await run("sudo cp " + HOSTAPD_CONF + " " + HOSTAPD_CONF + ".bak");
 
     if (ssid) conf = conf.replace(/^ssid=.+$/m, `ssid=${ssid}`);
-    if (passphrase) conf = conf.replace(/^wpa_passphrase=.+$/m, `wpa_passphrase=${passphrase}`);
+    if (passphrase) {
+      conf = conf.replace(/^wpa_passphrase=.+$/m, `wpa_passphrase=${passphrase}`);
+      // Also update SAE password (WPA3) if present
+      if (/^sae_password=.+$/m.test(conf)) {
+        conf = conf.replace(/^sae_password=.+$/m, `sae_password=${passphrase}`);
+      }
+    }
+
+    // WPA protocol mode switching
+    if (wpaMode) {
+      const currentPass = passphrase || conf.match(/^wpa_passphrase=(.+)$/m)?.[1] || "";
+      if (wpaMode === "wpa2") {
+        conf = conf.replace(/^wpa_key_mgmt=.+$/m, "wpa_key_mgmt=WPA-PSK");
+        conf = conf.replace(/^ieee80211w=.+$/m, "ieee80211w=0");
+        // Remove SAE lines if present
+        conf = conf.replace(/^sae_password=.+\n?/m, "");
+        conf = conf.replace(/^sae_require_mfp=.+\n?/m, "");
+      } else if (wpaMode === "wpa2wpa3") {
+        conf = conf.replace(/^wpa_key_mgmt=.+$/m, "wpa_key_mgmt=WPA-PSK SAE");
+        conf = conf.replace(/^ieee80211w=.+$/m, "ieee80211w=1");
+        if (!/^sae_password=/m.test(conf)) {
+          conf += `\nsae_password=${currentPass}\nsae_require_mfp=1\n`;
+        }
+        if (!/^sae_require_mfp=/m.test(conf)) {
+          conf += "sae_require_mfp=1\n";
+        }
+      } else if (wpaMode === "wpa3") {
+        conf = conf.replace(/^wpa_key_mgmt=.+$/m, "wpa_key_mgmt=SAE");
+        conf = conf.replace(/^ieee80211w=.+$/m, "ieee80211w=2");
+        if (!/^sae_password=/m.test(conf)) {
+          conf += `\nsae_password=${currentPass}\nsae_require_mfp=1\n`;
+        }
+        if (!/^sae_require_mfp=/m.test(conf)) {
+          conf += "sae_require_mfp=1\n";
+        }
+      }
+    }
 
     const tmpHostapd = gpTmpFile("gp-hostapd") + ".conf";
     fs.writeFileSync(tmpHostapd, conf);
@@ -900,7 +1803,7 @@ app.post("/api/repair/wireguard", async (req, res) => {
 });
 
 app.post("/api/repair/firewall", async (req, res) => {
-  const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+  const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
   const rawMode = modeFile.out.trim() || "isp";
   const VALID_MODES = ["isp", "zerotrust", "doublehop", "zhop"];
   const mode = VALID_MODES.includes(rawMode) ? rawMode : "isp";
@@ -921,31 +1824,8 @@ app.post("/api/repair/reboot", async (req, res) => {
 app.post("/api/repair/factory-reset", async (req, res) => {
   console.log("[GhostPort] Factory reset requested");
   try {
-    // Switch to ISP safe mode
-    await run("sudo gp-mode isp --no-rollback");
-    // Remove auth (new passcode generated on next boot)
-    await run("sudo rm -f /etc/ghostport/auth.json");
-    // Reset arsenal config
-    await run("sudo rm -f /etc/ghostport/arsenal.json");
-    // Remove Pi-hole saved credentials
-    await run("sudo rm -f /etc/ghostport/pihole.json");
-    // Remove fleet registration (device will need re-activation)
-    await run("sudo rm -f /etc/ghostport/fleet.json");
-    // Remove subscription state
-    await run("sudo rm -f /etc/ghostport/subscription.json");
-    // Remove Family Shield config
-    await run("sudo rm -f /etc/ghostport/family-shield.json");
-    // Clear ads tally
-    await run("sudo rm -f /etc/ghostport/ads-tally.json");
-    // Remove scheduled mode switches
-    await run("sudo rm -f /etc/cron.d/ghostport-schedules");
-    // Clear temp files
-    await run("sudo rm -f /tmp/gp-sched-line /tmp/gp-current-mode");
-    // Clear mode state to ISP
-    await run("echo isp | sudo tee /etc/ghostport/current-mode");
-    console.log("[GhostPort] Factory reset complete — rebooting");
+    await run("sudo gp-factory-reset");
     res.json({ ok: true, status: "Factory reset complete. Rebooting..." });
-    setTimeout(() => run("sudo reboot"), 3000);
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
@@ -1005,7 +1885,9 @@ app.post("/api/wireguard/setup", async (req, res) => {
     const sanitizedConfig = config.replace(dangerousDirectives, "# [removed by GhostPort for security]");
     // Write config to temp file, then move with sudo
     const tmpFile = gpTmpFile("gp-wg0") + ".conf";
-    fs.writeFileSync(tmpFile, sanitizedConfig);
+    const tmpFd = fs.openSync(tmpFile, "w", 0o600);
+    fs.writeSync(tmpFd, sanitizedConfig);
+    fs.closeSync(tmpFd);
     try {
     await run("sudo mkdir -p /etc/wireguard");
     // Backup existing config before overwriting
@@ -1114,7 +1996,7 @@ app.post("/api/tools/speedtest", async (req, res) => {
 app.post("/api/tools/ping", async (req, res) => {
   try {
     const targets = [
-      { name: "Gateway", cmd: "ip route | awk '/default/{print $3}'" },
+      { name: "Gateway", cmd: "ip route | awk '/default via/{print $3}' | head -1" },
     ];
     const gateway = await run(targets[0].cmd);
     const gatewayIp = gateway.out.trim();
@@ -1149,7 +2031,7 @@ app.post("/api/tools/ping", async (req, res) => {
 
 app.post("/api/tools/ipleak", async (req, res) => {
   try {
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim();
     const vpnModes = ["doublehop", "zhop"];
 
@@ -1198,24 +2080,106 @@ app.get("/api/tools/blocked", async (req, res) => {
 
 // ── bandwidth monitor ────────────────────────────────────
 
+// DECISION: Use fs.readFileSync instead of shelling out — faster, no shell injection risk
+const BANDWIDTH_IFACES = ["eth0", "wlan0", "wg0", "wg1", "tailscale0"];
+const BANDWIDTH_STATS = ["rx_bytes", "tx_bytes", "rx_packets", "tx_packets", "rx_errors", "tx_errors", "rx_dropped", "tx_dropped"];
+
+function readIfaceStat(iface, stat) {
+  // Security: iface and stat are always from whitelists, never user input
+  try {
+    return parseInt(fs.readFileSync(`/sys/class/net/${iface}/statistics/${stat}`, "utf8").trim()) || 0;
+  } catch { return null; }
+}
+
+function readIfaceStats(iface) {
+  const result = {};
+  for (const stat of BANDWIDTH_STATS) {
+    const val = readIfaceStat(iface, stat);
+    if (val === null) return null; // interface doesn't exist
+    result[stat] = val;
+  }
+  return result;
+}
+
+function humanRate(bps) {
+  const bits = bps * 8;
+  if (bits >= 1000000) return `${(bits / 1000000).toFixed(1)} Mbps`;
+  if (bits >= 1000) return `${(bits / 1000).toFixed(1)} Kbps`;
+  return `${bits.toFixed(0)} bps`;
+}
+
 app.get("/api/tools/bandwidth", async (req, res) => {
   try {
-    const interfaces = ["eth0", "wlan0", "wg0", "tailscale0"];
     const stats = {};
-    for (const iface of interfaces) {
-      const rx = await run(`cat /sys/class/net/${iface}/statistics/rx_bytes 2>/dev/null`);
-      const tx = await run(`cat /sys/class/net/${iface}/statistics/tx_bytes 2>/dev/null`);
-      if (rx.ok && tx.ok) {
-        stats[iface] = {
-          rx: parseInt(rx.out.trim()) || 0,
-          tx: parseInt(tx.out.trim()) || 0,
-        };
-      }
+    for (const iface of BANDWIDTH_IFACES) {
+      const s = readIfaceStats(iface);
+      if (s) stats[iface] = s;
     }
     res.json({ ok: true, interfaces: stats });
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+// DECISION: 1-second delay done with setTimeout/Promise, not blocking the event loop
+let bandwidthInProgress = false;
+app.get("/api/tools/bandwidth/rate", async (req, res) => {
+  if (bandwidthInProgress) return res.status(429).json({ ok: false, error: "Bandwidth test already running" });
+  bandwidthInProgress = true;
+  try {
+    // Snapshot 1
+    const snap1 = {};
+    for (const iface of BANDWIDTH_IFACES) {
+      const s = readIfaceStats(iface);
+      if (s) snap1[iface] = s;
+    }
+
+    // Wait 1 second
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Snapshot 2 + compute deltas
+    const interfaces = {};
+    let totalRx = 0, totalTx = 0;
+    for (const iface of Object.keys(snap1)) {
+      const s2 = readIfaceStats(iface);
+      if (!s2) continue;
+      const s1 = snap1[iface];
+      const rxRate = Math.max(0, s2.rx_bytes - s1.rx_bytes);
+      const txRate = Math.max(0, s2.tx_bytes - s1.tx_bytes);
+      interfaces[iface] = {
+        rx_bytes: s2.rx_bytes,
+        tx_bytes: s2.tx_bytes,
+        rx_packets: s2.rx_packets,
+        tx_packets: s2.tx_packets,
+        rx_errors: s2.rx_errors,
+        tx_errors: s2.tx_errors,
+        rx_dropped: s2.rx_dropped,
+        tx_dropped: s2.tx_dropped,
+        rx_rate_bps: rxRate,
+        tx_rate_bps: txRate,
+        rx_rate_human: humanRate(rxRate),
+        tx_rate_human: humanRate(txRate),
+      };
+      totalRx += rxRate;
+      totalTx += txRate;
+    }
+
+    res.json({
+      ok: true,
+      interfaces,
+      total: {
+        rx_rate_bps: totalRx,
+        tx_rate_bps: totalTx,
+        rx_rate_human: humanRate(totalRx),
+        tx_rate_human: humanRate(totalTx),
+      },
+    });
+  } catch (e) {
+    console.error("[GhostPort] Error:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  } finally {
+    bandwidthInProgress = false;
   }
 });
 
@@ -1245,8 +2209,8 @@ app.get("/api/tools/backup", async (req, res) => {
   try {
     const backup = {};
     const files = {
-      arsenal: "/etc/ghostport/arsenal.json",
-      currentMode: "/etc/ghostport/current-mode",
+      arsenal: "/etc/phantom/arsenal.json",
+      currentMode: "/etc/phantom/current-mode",
       // wireguard: excluded — contains PrivateKey (security risk in backups)
       hostapd: "/etc/hostapd/hostapd.conf",
     };
@@ -1255,6 +2219,10 @@ app.get("/api/tools/backup", async (req, res) => {
         const r = await run("sudo cat " + filePath + " 2>/dev/null");
         backup[key] = r.ok ? r.out.trim() : null;
       } catch { backup[key] = null; }
+    }
+    // Redact WiFi passphrase from hostapd config
+    if (backup.hostapd) {
+      backup.hostapd = backup.hostapd.replace(/^wpa_passphrase=.*$/m, 'wpa_passphrase=REDACTED');
     }
     // Include schedules from arsenal
     try { backup.arsenal = JSON.parse(backup.arsenal); } catch { /* keep as string */ }
@@ -1294,12 +2262,14 @@ app.post("/api/tools/restore", async (req, res) => {
       const safeWgConfig = backup.wireguard.replace(dangerousDirectives, "# [removed by GhostPort for security]");
       await run("sudo mkdir -p /etc/wireguard");
       const tmpWg = gpTmpFile("gp-restore-wg") + ".conf";
-      fs.writeFileSync(tmpWg, safeWgConfig);
+      const tmpWgFd = fs.openSync(tmpWg, "w", 0o600);
+      fs.writeSync(tmpWgFd, safeWgConfig);
+      fs.closeSync(tmpWgFd);
       await run(`sudo cp ${tmpWg} /etc/wireguard/wg0.conf`);
       await run("sudo chmod 600 /etc/wireguard/wg0.conf");
       try { fs.unlinkSync(tmpWg); } catch {}
       // Don't use wg-quick service — gp-mode manages wg0 directly
-      const currentMode = fs.readFileSync("/etc/ghostport/current-mode", "utf8").trim();
+      const currentMode = fs.readFileSync("/etc/phantom/current-mode", "utf8").trim();
       if (["doublehop", "zhop"].includes(currentMode)) {
         await run(`sudo gp-mode ${currentMode} --no-rollback`);
       }
@@ -1334,7 +2304,7 @@ app.post("/api/tools/restore", async (req, res) => {
 
 app.get("/api/diagnostics", async (req, res) => {
   try {
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim() || "isp";
     const wgModes = ["doublehop", "zhop"];
 
@@ -1390,28 +2360,153 @@ app.get("/api/diagnostics", async (req, res) => {
   }
 });
 
+// ── WiFi sensing detection ────────────────────────────────
+
+const ISP_SSID_PATTERNS = [
+  { pattern: /^(cox|CoxWiFi)/i, isp: "Cox" },
+  { pattern: /^(XFINITY|xfinitywifi|HOME-.*-(2\.4|5))/i, isp: "Comcast/Xfinity" },
+  { pattern: /^(ATT|att-wifi|2WIRE)/i, isp: "AT&T" },
+  { pattern: /^(SPECTRUM|SpectrumSetup|MySpectrum)/i, isp: "Spectrum" },
+  { pattern: /^(Verizon|Fios-|VerizonFiOS)/i, isp: "Verizon" },
+  { pattern: /^(CenturyLink)/i, isp: "CenturyLink" },
+  { pattern: /^(FRONTIER)/i, isp: "Frontier" },
+  { pattern: /^(T-Mobile|TMOBILE)/i, isp: "T-Mobile" },
+  { pattern: /^(Optimum|OPTIMUM)/i, isp: "Optimum" },
+  { pattern: /^(TWC|BrightHouse)/i, isp: "TWC/Bright House" },
+];
+
+const ISP_OUI_MAP = {
+  "00:1a:77": "Arris (Cox/Spectrum)", "00:1d:cf": "Arris", "00:26:b8": "Arris",
+  "f8:0b:be": "Arris", "20:3d:66": "Arris", "e8:65:d4": "Arris",
+  "28:c6:8e": "Technicolor (ISP)", "34:8a:ae": "Technicolor", "50:39:55": "Technicolor",
+  "7c:03:ab": "Technicolor", "00:1e:c1": "Pace/Arris (AT&T)", "2c:30:33": "Pace/Arris",
+  "00:19:70": "Sagemcom (ISP)", "90:4d:4a": "Sagemcom",
+  "a0:c5:62": "Hitron (Cox)", "cc:03:fa": "Hitron",
+  "00:19:c0": "Ubee (ISP)", "64:68:0c": "Ubee",
+  "44:e1:37": "Actiontec (Verizon)", "f8:e4:fb": "Actiontec",
+  "b0:c7:45": "Xfinity Gateway", "84:a0:6e": "Xfinity Gateway",
+  "58:d5:6e": "Cox Panoramic", "10:86:8c": "Cox Panoramic",
+};
+
+app.get("/api/wifi-sensing-check", async (req, res) => {
+  try {
+    let scanOutput = "";
+    let scanSource = "none";
+
+    // Try wlan1 (station interface) first — won't disrupt AP
+    try {
+      const r1 = await run("sudo iw dev wlan1 scan 2>/dev/null || true");
+      if (r1.out && r1.out.includes("BSS ")) { scanOutput = r1.out; scanSource = "wlan1-scan"; }
+    } catch {}
+
+    // Fall back to wlan0 scan (works on some drivers even in AP mode)
+    if (scanSource === "none") {
+      try {
+        const r2 = await run("sudo iw dev wlan0 scan 2>/dev/null || true", 30000);
+        if (r2.out && r2.out.includes("BSS ")) { scanOutput = r2.out; scanSource = "wlan0-scan"; }
+      } catch {}
+    }
+
+    // Last resort: cached scan dump
+    if (scanSource === "none") {
+      try {
+        const r3 = await run("sudo iw dev wlan0 scan dump 2>/dev/null || true");
+        if (r3.out && r3.out.includes("BSS ")) { scanOutput = r3.out; scanSource = "wlan0-dump"; }
+      } catch {}
+    }
+
+    // Parse scan results
+    const networks = [];
+    if (scanOutput) {
+      const blocks = scanOutput.split(/^BSS /m);
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        const bssidMatch = block.match(/^([0-9a-f:]{17})/i);
+        const ssidMatch = block.match(/SSID:\s*(.+)/);
+        if (!bssidMatch) continue;
+        const bssid = bssidMatch[1].toLowerCase();
+        const ssid = ssidMatch ? ssidMatch[1].trim() : "";
+        if (!ssid) continue;
+
+        // Check SSID against ISP patterns
+        for (const p of ISP_SSID_PATTERNS) {
+          if (p.pattern.test(ssid)) {
+            networks.push({ ssid, bssid, ispName: p.isp, matchType: "ssid" });
+            break;
+          }
+        }
+
+        // Check MAC OUI if no SSID match
+        if (!networks.find(n => n.bssid === bssid)) {
+          const oui = bssid.substring(0, 8);
+          if (ISP_OUI_MAP[oui]) {
+            networks.push({ ssid, bssid, ispName: ISP_OUI_MAP[oui], matchType: "mac-oui" });
+          }
+        }
+      }
+    }
+
+    // Check default gateway MAC
+    let gatewayInfo = null;
+    try {
+      const gwResult = await run("ip route | grep default | awk '{print $3}'");
+      const gwIp = gwResult.out ? gwResult.out.trim() : "";
+      if (gwIp && /^[0-9.]+$/.test(gwIp)) {
+        const arpResult = await run("ip neigh show " + gwIp + " 2>/dev/null || true");
+        const macMatch = (arpResult.out || "").match(/([0-9a-f:]{17})/i);
+        if (macMatch) {
+          const gwMac = macMatch[1].toLowerCase();
+          const gwOui = gwMac.substring(0, 8);
+          gatewayInfo = {
+            ip: gwIp,
+            mac: gwMac,
+            vendor: ISP_OUI_MAP[gwOui] || null,
+            ispLikely: !!ISP_OUI_MAP[gwOui]
+          };
+        }
+      }
+    } catch {}
+
+    const ispDetected = networks.length > 0 || (gatewayInfo && gatewayInfo.ispLikely);
+    let recommendation = "No ISP WiFi networks detected. Your home is clear of WiFi sensing risk.";
+    if (ispDetected) {
+      recommendation = "ISP WiFi detected. Disable your ISP router's WiFi or replace it with a standalone modem. Visit /modem-guide.html for instructions.";
+    }
+
+    res.json({
+      ispWifiDetected: ispDetected,
+      detectedNetworks: networks,
+      gatewayInfo,
+      scanSource,
+      recommendation
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "WiFi scan failed" });
+  }
+});
+
 // ── trouble tickets ───────────────────────────────────────
 
 app.post("/api/ticket", async (req, res) => {
   const { description, contact } = req.body || {};
-  if (!description || description.trim().length < 10) {
-    return res.status(400).json({ ok: false, error: "Description must be at least 10 characters" });
+  if (!description || description.trim().length < 10 || description.length > 5000) {
+    return res.status(400).json({ ok: false, error: "Description must be 10-5000 characters" });
   }
 
   let config;
   try {
-    config = JSON.parse(fs.readFileSync("/etc/ghostport/support.json", "utf8"));
+    config = JSON.parse(fs.readFileSync("/etc/phantom/support.json", "utf8"));
   } catch {
     return res.status(500).json({ ok: false, error: "Support config not found" });
   }
 
   if (!config.webhookUrl) {
-    return res.status(400).json({ ok: false, error: "Webhook not configured — ask your admin to set webhookUrl in /etc/ghostport/support.json" });
+    return res.status(400).json({ ok: false, error: "Webhook not configured — ask your admin to set webhookUrl in /etc/phantom/support.json" });
   }
 
   // Gather system snapshot
   const [modeSnap, wgStatus, tsStatus, ipResult, uptimeResult] = await Promise.all([
-    run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp"),
+    run("cat /etc/phantom/current-mode 2>/dev/null || echo isp"),
     run("systemctl is-active wg-quick@wg0"),
     run("systemctl is-active tailscaled"),
     run("curl -s --max-time 5 https://icanhazip.com || echo unknown"),
@@ -1495,7 +2590,7 @@ app.post("/api/ticket", async (req, res) => {
 
 // ── arsenal ────────────────────────────────────────────────
 
-const ARSENAL_FILE = "/etc/ghostport/arsenal.json";
+const ARSENAL_FILE = "/etc/phantom/arsenal.json";
 
 function readArsenal() {
   try { return JSON.parse(fs.readFileSync(ARSENAL_FILE, "utf8")); }
@@ -1509,15 +2604,15 @@ function writeArsenal(data) {
 // Mutex to prevent concurrent read-modify-write races on arsenal.json
 let arsenalLock = Promise.resolve();
 function withArsenal(fn) {
-  arsenalLock = arsenalLock.then(async () => {
+  const op = arsenalLock.then(async () => {
     const arsenal = readArsenal();
     const result = await fn(arsenal);
     writeArsenal(arsenal);
     return result;
-  }).catch(e => {
-    console.error("[Arsenal] withArsenal error:", e.message);
   });
-  return arsenalLock;
+  // Chain recovery: next withArsenal call should proceed even if this one failed
+  arsenalLock = op.catch(() => {});
+  return op;
 }
 
 // Kill switch — blocks all forwarded traffic if wg0 drops in VPN modes
@@ -1534,7 +2629,7 @@ function startKillSwitch() {
   if (killSwitchInterval) { clearInterval(killSwitchInterval); killSwitchInterval = null; }
   console.log("[Arsenal] Kill switch enabled — monitoring wg0");
   killSwitchInterval = setInterval(async () => {
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim();
     if (mode !== "doublehop" && mode !== "zhop") return;
 
@@ -1570,11 +2665,11 @@ function stopKillSwitch() {
     killSwitchTripped = false;
     console.log("[Arsenal] Kill switch disabled — restoring traffic");
     // Reapply current mode to clear kill switch rules
-    run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp").then(async (modeFile) => {
+    run("cat /etc/phantom/current-mode 2>/dev/null || echo isp").then(async (modeFile) => {
       const mode = modeFile.out.trim();
       if (!["isp", "zerotrust", "doublehop", "zhop"].includes(mode)) return;
       await run(`sudo gp-mode ${mode} --no-rollback`);
-    });
+    }).catch(e => console.error("[Arsenal] Kill switch restore failed:", e.message));
   } else {
     console.log("[Arsenal] Kill switch disabled");
   }
@@ -1583,7 +2678,7 @@ function stopKillSwitch() {
 // DNS leak monitor — runs every 30s, checks if DNS resolver matches ISP
 async function checkDnsLeak() {
   try {
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim();
     // Only monitor in VPN modes and zerotrust
     if (mode !== "doublehop" && mode !== "zhop" && mode !== "zerotrust") {
@@ -1735,15 +2830,42 @@ app.get("/api/pihole/status", async (req, res) => {
 /**
  * GET /api/arsenal/status
  */
+// Dreadnought readiness changes rarely (install/uninstall only). Cache 60s
+// so /api/arsenal/status (polled every 10s) doesn't spawn a subprocess chain
+// 6x per minute forever.
+let _dreadnoughtReadyCache = { ts: 0, ready: false };
+async function getDreadnoughtReady() {
+  const now = Date.now();
+  if (now - _dreadnoughtReadyCache.ts < 60000) return _dreadnoughtReadyCache.ready;
+  const r = await run("sudo gp-dreadnought-install --status", 5000);
+  const ready = r.out.trim() === "ready";
+  _dreadnoughtReadyCache = { ts: now, ready };
+  return ready;
+}
+
 app.get("/api/arsenal/status", async (req, res) => {
   try {
     const arsenal = readArsenal();
-    const [wg, dnsMode, leases, macService] = await Promise.all([
+    const [wg, dnsIntent, leaseOut, macService, dreadnoughtReady, modeFile] = await Promise.all([
       run("ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN\\|state UP' && echo up || echo down"),
       run("sudo gp-dns-switch status"),
-      run("cat /var/lib/misc/dnsmasq.leases 2>/dev/null"),
+      getDhcpLeases(),
       run("systemctl is-enabled gp-mac-random.service 2>/dev/null"),
+      getDreadnoughtReady(),
+      Promise.resolve(readFileOr("/etc/phantom/current-mode", "isp")),
     ]);
+
+    // Compute the actual DNS path the system is serving, not just the user's intent.
+    // In tunnel modes (doublehop/zhop) DNS goes through WireGuard to the EC2 unbound —
+    // encrypted even if gp-dns-switch intent is "off". Showing CLEARTEXT there was a lie.
+    const intent = dnsIntent.out.trim();          // on | off | dreadnought
+    const activeMode = modeFile.out.trim();
+    const inTunnel = activeMode === "doublehop" || activeMode === "zhop";
+    let dnsStatus;
+    if (inTunnel)                     dnsStatus = "tunnel";          // encrypted via WG, EC2 unbound recursive
+    else if (intent === "dreadnought") dnsStatus = "dreadnought";    // local unbound, plaintext to roots
+    else if (intent === "off")         dnsStatus = "plaintext";      // 1.1.1.1 / 8.8.8.8 direct
+    else                               dnsStatus = "doh";            // cloudflared DoH (default)
 
     res.json({
       ok: true,
@@ -1751,14 +2873,19 @@ app.get("/api/arsenal/status", async (req, res) => {
       killSwitchTripped,
       killSwitchAuto: arsenal.killSwitchAuto !== false, // default true
       dnsLeakDetected,
-      encryptedDns: dnsMode.out.trim() === "on",
+      encryptedDns: (dnsStatus === "doh" || dnsStatus === "tunnel"),
+      dnsStatus,
+      dnsIntent: intent,
+      dreadnought: dnsStatus === "dreadnought",
+      dreadnoughtReady,
+      dreadnoughtApplicable: !inTunnel,          // UI hides control in tunnel modes
       macRandomization: macService.out.trim() === "enabled",
       quicBlock: arsenal.quicBlock !== false, // default true
       piholeConnected: piholeSid !== null,
       blocklistFreq: arsenal.blocklistFreq,
       schedules: arsenal.schedules || [],
       wg0: wg.out.trim(),
-      clientCount: leases.out ? leases.out.split("\n").filter(Boolean).length : 0,
+      clientCount: leaseOut ? leaseOut.split("\n").filter(Boolean).length : 0,
     });
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
@@ -1771,14 +2898,19 @@ app.get("/api/arsenal/status", async (req, res) => {
  */
 app.get("/api/arsenal/clients", async (req, res) => {
   try {
-    const leases = await run("cat /var/lib/misc/dnsmasq.leases 2>/dev/null");
-    const clients = leases.out.split("\n").filter(Boolean).filter(line => line.split(/\s+/).length >= 4).map(line => {
+    const leaseOut = await getDhcpLeases();
+    const clients = leaseOut.split("\n").filter(Boolean).filter(line => line.split(/\s+/).length >= 4).map(line => {
       const parts = line.split(/\s+/);
+      const mac = parts[1];
+      // Detect MAC randomization: locally administered bit (2nd hex char is 2,6,A,E)
+      const secondHex = mac.charAt(1).toUpperCase();
+      const macRandomized = ["2","6","A","E"].includes(secondHex);
       return {
         ip: parts[2],
-        mac: parts[1],
-        hostname: (!parts[3] || parts[3] === "*") ? "Unknown" : escapeHtml(parts[3]),
+        mac,
+        hostname: (!parts[3] || parts[3] === "*") ? "Unknown" : parts[3],
         expiry: parts[0] === "0" ? "static" : new Date(parseInt(parts[0]) * 1000).toLocaleTimeString(),
+        macRandomized,
       };
     });
     res.json({ ok: true, clients });
@@ -1803,7 +2935,7 @@ app.post("/api/arsenal/dnstest", async (req, res) => {
       run("dig +short TXT o-o.myaddr.l.google.com @127.0.0.1"),
       run("curl -4 -s --max-time 5 ifconfig.me"),
       run("sudo gp-dns-switch status"),
-      run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp"),
+      run("cat /etc/phantom/current-mode 2>/dev/null || echo isp"),
     ]);
 
     const dnsResolverIp = cfResult.out.replace(/"/g, "").trim();
@@ -1948,6 +3080,50 @@ app.post("/api/arsenal/encrypteddns", async (req, res) => {
 });
 
 /**
+ * POST /api/arsenal/dreadnought — { enabled: true|false }
+ * Enabling: sets Pi-hole upstream to local unbound recursive-to-roots.
+ *   Requires gp-dreadnought-install to have completed first (unbound must be active).
+ * Disabling: reverts to encrypted DoH via cloudflared.
+ * Sticky: state persists in arsenal.json across mode switches (gp-dns-upstream honors it).
+ */
+app.post("/api/arsenal/dreadnought", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const action = enabled ? "dreadnought" : "on";
+    const result = await run(`sudo gp-dns-switch ${action}`, 20000);
+    if (result.out.trim() === "ok") {
+      res.json({ ok: true, dreadnought: !!enabled });
+    } else {
+      const msg = result.err || result.out || "DNS switch failed";
+      res.json({ ok: false, error: msg.includes("unbound not running") ? "Dreadnought not installed — click Install first." : "DNS switch failed — rolled back automatically" });
+    }
+  } catch (e) {
+    console.error("[GhostPort] Error:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/dreadnought/install — no body
+ * Installs + configures unbound for recursive-to-roots DNS. Idempotent.
+ * Does not flip Dreadnought on — caller must POST /api/arsenal/dreadnought { enabled: true } afterwards.
+ */
+app.post("/api/arsenal/dreadnought/install", async (req, res) => {
+  try {
+    const result = await run("sudo gp-dreadnought-install", 120000);
+    _dreadnoughtReadyCache = { ts: 0, ready: false }; // force fresh status next poll
+    if (result.out.trim().endsWith("ok")) {
+      res.json({ ok: true, dreadnoughtReady: true });
+    } else {
+      res.json({ ok: false, error: (result.err || result.out || "install failed").slice(0, 500) });
+    }
+  } catch (e) {
+    console.error("[GhostPort] Error:", e.message);
+    res.status(500).json({ ok: false, error: "Install failed" });
+  }
+});
+
+/**
  * POST /api/arsenal/killswitch — { enabled: true|false }
  */
 app.post("/api/arsenal/killswitch", async (req, res) => {
@@ -2033,7 +3209,7 @@ app.post("/api/arsenal/quicblock", async (req, res) => {
   try {
     await withArsenal(arsenal => { arsenal.quicBlock = enabled; });
 
-    const modeFile = await run("cat /etc/ghostport/current-mode 2>/dev/null || echo isp");
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim();
 
     if (mode !== "isp") {
@@ -2051,6 +3227,104 @@ app.post("/api/arsenal/quicblock", async (req, res) => {
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/antifingerprint — { enabled: true|false }
+ * Toggles anti-fingerprint DNS blocklist (35 tracking/fingerprinting domains)
+ */
+app.post("/api/arsenal/antifingerprint", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const confFile = "/etc/dnsmasq.d/30-anti-fingerprint.conf";
+    const disabledFile = confFile + ".disabled";
+
+    if (enabled) {
+      await run(`sudo test -f ${disabledFile} && sudo mv ${disabledFile} ${confFile} || true`);
+    } else {
+      await run(`sudo test -f ${confFile} && sudo mv ${confFile} ${disabledFile} || true`);
+    }
+
+    await run("sudo systemctl restart pihole-FTL");
+    await withArsenal(arsenal => { arsenal.antiFingerprint = enabled; });
+
+    console.log(`[Arsenal] Anti-fingerprint DNS ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, antiFingerprint: enabled });
+  } catch (e) {
+    console.error("[Arsenal] Anti-fingerprint toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/webrtcblock — { enabled: true|false }
+ * Toggles WebRTC STUN/TURN port blocking
+ */
+app.post("/api/arsenal/webrtcblock", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
+    const mode = modeFile.out.trim();
+
+    if (mode !== "isp") {
+      if (enabled) {
+        await run(`sudo gp-mode ${mode} --no-rollback`);
+      } else {
+        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+      }
+    }
+
+    await withArsenal(arsenal => { arsenal.webrtcBlock = enabled; });
+    console.log(`[Arsenal] WebRTC block ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, webrtcBlock: enabled });
+  } catch (e) {
+    console.error("[Arsenal] WebRTC block toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/covertraffic — { enabled: true|false }
+ * Toggles cover traffic generation (traffic analysis resistance)
+ */
+app.post("/api/arsenal/covertraffic", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    if (enabled) {
+      await run("sudo systemctl enable --now ghostport-noise.service");
+    } else {
+      await run("sudo systemctl disable --now ghostport-noise.service");
+    }
+    await withArsenal(arsenal => { arsenal.coverTraffic = enabled; });
+    console.log(`[Arsenal] Cover traffic ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, coverTraffic: enabled });
+  } catch (e) {
+    console.error("[Arsenal] Cover traffic toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * GET /api/tools/ja3check
+ * Returns the device's TLS fingerprint (JA3 hash) for diagnostic purposes
+ */
+app.get("/api/tools/ja3check", async (req, res) => {
+  try {
+    const result = await run("curl -s --max-time 10 https://ja3er.com/json 2>/dev/null || echo '{}'");
+    let ja3Data = {};
+    try { ja3Data = JSON.parse(result.out.trim()); } catch { ja3Data = { error: "Could not reach ja3er.com" }; }
+
+    res.json({
+      ok: true,
+      ja3_hash: ja3Data.ja3_hash || ja3Data.ja3 || null,
+      ja3_text: ja3Data.ja3_text || null,
+      user_agent: ja3Data.User_Agent || ja3Data.user_agent || null,
+      source: "ja3er.com",
+      note: "This is the Pi's own TLS fingerprint via curl. Connected devices will have different fingerprints based on their browser.",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "JA3 check failed" });
   }
 });
 
@@ -2138,11 +3412,92 @@ app.post("/api/terminal-mode", async (req, res) => {
 });
 
 
+// ── Theme color sync (for desktop widget) ───────────────
+const THEME_FILE = "/etc/phantom/theme.json";
+
+app.get("/api/theme", (req, res) => {
+  try {
+    const data = JSON.parse(fs.readFileSync(THEME_FILE, "utf8"));
+    res.json({ ok: true, color: data.color || "#39ff8f" });
+  } catch {
+    res.json({ ok: true, color: "#39ff8f" });
+  }
+});
+
+app.post("/api/theme", (req, res) => {
+  const { color } = req.body;
+  if (!color || !/^#[0-9a-fA-F]{6}$/.test(color)) {
+    return res.status(400).json({ ok: false, error: "Invalid hex color" });
+  }
+  try {
+    fs.writeFileSync(THEME_FILE, JSON.stringify({ color }), "utf8");
+    res.json({ ok: true, color });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Privacy Paycheck (money saved from blocked ads) ──────
+// Industry avg CPM (cost per 1000 impressions):
+// Display ads: $2-5, Video ads: $10-30, Native ads: $5-15
+// Conservative: $3.50 display CPM. Data costs ~$0.001/ad load (avg 150KB payload).
+// Time saved: ~2.5 seconds per blocked ad (page load improvement).
+
+app.get("/api/tools/paycheck", (req, res) => {
+  try {
+    const tally = readTally();
+    const blocked = tally.blocked || 0;
+    const total = tally.total || 0;
+
+    // Money saved from not seeing ads (advertiser value = your attention value)
+    const cpmDisplay = 3.50;   // conservative display ad CPM
+    const adRevenueSaved = (blocked / 1000) * cpmDisplay;
+
+    // Data saved (avg ad payload ~150KB including trackers, scripts, pixels)
+    const bytesPerAd = 150 * 1024;
+    const dataSavedBytes = blocked * bytesPerAd;
+    const dataSavedMB = dataSavedBytes / (1024 * 1024);
+    const dataSavedGB = dataSavedMB / 1024;
+
+    // Time saved (avg 2.5 seconds per ad load — DNS + fetch + render)
+    const secondsPerAd = 2.5;
+    const timeSavedSeconds = blocked * secondsPerAd;
+    const timeSavedMinutes = timeSavedSeconds / 60;
+    const timeSavedHours = timeSavedMinutes / 60;
+
+    // Data cost savings (avg US mobile data: ~$10/GB)
+    const dataCostPerGB = 10;
+    const dataCostSaved = dataSavedGB * dataCostPerGB;
+
+    // Total estimated savings
+    const totalSaved = adRevenueSaved + dataCostSaved;
+
+    res.json({
+      ok: true,
+      blocked,
+      total,
+      blockRate: total > 0 ? ((blocked / total) * 100).toFixed(1) : "0.0",
+      savings: {
+        total: +totalSaved.toFixed(2),
+        adValue: +adRevenueSaved.toFixed(2),
+        dataCost: +dataCostSaved.toFixed(2),
+        dataSavedMB: +dataSavedMB.toFixed(1),
+        dataSavedGB: +dataSavedGB.toFixed(2),
+        timeSavedMinutes: +timeSavedMinutes.toFixed(1),
+        timeSavedHours: +timeSavedHours.toFixed(1),
+      },
+      methodology: "CPM $3.50 display, 150KB/ad payload, 2.5s/ad load, $10/GB data"
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── security scan (Lynis) ────────────────────────────────
 
 let lynisScanRunning = false;
 
-app.get("/api/security/scan", async (req, res) => {
+app.get("/api/security/lynis", async (req, res) => {
   if (lynisScanRunning) {
     return res.status(409).json({ ok: false, error: "Scan already in progress" });
   }
@@ -2219,13 +3574,13 @@ app.get("/api/security/scan", async (req, res) => {
     res.status(500).json({ ok: false, error: "Operation failed" });
   } finally {
     lynisScanRunning = false;
-    try { fs.unlinkSync(reportFile); } catch {}
+    try { if (reportFile) fs.unlinkSync(reportFile); } catch {}
   }
 });
 
 
 // ── Family Shield (parental controls) ─────────────────────
-const FAMILY_SHIELD_FILE = "/etc/ghostport/family-shield.json";
+const FAMILY_SHIELD_FILE = "/etc/phantom/family-shield.json";
 const FAMILY_SHIELD_GROUP = "FamilyShield";
 
 const FAMILY_SHIELD_LISTS = {
@@ -2262,18 +3617,78 @@ const FAMILY_SHIELD_IP_RANGES = {
   gambling: [],
 };
 
+// ── SNI Inspection (Layer 3 — catches DoH/hardcoded IP bypasses) ──
+const SNI_INSPECT_CMD = "/usr/local/bin/gp-ssl-inspect";
+const SNI_BLOCKLIST_FILE = "/etc/phantom/sni-blocklist.json";
+
+function sniInspectStart() {
+  return run(`${SNI_INSPECT_CMD} start`, 10000).then(r => {
+    if (!r.ok) console.error("[SNI-Inspector] Start error:", r.err);
+    else console.log("[SNI-Inspector] Started");
+  });
+}
+
+function sniInspectStop() {
+  return run(`${SNI_INSPECT_CMD} stop`, 10000).then(r => {
+    if (!r.ok) console.error("[SNI-Inspector] Stop error:", r.err);
+    else console.log("[SNI-Inspector] Stopped");
+  });
+}
+
+function sniInspectAddDevice(ip) {
+  // Defense-in-depth: re-validate IP before passing to shell
+  if (!/^192\.168\.50\.\d{1,3}$/.test(ip)) return Promise.resolve();
+  const octet = parseInt(ip.split(".")[3], 10);
+  if (octet < 1 || octet > 254) return Promise.resolve();
+  return run(`${SNI_INSPECT_CMD} add-device ${ip}`, 10000).then(r => {
+    if (!r.ok) console.error(`[SNI-Inspector] Add device ${ip} error:`, r.err);
+    else console.log(`[SNI-Inspector] Inspecting ${ip}`);
+  });
+}
+
+function sniInspectRemoveDevice(ip) {
+  if (!/^192\.168\.50\.\d{1,3}$/.test(ip)) return Promise.resolve();
+  const octet = parseInt(ip.split(".")[3], 10);
+  if (octet < 1 || octet > 254) return Promise.resolve();
+  return run(`${SNI_INSPECT_CMD} remove-device ${ip}`, 10000).then(r => {
+    if (!r.ok) console.error(`[SNI-Inspector] Remove device ${ip} error:`, r.err);
+    else console.log(`[SNI-Inspector] Stopped inspecting ${ip}`);
+  });
+}
+
+function sniUpdateBlocklist() {
+  // Export current blocked domains to a cache file for the SNI inspector
+  const config = readFamilyShieldConfig();
+  const activeCats = Object.entries(config.categories || {}).filter(([, v]) => v).map(([k]) => k);
+  if (activeCats.length === 0) {
+    try { fs.writeFileSync(SNI_BLOCKLIST_FILE, JSON.stringify({ domains: [] })); } catch {}
+    return;
+  }
+  // The SNI inspector reads gravity DB directly, but we also provide a hint file
+  // with the blocklist URLs so it knows which categories are active
+  try {
+    fs.writeFileSync(SNI_BLOCKLIST_FILE, JSON.stringify({
+      active_categories: activeCats,
+      domains: [], // populated by SNI inspector from gravity DB
+    }));
+  } catch {}
+}
+
 // Manage nftables IP blocking for Family Shield categories
 const FS_NFT_TABLE = "inet ghostport_fs";
 
 function fsIpBlock(category, enabled) {
+  // Validate category is safe for shell (alphanumeric + underscore only)
+  if (!/^[a-z_]+$/.test(category)) return;
   const ranges = FAMILY_SHIELD_IP_RANGES[category] || [];
   if (ranges.length === 0) return; // DNS-only category
 
   const setName = `fs_${category}`;
+  const execOpts = { timeout: 10000 };
 
   if (enabled) {
     // Ensure table and chain exist
-    exec(`sudo nft add table ${FS_NFT_TABLE} 2>/dev/null; sudo nft add chain ${FS_NFT_TABLE} forward '{ type filter hook forward priority 0; policy accept; }' 2>/dev/null`, () => {});
+    exec(`sudo nft add table ${FS_NFT_TABLE} 2>/dev/null; sudo nft add chain ${FS_NFT_TABLE} forward '{ type filter hook forward priority 0; policy accept; }' 2>/dev/null`, execOpts, () => {});
 
     // Build nft commands: delete old set, create new, add elements, add rule
     const elements = ranges.join(", ");
@@ -2283,15 +3698,15 @@ function fsIpBlock(category, enabled) {
       `sudo nft add element ${FS_NFT_TABLE} ${setName} '{ ${elements} }'`,
     ].join(" && ");
 
-    exec(cmds, (err) => {
+    exec(cmds, execOpts, (err) => {
       if (err) {
         console.error(`[FamilyShield] IP block ${category} set error:`, err.message);
         return;
       }
       // Add forward drop rule if not exists
-      exec(`sudo nft -a list chain ${FS_NFT_TABLE} forward 2>/dev/null | grep ${setName}`, (err2, stdout) => {
+      exec(`sudo nft -a list chain ${FS_NFT_TABLE} forward 2>/dev/null | grep '${setName}'`, execOpts, (err2, stdout) => {
         if (!stdout || !stdout.trim()) {
-          exec(`sudo nft add rule ${FS_NFT_TABLE} forward iifname \"wlan0\" ip daddr @${setName} drop comment \"${setName}\"`, (err3) => {
+          exec(`sudo nft add rule ${FS_NFT_TABLE} forward iifname "wlan0" ip daddr @${setName} drop comment "${setName}"`, execOpts, (err3) => {
             if (err3) console.error(`[FamilyShield] IP block ${category} rule error:`, err3.message);
             else console.log(`[FamilyShield] IP block enabled: ${category} (${ranges.length} ranges)`);
           });
@@ -2302,12 +3717,12 @@ function fsIpBlock(category, enabled) {
     });
   } else {
     // Remove rule and set
-    exec(`sudo nft -a list chain ${FS_NFT_TABLE} forward 2>/dev/null | grep ${setName} | awk '{print $NF}'`, (err, stdout) => {
+    exec(`sudo nft -a list chain ${FS_NFT_TABLE} forward 2>/dev/null | grep '${setName}' | awk '{print $NF}'`, execOpts, (err, stdout) => {
       const handle = (stdout || "").trim();
       if (handle) {
-        exec(`sudo nft delete rule ${FS_NFT_TABLE} forward handle ${handle}`, () => {});
+        exec(`sudo nft delete rule ${FS_NFT_TABLE} forward handle ${handle}`, execOpts, () => {});
       }
-      exec(`sudo nft delete set ${FS_NFT_TABLE} ${setName} 2>/dev/null`, () => {
+      exec(`sudo nft delete set ${FS_NFT_TABLE} ${setName} 2>/dev/null`, execOpts, () => {
         console.log(`[FamilyShield] IP block disabled: ${category}`);
       });
     });
@@ -2385,32 +3800,35 @@ app.get("/api/family-shield", async (req, res) => {
 
     const groupId = group ? group.id : null;
 
-    const devices = [];
-    for (const client of clients) {
-      const ip = client.client || "";
-      if (!ip.startsWith("192.168.50.")) continue;
-      const shielded = groupId !== null && Array.isArray(client.groups) && client.groups.includes(groupId);
-      let mac = "";
-      let name = ip;
-      if (suggestMap[ip]) {
-        mac = suggestMap[ip].hwaddr || "";
-        name = suggestMap[ip].name || ip;
+    // Only show devices with active DHCP leases (currently connected)
+    let activeLeases = [];
+    try {
+      const leaseOut = await getDhcpLeases();
+      for (const line of leaseOut.trim().split("\n")) {
+        if (!line) continue;
+        const parts = line.split(/\s+/);
+        if (parts.length >= 4 && parts[2].startsWith("192.168.50.")) {
+          activeLeases.push({ ip: parts[2], mac: parts[1], name: parts[3] === "*" ? parts[2] : parts[3] });
+        }
       }
-      devices.push({ ip, mac, name, shielded });
+    } catch {}
+
+    const devices = [];
+    for (const lease of activeLeases) {
+      const piholeClient = clients.find(c => c.client === lease.ip);
+      const shielded = piholeClient && groupId !== null && Array.isArray(piholeClient.groups) && piholeClient.groups.includes(groupId);
+      const name = (suggestMap[lease.ip] && suggestMap[lease.ip].name) || lease.name || lease.ip;
+      devices.push({ ip: lease.ip, mac: lease.mac, name, shielded: !!shielded });
     }
 
-    for (const [ip, info] of Object.entries(suggestMap)) {
-      if (!ip.startsWith("192.168.50.")) continue;
-      if (devices.find(d => d.ip === ip)) continue;
-      devices.push({
-        ip,
-        mac: info.hwaddr || "",
-        name: info.name || ip,
-        shielded: false,
-      });
-    }
+    // Check SNI inspector status
+    let sniActive = false;
+    try {
+      const sniStatus = execSync(`${SNI_INSPECT_CMD} status 2>/dev/null`, { timeout: 3000 }).toString().trim();
+      sniActive = sniStatus.startsWith("running");
+    } catch {}
 
-    res.json({ ok: true, enabled, categories: config.categories, devices });
+    res.json({ ok: true, enabled, categories: config.categories, devices, sniInspection: sniActive });
   } catch (e) {
     console.error("[FamilyShield] Status error:", e.message);
     res.status(500).json({ ok: false, error: "Failed to get Family Shield status" });
@@ -2434,6 +3852,9 @@ app.post("/api/family-shield/toggle", async (req, res) => {
       if (!group.enabled) {
         await piholeApi("PUT", `/groups/${encodeURIComponent(FAMILY_SHIELD_GROUP)}`, { enabled: true });
       }
+      // Start SNI inspector when Family Shield is enabled
+      sniInspectStart();
+      sniUpdateBlocklist();
     } else {
       const group = await getFamilyShieldGroup();
       if (group) {
@@ -2444,6 +3865,8 @@ app.post("/api/family-shield/toggle", async (req, res) => {
       for (const cat of Object.keys(fsConfig.categories || {})) {
         fsIpBlock(cat, false);
       }
+      // Stop SNI inspector when Family Shield is disabled
+      sniInspectStop();
     }
 
     console.log(`[FamilyShield] ${enabled ? "Enabled" : "Disabled"}`);
@@ -2524,6 +3947,9 @@ app.post("/api/family-shield/categories", async (req, res) => {
       fsIpBlock(category, enabled);
     }
 
+    // Update SNI inspector blocklist cache
+    sniUpdateBlocklist();
+
     piholeApi("POST", "/action/gravity").then(() => {
       console.log("[FamilyShield] Gravity update complete");
     }).catch(e => {
@@ -2590,6 +4016,13 @@ app.post("/api/family-shield/devices", async (req, res) => {
       }
     }
 
+    // Sync SNI inspection for this device
+    if (shielded) {
+      sniInspectAddDevice(ip);
+    } else {
+      sniInspectRemoveDevice(ip);
+    }
+
     console.log(`[FamilyShield] Device ${ip} ${shielded ? "shielded" : "unshielded"}`);
     res.json({ ok: true, ip, shielded });
   } catch (e) {
@@ -2635,20 +4068,558 @@ app.get("/api/family-shield/discover", async (req, res) => {
 });
 
 
+// ── Bedtime Torpedo (per-device internet kill schedule) ────
+const BEDTIME_FILE = "/etc/phantom/bedtime.json";
+const BEDTIME_CRON = "/etc/cron.d/ghostport-bedtime";
+
+function readBedtime() {
+  try { return JSON.parse(fs.readFileSync(BEDTIME_FILE, "utf8")); }
+  catch { return { rules: [] }; }
+}
+
+function writeBedtime(data) {
+  fs.writeFileSync(BEDTIME_FILE, JSON.stringify(data, null, 2));
+  fs.chmodSync(BEDTIME_FILE, 0o644);
+}
+
+// Sync all bedtime rules to cron + nftables
+async function syncBedtimeCron(rules) {
+  const lines = ["# Managed by GhostPort Bedtime Torpedo — do not edit manually",
+                  "SHELL=/bin/bash", "PATH=/usr/local/bin:/usr/bin:/bin", ""];
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    const mac = rule.mac;
+    if (!/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) continue;
+
+    // Parse times
+    const [onH, onM] = rule.bedtime.split(":").map(Number);
+    const [offH, offM] = rule.wakeup.split(":").map(Number);
+    const dayStr = (rule.days || [0,1,2,3,4,5,6]).join(",");
+
+    // Block at bedtime
+    lines.push(`${onM} ${onH} * * ${dayStr} root /sbin/nft add rule inet filter forward ether saddr ${mac} drop comment "bedtime-${rule.id}" 2>/dev/null # bedtime-on-${rule.id}`);
+    // Also block DNS so device sees immediate effect
+    lines.push(`${onM} ${onH} * * ${dayStr} root /sbin/nft add rule inet filter input ether saddr ${mac} udp dport 53 drop comment "bedtime-dns-${rule.id}" 2>/dev/null # bedtime-dns-on-${rule.id}`);
+
+    // Unblock at wakeup
+    lines.push(`${offM} ${offH} * * ${dayStr} root /sbin/nft delete rule inet filter forward handle $(/sbin/nft -a list chain inet filter forward 2>/dev/null | grep 'bedtime-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1) 2>/dev/null; /sbin/nft delete rule inet filter input handle $(/sbin/nft -a list chain inet filter input 2>/dev/null | grep 'bedtime-dns-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1) 2>/dev/null # bedtime-off-${rule.id}`);
+    lines.push("");
+  }
+  const tmpCron = gpTmpFile("gp-bedtime-cron") + ".tmp";
+  fs.writeFileSync(tmpCron, lines.join("\n") + "\n");
+  await run(`cat ${tmpCron} | sudo tee ${BEDTIME_CRON} > /dev/null && sudo chmod 644 ${BEDTIME_CRON}`);
+  fs.unlinkSync(tmpCron);
+}
+
+// Enforce current bedtime rules NOW (for rules that should be active right now)
+async function enforceBedtimeNow(rules) {
+  const now = new Date();
+  const hour = now.getHours();
+  const min = now.getMinutes();
+  const nowMin = hour * 60 + min;
+  const dow = now.getDay();
+
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    const mac = rule.mac;
+    if (!/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) continue;
+    const days = rule.days || [0,1,2,3,4,5,6];
+    if (!days.includes(dow)) continue;
+
+    const [bH, bM] = rule.bedtime.split(":").map(Number);
+    const [wH, wM] = rule.wakeup.split(":").map(Number);
+    const bedMin = bH * 60 + bM;
+    const wakeMin = wH * 60 + wM;
+
+    let shouldBlock = false;
+    if (bedMin > wakeMin) {
+      // Cross-midnight (most common): bedtime 21:00, wakeup 07:00
+      shouldBlock = (nowMin >= bedMin || nowMin < wakeMin);
+    } else {
+      // Same-day: bedtime 08:00, wakeup 15:00
+      shouldBlock = (nowMin >= bedMin && nowMin < wakeMin);
+    }
+
+    if (shouldBlock) {
+      // Check if rule already in nftables
+      const check = await run(`sudo nft -a list chain inet filter forward 2>/dev/null | grep 'bedtime-${rule.id}'`);
+      if (!check.ok || !check.out.includes(`bedtime-${rule.id}`)) {
+        await run(`sudo nft add rule inet filter forward ether saddr ${mac} drop comment '"bedtime-${rule.id}"'`);
+        await run(`sudo nft add rule inet filter input ether saddr ${mac} udp dport 53 drop comment '"bedtime-dns-${rule.id}"'`);
+        console.log(`[Bedtime] Enforced block for ${rule.name || mac} (rule ${rule.id})`);
+      }
+    } else {
+      // Remove if present
+      const check = await run(`sudo nft -a list chain inet filter forward 2>/dev/null | grep 'bedtime-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+      if (check.ok && check.out.trim()) {
+        await run(`sudo nft delete rule inet filter forward handle ${check.out.trim()}`);
+        const dnsCheck = await run(`sudo nft -a list chain inet filter input 2>/dev/null | grep 'bedtime-dns-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+        if (dnsCheck.ok && dnsCheck.out.trim()) {
+          await run(`sudo nft delete rule inet filter input handle ${dnsCheck.out.trim()}`);
+        }
+        console.log(`[Bedtime] Removed block for ${rule.name || mac} (rule ${rule.id})`);
+      }
+    }
+  }
+}
+
+/**
+ * GET /api/bedtime — list all bedtime rules
+ */
+app.get("/api/bedtime", (req, res) => {
+  const data = readBedtime();
+  res.json({ ok: true, rules: data.rules || [] });
+});
+
+/**
+ * POST /api/bedtime — create a new bedtime rule
+ * Body: { mac, name, bedtime: "HH:MM", wakeup: "HH:MM", days: [0-6], enabled: true }
+ */
+app.post("/api/bedtime", async (req, res) => {
+  try {
+    const { mac, name, bedtime, wakeup, days } = req.body;
+
+    if (!mac || !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) {
+      return res.status(400).json({ ok: false, error: "Invalid MAC address" });
+    }
+    if (!bedtime || !/^\d{2}:\d{2}$/.test(bedtime)) {
+      return res.status(400).json({ ok: false, error: "Invalid bedtime (use HH:MM)" });
+    }
+    if (!wakeup || !/^\d{2}:\d{2}$/.test(wakeup)) {
+      return res.status(400).json({ ok: false, error: "Invalid wakeup time (use HH:MM)" });
+    }
+
+    const data = readBedtime();
+    const id = crypto.randomBytes(4).toString("hex");
+    const rule = {
+      id,
+      mac: mac.toLowerCase(),
+      name: (name || "").slice(0, 64).replace(/[^a-zA-Z0-9 _-]/g, ""),
+      bedtime,
+      wakeup,
+      days: Array.isArray(days) ? days.filter(d => d >= 0 && d <= 6) : [0,1,2,3,4,5,6],
+      enabled: true,
+      created: new Date().toISOString(),
+    };
+    data.rules.push(rule);
+    writeBedtime(data);
+    await syncBedtimeCron(data.rules);
+    await enforceBedtimeNow(data.rules);
+
+    console.log(`[Bedtime] Rule created: ${rule.name || rule.mac} ${rule.bedtime}-${rule.wakeup}`);
+    res.json({ ok: true, rule });
+  } catch (e) {
+    console.error("[Bedtime] Create error:", e.message);
+    res.status(500).json({ ok: false, error: "Failed to create bedtime rule" });
+  }
+});
+
+/**
+ * PUT /api/bedtime/:id — update a bedtime rule
+ */
+app.put("/api/bedtime/:id", async (req, res) => {
+  try {
+    const data = readBedtime();
+    const rule = data.rules.find(r => r.id === req.params.id);
+    if (!rule) return res.status(404).json({ ok: false, error: "Rule not found" });
+
+    const { bedtime, wakeup, days, enabled, name } = req.body;
+    if (bedtime && /^\d{2}:\d{2}$/.test(bedtime)) rule.bedtime = bedtime;
+    if (wakeup && /^\d{2}:\d{2}$/.test(wakeup)) rule.wakeup = wakeup;
+    if (Array.isArray(days)) rule.days = days.filter(d => d >= 0 && d <= 6);
+    if (typeof enabled === "boolean") rule.enabled = enabled;
+    if (name !== undefined) rule.name = (name || "").slice(0, 64).replace(/[^a-zA-Z0-9 _-]/g, "");
+
+    writeBedtime(data);
+    await syncBedtimeCron(data.rules);
+    await enforceBedtimeNow(data.rules);
+
+    res.json({ ok: true, rule });
+  } catch (e) {
+    console.error("[Bedtime] Update error:", e.message);
+    res.status(500).json({ ok: false, error: "Failed to update rule" });
+  }
+});
+
+/**
+ * DELETE /api/bedtime/:id — delete a bedtime rule
+ */
+app.delete("/api/bedtime/:id", async (req, res) => {
+  try {
+    const data = readBedtime();
+    const idx = data.rules.findIndex(r => r.id === req.params.id);
+    if (idx === -1) return res.status(404).json({ ok: false, error: "Rule not found" });
+
+    const rule = data.rules[idx];
+    // Remove nftables rules for this device
+    const fwdCheck = await run(`sudo nft -a list chain inet filter forward 2>/dev/null | grep 'bedtime-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+    if (fwdCheck.ok && fwdCheck.out.trim()) {
+      await run(`sudo nft delete rule inet filter forward handle ${fwdCheck.out.trim()}`);
+    }
+    const dnsCheck = await run(`sudo nft -a list chain inet filter input 2>/dev/null | grep 'bedtime-dns-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+    if (dnsCheck.ok && dnsCheck.out.trim()) {
+      await run(`sudo nft delete rule inet filter input handle ${dnsCheck.out.trim()}`);
+    }
+
+    data.rules.splice(idx, 1);
+    writeBedtime(data);
+    await syncBedtimeCron(data.rules);
+
+    console.log(`[Bedtime] Rule deleted: ${rule.name || rule.mac}`);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("[Bedtime] Delete error:", e.message);
+    res.status(500).json({ ok: false, error: "Failed to delete rule" });
+  }
+});
+
+/**
+ * POST /api/bedtime/:id/test — immediately block/unblock for testing (30-second torpedo)
+ */
+app.post("/api/bedtime/:id/test", async (req, res) => {
+  try {
+    const data = readBedtime();
+    const rule = data.rules.find(r => r.id === req.params.id);
+    if (!rule) return res.status(404).json({ ok: false, error: "Rule not found" });
+
+    const mac = rule.mac;
+    // Fire torpedo for 30 seconds
+    await run(`sudo nft add rule inet filter forward ether saddr ${mac} drop comment '"bedtime-test-${rule.id}"'`);
+    await run(`sudo nft add rule inet filter input ether saddr ${mac} udp dport 53 drop comment '"bedtime-test-dns-${rule.id}"'`);
+
+    // Auto-remove after 30 seconds
+    setTimeout(async () => {
+      const fwd = await run(`sudo nft -a list chain inet filter forward 2>/dev/null | grep 'bedtime-test-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+      if (fwd.ok && fwd.out.trim()) await run(`sudo nft delete rule inet filter forward handle ${fwd.out.trim()}`);
+      const dns = await run(`sudo nft -a list chain inet filter input 2>/dev/null | grep 'bedtime-test-dns-${rule.id}' | grep -oP 'handle \\K[0-9]+' | head -1`);
+      if (dns.ok && dns.out.trim()) await run(`sudo nft delete rule inet filter input handle ${dns.out.trim()}`);
+      console.log(`[Bedtime] Test torpedo expired for ${rule.name || rule.mac}`);
+    }, 30000);
+
+    console.log(`[Bedtime] Test torpedo fired at ${rule.name || rule.mac} (30s)`);
+    res.json({ ok: true, message: `Internet killed for ${rule.name || rule.mac} for 30 seconds` });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Torpedo misfired" });
+  }
+});
+
+// Enforce bedtime rules on server start
+(async () => {
+  try {
+    const data = readBedtime();
+    if (data.rules && data.rules.length > 0) {
+      await syncBedtimeCron(data.rules);
+      await enforceBedtimeNow(data.rules);
+      console.log(`[Bedtime] ${data.rules.length} rules loaded, enforcement checked`);
+    }
+  } catch (e) {
+    console.error("[Bedtime] Init error:", e.message);
+  }
+})();
+
+// ── WiFi WAN management ───────────────────────────────────
+
+const WAN_CONF = "/etc/phantom/wan.json";
+
+function readWanConfig() {
+  try { return JSON.parse(fs.readFileSync(WAN_CONF, "utf8")); }
+  catch { return { type: "ethernet", ssid: "", password: "" }; }
+}
+
+function writeWanConfig(config) {
+  fs.writeFileSync(WAN_CONF, JSON.stringify(config, null, 2), "utf8");
+}
+
+/**
+ * GET /api/wan/status
+ * Returns current WAN type and interface state
+ */
+app.get("/api/wan/status", async (req, res) => {
+  try {
+    const config = readWanConfig();
+    const result = await run("sudo gp-wan status");
+    const lines = (result.out || "").split("\n");
+    const parsed = {};
+    for (const line of lines) {
+      const [k, v] = line.split("=", 2);
+      if (k && v !== undefined) parsed[k.trim()] = v.trim();
+    }
+    res.json({
+      ok: true,
+      type: config.type || "ethernet",
+      ssid: config.ssid || "",
+      interface: parsed.wan_interface || "eth0",
+      wlan1State: parsed.wlan1_state || "down",
+      wlan1Ip: parsed.wlan1_ip || null,
+      connectedSsid: parsed.connected_ssid || null,
+      eth0Ip: parsed.eth0_ip || null,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to get WAN status" });
+  }
+});
+
+/**
+ * POST /api/wan/scan
+ * Scans for nearby WiFi networks (may take up to 30s)
+ */
+app.post("/api/wan/scan", async (req, res) => {
+  try {
+    const result = await run("sudo gp-wan scan", 30000);
+    try {
+      const networks = JSON.parse(result.out || "[]");
+      res.json({ ok: true, networks });
+    } catch {
+      res.json({ ok: true, networks: [] });
+    }
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Scan failed" });
+  }
+});
+
+/**
+ * POST /api/wan/ethernet
+ * Switch back to Ethernet WAN
+ */
+app.post("/api/wan/ethernet", async (req, res) => {
+  try {
+    console.log("[WAN] Switching to Ethernet");
+    const result = await run("sudo gp-wan ethernet", 30000);
+    logActivity("wan", "Switched to Ethernet WAN");
+    res.json({ ok: result.ok, message: result.out, error: result.err || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to switch to Ethernet" });
+  }
+});
+
+/**
+ * POST /api/wan/wireless
+ * Body: { ssid: string, password: string }
+ * Save creds and connect to WiFi WAN
+ */
+app.post("/api/wan/wireless", async (req, res) => {
+  try {
+    const { ssid, password } = req.body;
+
+    // Validate SSID: 1-32 chars, no control characters
+    if (!ssid || typeof ssid !== "string" || ssid.length < 1 || ssid.length > 32) {
+      return res.status(400).json({ ok: false, error: "SSID must be 1-32 characters" });
+    }
+    if (/[\x00-\x1f\x7f]/.test(ssid)) {
+      return res.status(400).json({ ok: false, error: "SSID contains invalid characters" });
+    }
+
+    // Validate password: 8-63 chars, no control characters
+    if (!password || typeof password !== "string" || password.length < 8 || password.length > 63) {
+      return res.status(400).json({ ok: false, error: "Password must be 8-63 characters" });
+    }
+    if (/[\x00-\x1f\x7f]/.test(password)) {
+      return res.status(400).json({ ok: false, error: "Password contains invalid characters" });
+    }
+
+    // Write creds to wan.json (avoids shell injection)
+    const config = readWanConfig();
+    config.ssid = ssid;
+    config.password = password;
+    writeWanConfig(config);
+
+    console.log(`[WAN] Connecting to WiFi: ${ssid}`);
+    const result = await run("sudo gp-wan wireless", 60000);
+
+    if (result.ok) {
+      logActivity("wan", `Connected to WiFi WAN: ${ssid}`);
+    } else {
+      logActivity("wan", `WiFi WAN connection failed: ${ssid}`, result.err);
+    }
+
+    res.json({ ok: result.ok, message: result.out, error: result.err || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to connect to WiFi" });
+  }
+});
+
+
+// ── fleet checkin (periodic command polling) ────────────────
+
+const FLEET_CHECKIN_INTERVAL = 60000; // 1 minute
+
+function getFleetConfig() {
+  for (const f of ["/etc/phantom/fleet.json", "/etc/phantom/fleet-auth.json"]) {
+    try {
+      const data = JSON.parse(fs.readFileSync(f, "utf8"));
+      if (data.fleet_token || data.fleet_server) return data;
+    } catch {}
+  }
+  return null;
+}
+
+async function fleetCheckin() {
+  const fleet = getFleetConfig();
+  if (!fleet || !fleet.fleet_server || !fleet.fleet_token) return;
+
+  const deviceId = fleet.device_id || "unknown";
+  const url = `${fleet.fleet_server}/fleet/devices/${encodeURIComponent(deviceId)}/commands`;
+
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const req = http.request(url, {
+        method: "GET",
+        headers: { "Authorization": "Bearer " + fleet.fleet_token },
+        timeout: 10000
+      }, res => {
+        let data = "";
+        res.on("data", c => data += c);
+        res.on("end", () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, body: {} }); }
+        });
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+      req.end();
+    });
+
+    if (result.status !== 200 || !result.body.commands) return;
+
+    for (const cmd of result.body.commands) {
+      await handleFleetCommand(cmd, fleet);
+    }
+  } catch {
+    // Silent — fleet server may be unreachable (e.g. WireGuard down)
+  }
+}
+
+function verifyCommandHMAC(cmd, fleet) {
+  if (!fleet.hmac_secret) {
+    console.error("[Fleet] No hmac_secret configured — rejecting all commands for security");
+    return false;
+  }
+  if (!cmd.signature || typeof cmd.signature !== "string" || !/^[0-9a-f]{64}$/i.test(cmd.signature)) {
+    console.warn(`[Fleet] Command ${cmd.id} has invalid/missing signature — rejecting`);
+    return false;
+  }
+  const message = `${cmd.id}|${cmd.type}|${cmd.payload || ""}|${cmd.created_at}`;
+  const expected = crypto.createHmac("sha256", fleet.hmac_secret).update(message).digest("hex");
+  if (!crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(cmd.signature, "hex"))) {
+    console.error(`[Fleet] HMAC MISMATCH on command ${cmd.id} (type: ${cmd.type}) — possible tampering`);
+    logActivity("security", `Fleet command HMAC verification failed: ${cmd.type} (${cmd.id})`);
+    return false;
+  }
+  return true;
+}
+
+async function handleFleetCommand(cmd, fleet) {
+  console.log(`[Fleet] Processing command: ${cmd.type} (id: ${cmd.id})`);
+
+  // Verify HMAC signature before executing ANY command
+  if (!verifyCommandHMAC(cmd, fleet)) {
+    console.error(`[Fleet] REJECTED unsigned/tampered command: ${cmd.type} (${cmd.id})`);
+    return;
+  }
+
+  try {
+    if (cmd.type === "totp-reset") {
+      // Clear TOTP config — user can re-setup from dashboard
+      const auth = readAuth();
+      if (auth && auth.totp) {
+        delete auth.totp;
+        writeAuth(auth);
+        sessions.clear();
+        console.log("[Fleet] TOTP reset via fleet command — all sessions cleared");
+        logActivity("security", "TOTP reset via fleet command");
+      }
+    } else if (cmd.type === "totp-regen-backup") {
+      // Regenerate backup codes without touching the TOTP secret
+      const auth = readAuth();
+      if (auth && auth.totp && auth.totp.setupComplete && auth.totp.secret) {
+        auth.totp.backupCodes = generateBackupCodes(8);
+        writeAuth(auth);
+        console.log("[Fleet] Backup codes regenerated via fleet command");
+        logActivity("security", "Backup codes regenerated via fleet command");
+      } else {
+        console.log("[Fleet] totp-regen-backup skipped — TOTP not configured");
+      }
+    }
+
+    // Acknowledge command
+    const ackUrl = `${fleet.fleet_server}/fleet/devices/${encodeURIComponent(fleet.device_id)}/commands/${encodeURIComponent(cmd.id)}/ack`;
+    const ackBody = JSON.stringify({ status: "completed" });
+    await new Promise((resolve) => {
+      const req = http.request(ackUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + fleet.fleet_token,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(ackBody)
+        },
+        timeout: 10000
+      }, res => {
+        let d = ""; res.on("data", c => d += c); res.on("end", () => resolve());
+      });
+      req.on("error", () => resolve());
+      req.on("timeout", () => { req.destroy(); resolve(); });
+      req.write(ackBody);
+      req.end();
+    });
+
+    console.log(`[Fleet] Command ${cmd.id} acknowledged`);
+  } catch (e) {
+    console.error(`[Fleet] Command ${cmd.type} failed:`, e.message);
+  }
+}
+
+// Start checkin loop after 10s delay (let server boot)
+setTimeout(() => {
+  fleetCheckin();
+  setInterval(fleetCheckin, FLEET_CHECKIN_INTERVAL);
+}, 10000);
+
+// ── crash protection ────────────────────────────────────────
+// Prevent silent crashes — log and let systemd restart us
+process.on("uncaughtException", (err) => {
+  console.error("[FATAL] Uncaught exception:", err.message);
+  console.error(err.stack);
+  logActivity("error", "Server crash: uncaught exception", err.message);
+  try { saveActivity(); } catch {}
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[ERROR] Unhandled promise rejection:", reason);
+  logActivity("error", "Unhandled promise rejection", String(reason));
+});
+
 // ── start ──────────────────────────────────────────────────
 // HTTP — primary, no SSL warnings for customers
 http.createServer(app).listen(PORT, "0.0.0.0", () => {
   console.log(`  ☠  HTTP  running on port ${PORT}`);
+  logActivity("system", "GhostPort server started");
 });
 
-// HTTPS — available for admin/Tailscale use
+// HTTPS — try Tailscale certs first (valid Let's Encrypt), fall back to self-signed
 try {
-  const sslOptions = {
-    key: fs.readFileSync("/opt/ghostport/ssl/ghostport.key"),
-    cert: fs.readFileSync("/opt/ghostport/ssl/ghostport.crt"),
-  };
-  https.createServer(sslOptions, app).listen(4201, "0.0.0.0", () => {
-    console.log("  ☠  HTTPS running on port 4201");
+  let sslKey, sslCert, certSource;
+  // Priority 1: Tailscale certs (valid LE certs from `tailscale cert`)
+  const tsHostname = (() => { try { return require("os").hostname(); } catch { return "ghostport"; } })();
+  const tsCertPaths = [
+    { key: `/opt/phantom/ssl/${tsHostname}.key`, cert: `/opt/phantom/ssl/${tsHostname}.crt` },
+    { key: "/opt/phantom/ssl/tailscale.key", cert: "/opt/phantom/ssl/tailscale.crt" },
+  ];
+  for (const p of tsCertPaths) {
+    try {
+      sslKey = fs.readFileSync(p.key);
+      sslCert = fs.readFileSync(p.cert);
+      certSource = `Tailscale (${p.cert})`;
+      break;
+    } catch {}
+  }
+  // Priority 2: Self-signed fallback
+  if (!sslKey) {
+    sslKey = fs.readFileSync("/opt/phantom/ssl/ghostport.key");
+    sslCert = fs.readFileSync("/opt/phantom/ssl/ghostport.crt");
+    certSource = "self-signed";
+  }
+  https.createServer({ key: sslKey, cert: sslCert, minVersion: "TLSv1.2", ciphers: "ECDHE+AESGCM:ECDHE+CHACHA20:!aNULL:!MD5:!DSS" }, app).listen(4201, "0.0.0.0", () => {
+    console.log(`  ☠  HTTPS running on port 4201 (${certSource})`);
   });
 } catch (e) {
   console.log("  [!] HTTPS disabled — no SSL certs found");

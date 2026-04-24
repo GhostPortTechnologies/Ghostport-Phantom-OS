@@ -1,4 +1,6 @@
 #!/bin/bash
+set -euo pipefail
+[[ $(id -u) -eq 0 ]] || exec sudo "$0" "$@"
 # gp-dns-switch — Toggle Unbound between cleartext and encrypted DNS (cloudflared DoH)
 # Usage: gp-dns-switch [on|off|status]
 
@@ -18,13 +20,13 @@ forward-zone:
 	name: "."
 	forward-addr: 127.0.0.1@5053
 EOF
-    systemctl restart unbound
+    systemctl restart unbound || { echo "Unbound restart failed, restoring backup" >&2; cp "${CONF}.bak" "$CONF"; systemctl restart unbound 2>/dev/null; exit 1; }
     sleep 1
     if dig +short +time=3 example.com @127.0.0.1 >/dev/null 2>&1; then
       echo "ok"
     else
       cp "${CONF}.bak" "$CONF"
-      systemctl restart unbound
+      systemctl restart unbound || { echo "Unbound restart failed, restoring backup" >&2; cp "${CONF}.bak" "$CONF"; systemctl restart unbound 2>/dev/null; exit 1; }
       echo "fail"
       exit 1
     fi
@@ -40,13 +42,13 @@ forward-zone:
 	forward-addr: 1.1.1.1
 	forward-addr: 8.8.8.8
 EOF
-    systemctl restart unbound
+    systemctl restart unbound || { echo "Unbound restart failed, restoring backup" >&2; cp "${CONF}.bak" "$CONF"; systemctl restart unbound 2>/dev/null; exit 1; }
     sleep 1
     if dig +short +time=3 example.com @127.0.0.1 >/dev/null 2>&1; then
       echo "ok"
     else
       cp "${CONF}.bak" "$CONF"
-      systemctl restart unbound
+      systemctl restart unbound || { echo "Unbound restart failed, restoring backup" >&2; cp "${CONF}.bak" "$CONF"; systemctl restart unbound 2>/dev/null; exit 1; }
       echo "fail"
       exit 1
     fi

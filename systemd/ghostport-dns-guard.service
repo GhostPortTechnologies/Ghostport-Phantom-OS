@@ -1,0 +1,9 @@
+[Unit]
+Description=GhostPort DNS Integrity Guard
+After=network-online.target pihole-FTL.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-dns-guard
+TimeoutStartSec=30
+Nice=10

@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128pt" height="128pt" viewBox="0 0 128 128" version="1.1">
+<defs>
+<clipPath id="circleClip">
+<circle cx="64" cy="64" r="62"/>
+</clipPath>
+</defs>
+<g id="surface46">
+<!-- Background circle -->
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<g clip-path="url(#circleClip)">
+
+<!-- === GREAT WHITE SHARK JAWS — museum mount, front view === -->
+
+<!-- === UPPER JAW — horseshoe arch === -->
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 16 50 C 16 30 30 14 64 14 C 98 14 112 30 112 50"/>
+
+<!-- Upper jaw bone thickness -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.08;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 20 50 C 20 34 32 20 64 20 C 96 20 108 34 108 50"/>
+
+<!-- === UPPER TEETH — front row, large triangles pointing DOWN === -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 18 48 L 22 68 L 26 48 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 27 42 L 32 66 L 37 42 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 38 34 L 44 62 L 50 34 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 51 28 L 57 60 L 63 28 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 65 28 L 71 60 L 77 28 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 78 34 L 84 62 L 90 34 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 91 42 L 96 66 L 101 42 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 102 48 L 106 68 L 110 48 Z"/>
+
+<!-- === UPPER TEETH — second row, smaller, behind front row === -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 24 44 L 27 56 L 30 44 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" d="M 34 38 L 38 52 L 42 38 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" d="M 46 30 L 50 48 L 54 30 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" d="M 58 26 L 62 44 L 66 26 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" d="M 70 28 L 74 46 L 78 28 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" d="M 82 34 L 86 50 L 90 34 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 96 42 L 99 54 L 102 42 Z"/>
+
+<!-- === LOWER JAW — horseshoe arch, wider/lower === -->
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 20 78 C 20 100 34 114 64 114 C 94 114 108 100 108 78"/>
+
+<!-- Lower jaw bone thickness -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.08;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 78 C 24 96 36 108 64 108 C 92 108 104 96 104 78"/>
+
+<!-- === LOWER TEETH — front row, triangles pointing UP === -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.85;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 22 80 L 26 64 L 30 80 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 31 86 L 36 66 L 41 86 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 42 92 L 48 68 L 54 92 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 55 98 L 60 72 L 65 98 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 63 98 L 68 72 L 73 98 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.95;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 74 92 L 80 68 L 86 92 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 87 86 L 92 66 L 97 86 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.85;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 98 80 L 102 64 L 106 80 Z"/>
+
+<!-- === LOWER TEETH — second row, smaller === -->
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.25;stroke:none;" d="M 28 82 L 31 72 L 34 82 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 38 88 L 42 76 L 46 88 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 50 94 L 54 80 L 58 94 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 62 98 L 64 84 L 68 98 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 72 94 L 76 80 L 80 94 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" d="M 84 88 L 88 76 L 92 88 Z"/>
+<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.25;stroke:none;" d="M 96 82 L 99 72 L 102 82 Z"/>
+
+</g>
+</g>
+</svg>

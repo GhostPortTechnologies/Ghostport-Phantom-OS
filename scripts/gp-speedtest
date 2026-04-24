@@ -1,0 +1,150 @@
+#!/bin/bash
+# gp-speedtest — Native terminal speed test for GhostPort OS
+# No external dependencies, uses curl + ping only
+
+set -euo pipefail
+
+# Colors
+G='\033[38;2;57;255;143m'  # GhostPort green
+GB='\033[1;38;2;57;255;143m' # Green bold
+DIM='\033[2;37m'            # Dim gray
+Y='\033[1;33m'              # Yellow bold
+R='\033[1;31m'              # Red bold
+B='\033[1m'                 # Bold
+RST='\033[0m'               # Reset
+
+# Defaults
+JSON=false QUICK=false
+DL_RUNS=3 UL_RUNS=2 DL_BYTES=25000000 UL_BYTES=5000000
+
+for arg in "$@"; do
+  case "$arg" in
+    --json) JSON=true ;;
+    --quick) QUICK=true; DL_RUNS=1; UL_RUNS=1 ;;
+    --help|-h) echo "Usage: gp-speedtest [--json] [--quick]"; exit 0 ;;
+  esac
+done
+
+err() { $JSON && echo "{\"error\":\"$1\"}" || echo -e "${R}  Error: $1${RST}"; exit 1; }
+
+# Progress bar helper
+progress() {
+  local cur=$1 total=$2 label=$3
+  local filled=$((cur * 8 / total)) empty=$((8 - filled))
+  $JSON && return
+  local bar_fill="" bar_empty=""
+  for ((j=0; j<filled; j++)); do bar_fill+="="; done
+  for ((j=0; j<empty; j++)); do bar_empty+=" "; done
+  printf "\r${DIM}  %s [${G}%s${DIM}%s] %d/%d${RST}" "$label" "$bar_fill" "$bar_empty" "$cur" "$total"
+}
+
+# Convert bytes/sec to Mbps (float)
+to_mbps() { awk '{printf "%.1f", $1 * 8 / 1000000}'; }
+
+START=$(date +%s.%N)
+
+# Get mode and IP
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "Unknown")
+MODE=$(echo "$MODE" | sed 's/^./\U&/')
+EXIT_IP=$(curl -s --max-time 5 https://icanhazip.com 2>/dev/null | tr -d '[:space:]' || echo "unavailable")
+[[ -z "$EXIT_IP" ]] && EXIT_IP="unavailable"
+
+if ! $JSON; then
+  echo ""
+  echo -e "${G}╔══════════════════════════════════════════════╗${RST}"
+  echo -e "${G}║${GB}          GHOSTPORT SPEED TEST                ${G}║${RST}"
+  echo -e "${G}╚══════════════════════════════════════════════╝${RST}"
+  echo ""
+  echo -e "${DIM}  Testing from:${RST} ${B}${EXIT_IP}${RST} ${DIM}(${MODE})${RST}"
+  echo -e "${DIM}  Server:${RST} ${B}Cloudflare Edge${RST}"
+  echo ""
+fi
+
+# --- Latency ---
+$JSON || progress 0 1 "Testing latency..."
+PING_OUT=$(ping -c 3 -W 3 1.1.1.1 2>/dev/null) || err "Network unreachable"
+LATENCY=$(echo "$PING_OUT" | tail -1 | sed -E 's|.*/([0-9.]+)/.*|\1|')
+[[ -z "$LATENCY" ]] && LATENCY="0"
+$JSON || printf "\r%-60s\r" " "
+
+# --- Download ---
+DL_SPEEDS=() DL_BEST=0
+for i in $(seq 1 $DL_RUNS); do
+  $JSON || progress "$i" "$DL_RUNS" "Testing download.."
+  BPS=$(curl -o /dev/null -w '%{speed_download}' -s --max-time 15 \
+    "https://speed.cloudflare.com/__down?bytes=${DL_BYTES}" 2>/dev/null || echo "0")
+  MBPS=$(echo "$BPS" | to_mbps)
+  DL_SPEEDS+=("$MBPS")
+  CMP=$(awk "BEGIN{print ($MBPS > $DL_BEST)}")
+  [[ "$CMP" == "1" ]] && DL_BEST=$MBPS
+done
+$JSON || printf "\r%-60s\r" " "
+
+# --- Upload ---
+UL_SPEEDS=() UL_BEST=0
+UL_FILE=$(mktemp)
+dd if=/dev/urandom of="$UL_FILE" bs=1M count=5 2>/dev/null
+trap "rm -f '$UL_FILE'" EXIT
+for i in $(seq 1 $UL_RUNS); do
+  $JSON || progress "$i" "$UL_RUNS" "Testing upload...."
+  BPS=$(curl -X POST -w '%{speed_upload}' -s --max-time 20 \
+    -H "Content-Type: application/octet-stream" --data-binary "@${UL_FILE}" \
+    "https://speed.cloudflare.com/__up" -o /dev/null 2>/dev/null || echo "0")
+  MBPS=$(echo "$BPS" | to_mbps)
+  UL_SPEEDS+=("$MBPS")
+  CMP=$(awk "BEGIN{print ($MBPS > $UL_BEST)}")
+  [[ "$CMP" == "1" ]] && UL_BEST=$MBPS
+done
+$JSON || printf "\r%-60s\r" " "
+
+# --- Grading ---
+GRADE="F" GLABEL="Slow" GCOL=$R
+for threshold in "200 A+ Blazing GB" "100 A Fast GB" "50 B Good G" "20 C Moderate Y" "5 D Slow Y"; do
+  read -r tval tgrade tlabel tcol <<< "$threshold"
+  CMP=$(awk "BEGIN{print ($DL_BEST >= $tval)}")
+  if [[ "$CMP" == "1" ]]; then
+    GRADE=$tgrade GLABEL=$tlabel
+    case $tcol in GB) GCOL=$GB;; G) GCOL=$G;; Y) GCOL=$Y;; esac
+    break
+  fi
+done
+
+ELAPSED=$(awk "BEGIN{printf \"%.1f\", $(date +%s.%N) - $START}")
+
+# --- JSON output ---
+if $JSON; then
+  DL_JSON=$(printf '%s\n' "${DL_SPEEDS[@]}" | awk 'BEGIN{printf "["} NR>1{printf ","} {printf "%s",$0} END{printf "]"}')
+  UL_JSON=$(printf '%s\n' "${UL_SPEEDS[@]}" | awk 'BEGIN{printf "["} NR>1{printf ","} {printf "%s",$0} END{printf "]"}')
+  cat <<EOJSON
+{"ip":"${EXIT_IP}","mode":"${MODE}","latency_ms":${LATENCY},"download_mbps":${DL_BEST},"upload_mbps":${UL_BEST},"download_samples":${DL_JSON},"upload_samples":${UL_JSON},"grade":"${GRADE}","elapsed_s":${ELAPSED}}
+EOJSON
+  exit 0
+fi
+
+# --- Terminal output ---
+printf "  ${DIM}⏱  Latency ...........${RST} ${GB}%s ms${RST}\n" "$LATENCY"
+printf "  ${DIM}↓  Download ..........${RST} ${GB}%s Mbps${RST}\n" "$DL_BEST"
+printf "  ${DIM}↑  Upload ............${RST} ${GB}%s Mbps${RST}\n" "$UL_BEST"
+
+if ! $QUICK; then
+  echo ""
+  echo -e "  ${DIM}── Breakdown ──────────────────────────────${RST}"
+  for i in $(seq 0 $((DL_RUNS - 1))); do
+    STAR=""; CMP=$(awk "BEGIN{print (${DL_SPEEDS[$i]} == $DL_BEST)}")
+    [[ "$CMP" == "1" ]] && STAR=" ${G}★${RST}"
+    printf "  ${DIM}Download test %d:${RST}  %s Mbps%b\n" "$((i+1))" "${DL_SPEEDS[$i]}" "$STAR"
+  done
+  for i in $(seq 0 $((UL_RUNS - 1))); do
+    STAR=""; CMP=$(awk "BEGIN{print (${UL_SPEEDS[$i]} == $UL_BEST)}")
+    [[ "$CMP" == "1" ]] && STAR=" ${G}★${RST}"
+    printf "  ${DIM}Upload test %d:${RST}    %s Mbps%b\n" "$((i+1))" "${UL_SPEEDS[$i]}" "$STAR"
+  done
+fi
+
+echo ""
+printf "  ${DIM}Grade:${RST} ${GCOL}%s (%s)${RST}\n" "$GRADE" "$GLABEL"
+echo ""
+echo -e "${G}╔══════════════════════════════════════════════╗${RST}"
+printf "${G}║${RST}  ${DIM}Test completed in${RST} ${B}%ss${RST}%-*s${G}║${RST}\n" "$ELAPSED" $((28 - ${#ELAPSED})) " "
+echo -e "${G}╚══════════════════════════════════════════════╝${RST}"
+echo ""

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# gp-noise — Cover traffic generator for GhostPort OS
+# Generates random DNS queries and HTTPS HEAD requests to mask real user activity
+# Only active in doublehop or zhop modes
+
+set -uo pipefail
+
+DOMAINS=(
+  google.com wikipedia.org amazon.com reddit.com github.com
+  stackoverflow.com microsoft.com apple.com cloudflare.com
+  mozilla.org python.org nodejs.org ubuntu.com debian.org
+  archlinux.org fedoraproject.org kernel.org gnu.org
+)
+
+MODE_FILE="/etc/phantom/current-mode"
+RUNNING=true
+
+cleanup() {
+  RUNNING=false
+  logger -t gp-noise "Stopping cover traffic generator"
+  exit 0
+}
+trap cleanup SIGTERM SIGINT
+
+check_mode() {
+  local mode
+  mode=$(cat "$MODE_FILE" 2>/dev/null || echo "unknown")
+  [[ "$mode" == "doublehop" || "$mode" == "zhop" ]]
+}
+
+random_sleep() {
+  local mean=$(( (RANDOM % 8) + 3 ))
+  sleep $(awk "BEGIN { d=-${mean}*log((${RANDOM}+1)/32768.0); if(d<1)d=1; if(d>30)d=30; printf \"%.1f\",d }")
+}
+
+random_domain() {
+  echo "${DOMAINS[$((RANDOM % ${#DOMAINS[@]}))]}"
+}
+
+logger -t gp-noise "Cover traffic generator starting"
+
+if ! check_mode; then
+  logger -t gp-noise "Not in tunnel mode — exiting"
+  exit 0
+fi
+
+logger -t gp-noise "Tunnel mode detected — generating cover traffic"
+
+while $RUNNING; do
+  check_mode || { logger -t gp-noise "Mode changed — stopping"; break; }
+  domain=$(random_domain)
+  if (( RANDOM % 2 == 0 )); then
+    dig +short @127.0.0.1 "$domain" >/dev/null 2>&1 || true
+  else
+    dig +short @127.0.0.1 "$domain" >/dev/null 2>&1 || true
+    curl -s --max-time 3 -o /dev/null -I "https://${domain}" 2>/dev/null || true
+  fi
+  random_sleep
+done

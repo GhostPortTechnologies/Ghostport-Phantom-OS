@@ -58,11 +58,11 @@ if [ "$MODE" = "--full" ]; then
     cd "$REPO_DIR" && npm install --production
 
     # SSL certs directory
-    mkdir -p /opt/ghostport/ssl
-    if [ ! -f /opt/ghostport/ssl/server.key ]; then
+    mkdir -p /opt/phantom/ssl
+    if [ ! -f /opt/phantom/ssl/server.key ]; then
         log "Generating self-signed SSL cert..."
-        openssl req -x509 -newkey rsa:2048 -keyout /opt/ghostport/ssl/server.key \
-            -out /opt/ghostport/ssl/server.cert -days 365 -nodes \
+        openssl req -x509 -newkey rsa:2048 -keyout /opt/phantom/ssl/server.key \
+            -out /opt/phantom/ssl/server.cert -days 365 -nodes \
             -subj "/CN=ghostport.local" 2>/dev/null
     fi
 
@@ -75,6 +75,9 @@ ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-dns-switch
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-dns-upstream
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-passcode
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-new
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-factory-reset
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-update
+ghostport-admin ALL=(ALL) NOPASSWD: /usr/local/bin/gp-provision
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/nft *
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/wg show *
 ghostport-admin ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart hostapd
@@ -88,20 +91,20 @@ SUDOERS
     chmod 440 /etc/sudoers.d/ghostport
 
     # Config directories
-    mkdir -p /etc/ghostport
+    mkdir -p /etc/phantom
     mkdir -p /etc/gpmodes
 
     # Initialize auth if needed
-    if [ ! -f /etc/ghostport/auth.json ]; then
+    if [ ! -f /etc/phantom/auth.json ]; then
         log "Initializing auth config (run gp-passcode reset to set passcode)..."
-        echo '{"hash":"","salt":"","attempts":0,"lockoutUntil":0}' > /etc/ghostport/auth.json
-        chmod 600 /etc/ghostport/auth.json
-        chown ghostport-admin:ghostport-admin /etc/ghostport/auth.json
+        echo '{"hash":"","salt":"","attempts":0,"lockoutUntil":0}' > /etc/phantom/auth.json
+        chmod 600 /etc/phantom/auth.json
+        chown ghostport-admin:ghostport-admin /etc/phantom/auth.json
     fi
 
     # Initialize mode state
-    if [ ! -f /etc/ghostport/current-mode ]; then
-        echo "isp" > /etc/ghostport/current-mode
+    if [ ! -f /etc/phantom/current-mode ]; then
+        echo "isp" > /etc/phantom/current-mode
     fi
 
     log "Full install base complete. Continuing with file deployment..."
@@ -145,11 +148,11 @@ log "Installing cron jobs..."
 cp "$REPO_DIR"/etc/cron.d/* /etc/cron.d/ 2>/dev/null || true
 chmod 644 /etc/cron.d/ghostport-* 2>/dev/null || true
 
-# Server and public files (already in /opt/ghostport if cloned there)
-if [ "$REPO_DIR" != "/opt/ghostport" ]; then
-    log "Syncing server files to /opt/ghostport/..."
+# Server and public files (already in /opt/phantom if cloned there)
+if [ "$REPO_DIR" != "/opt/phantom" ]; then
+    log "Syncing server files to /opt/phantom/..."
     rsync -a --exclude=node_modules --exclude=.git --exclude=ssl \
-        "$REPO_DIR/" /opt/ghostport/
+        "$REPO_DIR/" /opt/phantom/
 fi
 
 # Validate nftables before applying
@@ -161,10 +164,58 @@ for nft in /etc/gpmodes/*.nft; do
 done
 
 # Restart services
+log "Installing systemd timers..."
+for tmr in "$REPO_DIR"/systemd/*.timer; do
+    [ -f "$tmr" ] || continue
+    cp "$tmr" /etc/systemd/system/
+done
+systemctl daemon-reload
+
+# Write version.json on deploy
+log "Writing version info..."
+DEPLOY_VERSION="${GHOSTPORT_VERSION:-0.1.0}"
+if [ -f /etc/phantom/version.json ]; then
+    DEPLOY_VERSION=$(python3 -c "import json; print(json.load(open('/etc/phantom/version.json')).get('version','0.1.0'))" 2>/dev/null || echo "0.1.0")
+fi
+python3 -c "
+import json, datetime
+v = {'version': '$DEPLOY_VERSION', 'buildDate': datetime.datetime.utcnow().isoformat() + 'Z', 'updateAvailable': None}
+with open('/etc/phantom/version.json', 'w') as f:
+    json.dump(v, f, indent=2)
+" 2>/dev/null || true
+
+# Configure avahi/mDNS for ghostport.local
+log "Configuring mDNS (ghostport.local)..."
+if command -v avahi-daemon &>/dev/null; then
+    # Ensure avahi service file for port 4200
+    mkdir -p /etc/avahi/services
+    cat > /etc/avahi/services/ghostport.service << 'AVAHI'
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name>GhostPort Command Deck</name>
+  <service>
+    <type>_http._tcp</type>
+    <port>4200</port>
+  </service>
+</service-group>
+AVAHI
+    # Set hostname for .local resolution
+    if [ -f /etc/avahi/avahi-daemon.conf ]; then
+        sed -i 's/^#*host-name=.*/host-name=ghostport/' /etc/avahi/avahi-daemon.conf
+    fi
+    systemctl enable avahi-daemon 2>/dev/null || true
+    systemctl restart avahi-daemon 2>/dev/null || true
+fi
+
 log "Restarting services..."
 systemctl enable ghostport 2>/dev/null || true
 systemctl enable ghostport-boot 2>/dev/null || true
+systemctl enable ghostport-reset 2>/dev/null || true
+systemctl enable ghostport-update.timer 2>/dev/null || true
 systemctl restart ghostport
+systemctl start ghostport-reset 2>/dev/null || true
+systemctl start ghostport-update.timer 2>/dev/null || true
 
 log "Deployment complete!"
 echo ""
@@ -172,4 +223,5 @@ echo "  Next steps:"
 echo "  - Set passcode:  sudo gp-passcode reset"
 echo "  - Set mode:      sudo gp-mode isp"
 echo "  - Dashboard:     http://$(hostname -I | awk '{print $1}'):4200"
+echo "  - mDNS:          http://ghostport.local:4200"
 echo ""

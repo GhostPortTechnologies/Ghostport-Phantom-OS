@@ -1,0 +1,340 @@
+#!/bin/bash
+# gp-bilge — Flow Inspector (Bilge Pump)
+# Real-time conntrack session viewer showing active network conversations.
+# See who's talking to whom, on what ports, right now.
+#
+# Usage:
+#   gp-bilge             — interactive TUI dashboard
+#   gp-bilge summary     — one-shot flow summary
+#   gp-bilge --help
+
+set -euo pipefail
+
+# ── Help guard ──────────────────────────────────────────
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    cat <<'HELPEOF'
+gp-bilge — Flow Inspector (Bilge Pump)
+
+Real-time conntrack session viewer. Shows active network conversations
+(who is talking to whom, protocol, port, bytes, duration).
+
+USAGE:
+  gp-bilge             Interactive TUI dashboard
+  gp-bilge summary     One-shot flow summary (no TUI)
+  gp-bilge --help      This help
+
+CONTROLS:
+  s  Sort: bytes / proto / state / src / dst / dur
+  f  Filter: protocol (tcp/udp/icmp/all)
+  i  Filter: interface (all/wlan0/eth0/wg0/wg1)
+  r  Refresh now
+  p  Pause / resume auto-refresh
+  q  Quit
+
+NOTES:
+  - Requires sudo for conntrack access
+  - Refreshes every 5 seconds
+  - Capped at 500 flows for resource safety
+HELPEOF
+    exit 0
+fi
+
+# Theme colors (mandatory — functions like gp_header depend on this)
+source /usr/local/lib/gp-theme-colors.sh || { echo "ERROR: gp-theme-colors.sh not found"; exit 1; }
+
+# ── Config ──────────────────────────────────────────────
+MAX_FLOWS=500
+REFRESH_INTERVAL=5
+SORT_BY="bytes"     # bytes|proto|state|src|dst|dur
+FILTER_PROTO="all"  # all|tcp|udp|icmp
+FILTER_IFACE="all"  # all|wlan0|eth0|wg0|wg1
+PAUSED=false
+RUNNING=true
+
+# ── Parse conntrack ─────────────────────────────────────
+parse_flows() {
+    local raw
+    raw=$(timeout 5 sudo conntrack -L 2>/dev/null | head -n "$MAX_FLOWS") || return 1
+
+    # Parse each line into: proto src dst sport dport state bytes
+    local count=0
+    FLOW_LINES=()
+
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        count=$((count + 1))
+
+        local proto="" src="" dst="" sport="" dport="" state="" bytes="0" duration="0"
+
+        # Protocol
+        if [[ "$line" =~ ^(tcp|udp|icmp|unknown) ]]; then
+            proto="${BASH_REMATCH[1]}"
+        fi
+
+        # Duration/TTL — for TCP/UDP the format is: proto proto_num timeout ...
+        # e.g. "tcp 6 3600 ESTABLISHED src=..." — the number after protocol number is the timeout in seconds
+        if [[ "$line" =~ ^[a-z]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+) ]]; then
+            duration="${BASH_REMATCH[1]}"
+        fi
+
+        # Filter by protocol
+        if [[ "$FILTER_PROTO" != "all" && "$proto" != "$FILTER_PROTO" ]]; then
+            continue
+        fi
+
+        # Source/dest
+        if [[ "$line" =~ src=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            src="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$line" =~ dst=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+) ]]; then
+            dst="${BASH_REMATCH[1]}"
+        fi
+
+        # Ports
+        if [[ "$line" =~ sport=([0-9]+) ]]; then
+            sport="${BASH_REMATCH[1]}"
+        fi
+        if [[ "$line" =~ dport=([0-9]+) ]]; then
+            dport="${BASH_REMATCH[1]}"
+        fi
+
+        # State
+        if [[ "$line" =~ (ESTABLISHED|TIME_WAIT|CLOSE_WAIT|SYN_SENT|SYN_RECV|FIN_WAIT|CLOSE|LAST_ACK|LISTEN|UNREPLIED|ASSURED) ]]; then
+            state="${BASH_REMATCH[1]}"
+        else
+            state="-"
+        fi
+
+        # Bytes (sum both directions)
+        local b1=0 b2=0
+        if [[ "$line" =~ bytes=([0-9]+) ]]; then
+            b1="${BASH_REMATCH[1]}"
+        fi
+        # Get second bytes= value
+        local rest="${line#*bytes=*[0-9]}"
+        if [[ "$rest" =~ bytes=([0-9]+) ]]; then
+            b2="${BASH_REMATCH[1]}"
+        fi
+        bytes=$((b1 + b2))
+
+        # Filter by interface (approximate via subnet)
+        if [[ "$FILTER_IFACE" != "all" ]]; then
+            case "$FILTER_IFACE" in
+                wlan0) [[ ! "$src" =~ ^192\.168\.50\. && ! "$dst" =~ ^192\.168\.50\. ]] && continue ;;
+                wg0)   [[ ! "$src" =~ ^10\.66\.66\. && ! "$dst" =~ ^10\.66\.66\. ]] && continue ;;
+                wg1)   [[ ! "$src" =~ ^10\.66\.67\. && ! "$dst" =~ ^10\.66\.67\. ]] && continue ;;
+                eth0)  ;; # Can't filter by eth0 subnet easily, show all
+            esac
+        fi
+
+        FLOW_LINES+=("${bytes}|${proto}|${src}|${sport:-*}|${dst}|${dport:-*}|${state}|${duration}")
+
+    done <<< "$raw"
+
+    TOTAL_FLOWS=$count
+
+    # Sort (guard empty array for set -u)
+    if (( ${#FLOW_LINES[@]} > 0 )); then
+        case "$SORT_BY" in
+            bytes) IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k1 -rn)); unset IFS ;;
+            proto) IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k2)); unset IFS ;;
+            state) IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k7)); unset IFS ;;
+            src)   IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k3)); unset IFS ;;
+            dst)   IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k5)); unset IFS ;;
+            dur)   IFS=$'\n' FLOW_LINES=($(printf '%s\n' "${FLOW_LINES[@]}" | sort -t'|' -k8 -rn)); unset IFS ;;
+        esac
+    fi
+}
+
+# ── Format bytes ────────────────────────────────────────
+fmt_bytes() {
+    local b=$1
+    if ((b >= 1073741824)); then
+        printf "%d.%dG" "$((b / 1073741824))" "$((b % 1073741824 * 10 / 1073741824))"
+    elif ((b >= 1048576)); then
+        printf "%d.%dM" "$((b / 1048576))" "$((b % 1048576 * 10 / 1048576))"
+    elif ((b >= 1024)); then
+        printf "%d.%dK" "$((b / 1024))" "$((b % 1024 * 10 / 1024))"
+    else
+        printf "%dB" "$b"
+    fi
+}
+
+# ── Format duration ─────────────────────────────────────
+fmt_duration() {
+    local s=$1
+    if ((s >= 3600)); then
+        local h=$((s / 3600)) m=$(((s % 3600) / 60))
+        if ((m > 0)); then
+            printf "%dh %dm" "$h" "$m"
+        else
+            printf "%dh" "$h"
+        fi
+    elif ((s >= 60)); then
+        printf "%dm" "$((s / 60))"
+    else
+        printf "%ds" "$s"
+    fi
+}
+
+# ── State color ─────────────────────────────────────────
+state_color() {
+    case "$1" in
+        ESTABLISHED|ASSURED) echo -ne "$SUCCESS" ;;
+        SYN_SENT|SYN_RECV)   echo -ne "$WARNING" ;;
+        TIME_WAIT|FIN_WAIT|CLOSE_WAIT|CLOSE|LAST_ACK) echo -ne "$DANGER" ;;
+        UNREPLIED)           echo -ne "$TEXT_DIM" ;;
+        *)                   echo -ne "$TEXT" ;;
+    esac
+}
+
+# ── Draw TUI ────────────────────────────────────────────
+draw_screen() {
+    local rows cols
+    rows=$(tput lines)
+    cols=$(tput cols)
+
+    tput cup 0 0
+    tput ed
+
+    # Header
+    echo -e "  ${BOLD}${AC}╔$(printf '═%.0s' $(seq 1 $((cols - 6))))╗${RESET}"
+    printf "  ${BOLD}${AC}║  ⚓ BILGE PUMP — Flow Inspector%-$((cols - 37))s║${RESET}\n" ""
+    echo -e "  ${BOLD}${AC}╚$(printf '═%.0s' $(seq 1 $((cols - 6))))╝${RESET}"
+
+    # Status bar
+    local status_pause=""
+    $PAUSED && status_pause=" ${WARNING}[PAUSED]${RESET}"
+    printf "  ${AC}Flows:${RESET} ${TEXT}%d/%d${RESET}  ${AC}Sort:${RESET} ${TEXT}%s${RESET}  ${AC}Proto:${RESET} ${TEXT}%s${RESET}  ${AC}Iface:${RESET} ${TEXT}%s${RESET}%b\n" \
+        "${#FLOW_LINES[@]}" "$TOTAL_FLOWS" "$SORT_BY" "$FILTER_PROTO" "$FILTER_IFACE" "$status_pause"
+    echo -e "  ${AC_DIM}$(printf '─%.0s' $(seq 1 $((cols - 4))))${RESET}"
+
+    # Column headers
+    printf "  ${BOLD}${AC}%-6s %-17s %-6s  %-17s %-6s  %-12s %8s %8s${RESET}\n" \
+        "PROTO" "SOURCE" "SPORT" "DESTINATION" "DPORT" "STATE" "BYTES" "DURATION"
+    echo -e "  ${AC_DIM}$(printf '─%.0s' $(seq 1 $((cols - 4))))${RESET}"
+
+    # Flow rows
+    local max_rows=$((rows - 9))
+    local displayed=0
+
+    for entry in "${FLOW_LINES[@]}"; do
+        ((displayed >= max_rows)) && break
+
+        IFS='|' read -r bytes proto src sport dst dport state dur <<< "$entry"
+
+        local sc
+        sc=$(state_color "$state")
+        local fb
+        fb=$(fmt_bytes "$bytes")
+        local fd
+        fd=$(fmt_duration "${dur:-0}")
+
+        printf "  ${INFO}%-6s${RESET} ${TEXT}%-17s${RESET} ${TEXT_DIM}%-6s${RESET}  ${TEXT}%-17s${RESET} ${TEXT_DIM}%-6s${RESET}  %b%-12s${RESET} ${AC}%8s${RESET} ${TEXT_DIM}%8s${RESET}\n" \
+            "$proto" "$src" "$sport" "$dst" "$dport" "$sc" "$state" "$fb" "$fd"
+
+        displayed=$((displayed + 1))
+    done
+
+    # Footer
+    tput cup $((rows - 1)) 0
+    echo -ne "  ${TEXT_DIM}[s]ort [f]ilter-proto [i]face [r]efresh [p]ause [q]uit${RESET}"
+}
+
+# ── Summary mode ────────────────────────────────────────
+if [[ "${1:-}" == "summary" ]]; then
+    parse_flows
+    gp_header "BILGE PUMP — Flow Summary"
+    gp_status "Total flows:" "$TOTAL_FLOWS"
+    gp_status "Showing:" "${#FLOW_LINES[@]} (cap $MAX_FLOWS)"
+    gp_separator
+
+    # Count by protocol
+    tcp=0; udp=0; icmp=0; other=0
+    for entry in "${FLOW_LINES[@]}"; do
+        IFS='|' read -r _ proto _ <<< "$entry"
+        case "$proto" in
+            tcp) tcp=$((tcp + 1)) ;; udp) udp=$((udp + 1)) ;; icmp) icmp=$((icmp + 1)) ;; *) other=$((other + 1)) ;;
+        esac
+    done
+    gp_status "TCP:" "$tcp"
+    gp_status "UDP:" "$udp"
+    gp_status "ICMP:" "$icmp"
+    [[ $other -gt 0 ]] && gp_status "Other:" "$other"
+
+    gp_separator
+
+    # Top 5 by bytes
+    echo -e "  ${BOLD}${AC}Top 5 by traffic:${RESET}"
+    shown=0
+    for entry in "${FLOW_LINES[@]}"; do
+        ((shown >= 5)) && break
+        IFS='|' read -r bytes proto src sport dst dport state dur <<< "$entry"
+        printf "  ${TEXT}  %-5s %s:%s → %s:%s  %s  %s${RESET}\n" "$proto" "$src" "$sport" "$dst" "$dport" "$(fmt_bytes "$bytes")" "$(fmt_duration "${dur:-0}")"
+        shown=$((shown + 1))
+    done
+    echo
+    exit 0
+fi
+
+# ── Interactive TUI ─────────────────────────────────────
+cleanup() {
+    RUNNING=false
+    tput cnorm 2>/dev/null
+    tput rmcup 2>/dev/null
+    stty echo 2>/dev/null
+    echo -e "${RESET:-}"
+}
+trap cleanup EXIT INT TERM
+
+tput smcup
+tput civis
+stty -echo
+
+# Cycle values
+SORT_OPTIONS=("bytes" "proto" "state" "src" "dst" "dur")
+PROTO_OPTIONS=("all" "tcp" "udp" "icmp")
+IFACE_OPTIONS=("all" "wlan0" "eth0" "wg0" "wg1")
+sort_idx=0
+proto_idx=0
+iface_idx=0
+
+FLOW_LINES=()
+TOTAL_FLOWS=0
+
+last_refresh=0
+
+while $RUNNING; do
+    local_now=$(date +%s)
+
+    if ! $PAUSED && ((local_now - last_refresh >= REFRESH_INTERVAL)); then
+        parse_flows 2>/dev/null || true
+        last_refresh=$local_now
+    fi
+
+    draw_screen
+
+    # Read key with timeout
+    if read -r -n1 -t 1 key 2>/dev/null; then
+        case "$key" in
+            q|Q) break ;;
+            s|S)
+                sort_idx=$(( (sort_idx + 1) % ${#SORT_OPTIONS[@]} ))
+                SORT_BY="${SORT_OPTIONS[$sort_idx]}"
+                last_refresh=0  # Force refresh
+                ;;
+            f|F)
+                proto_idx=$(( (proto_idx + 1) % ${#PROTO_OPTIONS[@]} ))
+                FILTER_PROTO="${PROTO_OPTIONS[$proto_idx]}"
+                last_refresh=0
+                ;;
+            i|I)
+                iface_idx=$(( (iface_idx + 1) % ${#IFACE_OPTIONS[@]} ))
+                FILTER_IFACE="${IFACE_OPTIONS[$iface_idx]}"
+                last_refresh=0
+                ;;
+            r|R) last_refresh=0 ;;
+            p|P) $PAUSED && PAUSED=false || PAUSED=true ;;
+        esac
+    fi
+done

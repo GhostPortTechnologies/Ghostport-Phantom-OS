@@ -1,0 +1,155 @@
+#!/bin/bash
+# GhostPort OS Pre-Flight Health Check
+# Returns exit 0 (healthy) or 1 (unhealthy) with JSON output
+# Usage: gp-preflight [--quiet] [--json]
+
+QUIET=false
+JSON_ONLY=false
+FAILURES=0
+WARNINGS=0
+CHECKS=()
+
+for arg in "$@"; do
+    case "$arg" in
+        --quiet|-q) QUIET=true ;;
+        --json|-j)  JSON_ONLY=true ;;
+    esac
+done
+
+# Detect WAN interface: wlan0 if WiFi WAN configured, else eth0
+wan_if() {
+  local wtype
+  wtype=$(jq -r ".type // \"ethernet\"" /etc/phantom/wan.json 2>/dev/null)
+  if [[ "$wtype" == "wireless" ]]; then echo "wlan1"; else echo "eth0"; fi
+}
+WAN_IF=$(wan_if)
+
+check() {
+    local name="$1" cmd="$2" critical="${3:-true}"
+    local status="pass" detail=""
+
+    if detail=$(eval "$cmd" 2>&1); then
+        status="pass"
+    else
+        if [ "$critical" = "true" ]; then
+            status="fail"
+            ((FAILURES++))
+        else
+            status="warn"
+            ((WARNINGS++))
+        fi
+    fi
+
+    detail=$(echo "$detail" | head -1 | tr -d '"' | cut -c1-120)
+    CHECKS+=("{\"name\":\"$name\",\"status\":\"$status\",\"detail\":\"$detail\"}")
+
+    if [ "$QUIET" = "false" ] && [ "$JSON_ONLY" = "false" ]; then
+        case "$status" in
+            pass) printf "  ✓ %s\n" "$name" ;;
+            fail) printf "  ✗ %s — %s\n" "$name" "$detail" ;;
+            warn) printf "  ⚠ %s — %s\n" "$name" "$detail" ;;
+        esac
+    fi
+}
+
+[ "$JSON_ONLY" = "false" ] && [ "$QUIET" = "false" ] && echo "GhostPort Pre-Flight Check"
+[ "$JSON_ONLY" = "false" ] && [ "$QUIET" = "false" ] && echo "=========================="
+
+# --- Core Services ---
+check "ghostport-server" \
+    "systemctl is-active ghostport >/dev/null 2>&1 && echo running"
+
+check "pihole-ftl" \
+    "systemctl is-active pihole-FTL >/dev/null 2>&1 && echo running"
+
+check "hostapd" \
+    "systemctl is-active hostapd >/dev/null 2>&1 && echo running"
+
+check "tailscale" \
+    "tailscale status --json 2>/dev/null | grep -q 'BackendState.*Running' && echo connected"
+
+# --- Dashboard ---
+check "dashboard-http" \
+    "curl -sk --connect-timeout 5 --max-time 10 http://localhost:4200/ -o /dev/null -w '%{http_code}' | grep -qE '[23][0-9][0-9]' && echo reachable"
+
+# --- DNS ---
+check "dns-resolution" \
+    "dig +short +time=3 +tries=1 cloudflare.com @127.0.0.1 2>/dev/null | head -1 | grep -qE '^[0-9]' && echo resolving"
+
+# --- DHCP lease freshness (guards against silent device-detection failure) ---
+# Warn — not fatal — if the active lease file is stale while ARP shows clients.
+# The lease path has moved before (dnsmasq → pihole-FTL); this check surfaces drift.
+check "dhcp-leases" \
+    "if [ -f /etc/pihole/dhcp.leases ]; then f=/etc/pihole/dhcp.leases; elif [ -f /var/lib/misc/dnsmasq.leases ]; then f=/var/lib/misc/dnsmasq.leases; else echo no-lease-file && exit 1; fi; \
+     age=\$(( \$(date +%s) - \$(stat -c '%Y' \$f) )); \
+     arp_count=\$(ip neigh show dev wlan0 2>/dev/null | grep -cE 'REACHABLE|STALE'); \
+     if [ \$age -gt 14400 ] && [ \$arp_count -gt 0 ]; then echo \"stale-\${age}s-arp\${arp_count}\" && exit 1; fi; \
+     echo \"ok-\${age}s-arp\${arp_count}\"" \
+    "false"
+
+# --- Mode Consistency ---
+check "mode-consistency" \
+    "test -f /etc/phantom/current-mode && cat /etc/phantom/current-mode"
+
+# --- nftables ---
+check "nftables-loaded" \
+    "nft list ruleset 2>/dev/null | grep -q 'management' && echo rules-loaded"
+
+# --- Network Interfaces ---
+check "wlan0-ap" \
+    "ip link show wlan0 2>/dev/null | grep -q 'state UP' && echo up" \
+    "true"
+
+check "wan-interface" \
+    "ip link show $WAN_IF 2>/dev/null | grep -qE 'state UP|state UNKNOWN' && echo up" \
+    "false"
+
+# --- WireGuard (only check if in tunnel mode) ---
+CURRENT_MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+if [ "$CURRENT_MODE" = "doublehop" ] || [ "$CURRENT_MODE" = "zhop" ]; then
+    check "wg0-control" \
+        "ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN' && echo up"
+
+    check "wg1-data" \
+        "ip link show wg1 2>/dev/null | grep -q 'state UNKNOWN' && echo up"
+
+    check "wg1-handshake" \
+        "wg show wg1 latest-handshakes 2>/dev/null | awk '{print \$2}' | head -1 | xargs -I{} bash -c 'age=\$(($(date +%s) - {})); [ \$age -lt 180 ] && echo fresh-\${age}s || (echo stale-\${age}s && exit 1)'"
+fi
+
+# --- System Resources ---
+check "temperature" \
+    "temp=\$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null); tc=\$((temp/1000)); [ \$tc -lt 75 ] && echo \${tc}C || (echo \${tc}C-HOT && exit 1)" \
+    "false"
+
+check "memory" \
+    "pct=\$(free | awk '/Mem:/{printf \"%.0f\", \$3/\$2*100}'); [ \$pct -lt 90 ] && echo \${pct}%-used || (echo \${pct}%-CRITICAL && exit 1)" \
+    "false"
+
+check "disk" \
+    "pct=\$(df / | awk 'NR==2{print \$5}' | tr -d '%'); [ \$pct -lt 90 ] && echo \${pct}%-used || (echo \${pct}%-CRITICAL && exit 1)" \
+    "false"
+
+# --- Build JSON output ---
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+HEALTHY=$( [ $FAILURES -eq 0 ] && echo "true" || echo "false" )
+
+CHECKS_JSON=$(IFS=,; echo "${CHECKS[*]}")
+
+JSON="{\"healthy\":$HEALTHY,\"failures\":$FAILURES,\"warnings\":$WARNINGS,\"mode\":\"$CURRENT_MODE\",\"timestamp\":\"$TIMESTAMP\",\"checks\":[$CHECKS_JSON]}"
+
+if [ "$JSON_ONLY" = "true" ]; then
+    echo "$JSON"
+elif [ "$QUIET" = "false" ]; then
+    echo ""
+    if [ $FAILURES -eq 0 ]; then
+        echo "RESULT: HEALTHY ($WARNINGS warnings)"
+    else
+        echo "RESULT: UNHEALTHY ($FAILURES failures, $WARNINGS warnings)"
+    fi
+fi
+
+# Write state file
+echo "$JSON" > /etc/phantom/preflight-state.json 2>/dev/null || true
+
+exit $FAILURES

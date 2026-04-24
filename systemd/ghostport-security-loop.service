@@ -1,0 +1,7 @@
+[Unit]
+Description=GhostPort Security Scan
+After=network-online.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-security-loop
+User=root

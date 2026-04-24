@@ -9,7 +9,7 @@ if dig +short +timeout=3 +tries=1 cloudflare.com @127.0.0.1 > /dev/null 2>&1; th
 fi
 
 # DNS failed — check current mode to restart the right service
-MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
 
 logger -t gp-dns-watchdog "DNS unresponsive on 127.0.0.1:53 (mode=$MODE)"
 

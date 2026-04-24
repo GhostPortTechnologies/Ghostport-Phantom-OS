@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+# gp-clients — Show connected clients on GhostPort WiFi AP
+set -uo pipefail
+
+# Colors
+G='\033[38;2;57;255;143m'  # GhostPort green
+R='\033[38;2;255;80;80m'   # Red
+Y='\033[38;2;255;200;60m'  # Yellow
+D='\033[38;2;100;100;100m' # Dim gray
+B='\033[1m'                # Bold
+RST='\033[0m'
+
+LEASES="/var/lib/misc/dnsmasq.leases"
+WIDTH=58
+
+draw_box_top()  { echo -e "${G}╔$(printf '═%.0s' $(seq 1 $WIDTH))╗${RST}"; }
+draw_box_bot()  { echo -e "${G}╚$(printf '═%.0s' $(seq 1 $WIDTH))╝${RST}"; }
+draw_box_line() { printf "${G}║${RST}  %-$((WIDTH-3))s${G}║${RST}\n" "$1"; }
+
+human_time() {
+    local secs=$1
+    if [ "$secs" -le 0 ]; then echo "expired"; return; fi
+    local h=$((secs/3600)) m=$(((secs%3600)/60))
+    if [ "$h" -gt 0 ]; then echo "${h}h ${m}m"
+    else echo "${m}m"; fi
+}
+
+is_randomized() {
+    local second="${1:1:1}"
+    case "${second,,}" in
+        2|6|a|e) return 0 ;; *) return 1 ;;
+    esac
+}
+
+gather_clients() {
+    local now; now=$(date +%s)
+    declare -gA ARP_STATE=()
+    while read -r ip _ state _; do
+        [[ "$state" == "REACHABLE" || "$state" == "STALE" || "$state" == "DELAY" ]] || state="FAILED"
+        ARP_STATE["$ip"]="$state"
+    done < <(ip neigh show dev wlan0 2>/dev/null)
+
+    CLIENT_DATA=()
+    while read -r expiry mac ip hostname _; do
+        [ -z "$expiry" ] && continue
+        local remaining=$(( expiry - now ))
+        local name="${hostname:-Unknown}"
+        [ "$name" = "*" ] && name="Unknown"
+        local arp="${ARP_STATE[$ip]:-NONE}"
+        local online=0
+        [[ "$arp" == "REACHABLE" || "$arp" == "STALE" || "$arp" == "DELAY" ]] && online=1
+        local last_octet="${ip##*.}"
+        local sort_key
+        sort_key=$(printf "%d%03d" "$online" "$last_octet")
+        CLIENT_DATA+=("${sort_key}|${online}|${name}|${ip}|${mac}|${remaining}")
+    done < "$LEASES"
+
+    if [ ${#CLIENT_DATA[@]} -gt 0 ]; then
+        IFS=$'\n' CLIENT_DATA=($(printf '%s\n' "${CLIENT_DATA[@]}" | sort -t'|' -k1 -rn)); unset IFS
+    fi
+}
+
+render() {
+    local mode; mode=$(cat /etc/phantom/current-mode 2>/dev/null || echo "unknown")
+    local count=${#CLIENT_DATA[@]}
+    local online_count=0 stale_count=0 rand_count=0
+
+    echo ""
+    draw_box_top
+    draw_box_line "$(printf '          %bCONNECTED CLIENTS%b' "$B$G" "$RST")"
+    draw_box_bot
+    echo ""
+    echo -e "  ${D}Access Point:${RST} ${B}GhostPort Router${RST} ${D}(wlan0)${RST}"
+    echo -e "  ${D}Mode:${RST} ${G}${mode^}${RST} ${D}|${RST} ${B}${count}${RST} ${D}devices connected${RST}"
+    echo ""
+    echo -e "  ${D}── Devices ─────────────────────────────────────────────${RST}"
+    echo ""
+
+    for entry in "${CLIENT_DATA[@]}"; do
+        IFS='|' read -r _ is_online name ip mac remaining <<< "$entry"
+        local dot status_text
+        if [ "$is_online" = "1" ]; then
+            dot="${G}●${RST}"; status_text="${G}Online${RST} ${D}(ARP reachable)${RST}"
+            online_count=$((online_count + 1))
+        else
+            dot="${R}○${RST}"; status_text="${R}Stale${RST} ${D}(no ARP response)${RST}"
+            stale_count=$((stale_count + 1))
+        fi
+        local rand_flag=""
+        if is_randomized "$mac"; then
+            rand_flag="  ${Y}Randomized ⚠${RST}"
+            rand_count=$((rand_count + 1))
+        fi
+        local lease_str; lease_str=$(human_time "$remaining")
+        printf "  %b  ${B}%-28s${RST} ${B}%s${RST}\n" "$dot" "$name" "$ip"
+        printf "    ${D}MAC: %-24s${RST}%b\n" "$mac" "$rand_flag"
+        printf "    ${D}Lease expires: %s${RST}\n" "$lease_str"
+        printf "    ${D}Status:${RST} %b\n" "$status_text"
+        echo ""
+    done
+
+    if [ "$count" -eq 0 ]; then
+        echo -e "  ${D}No clients connected${RST}"
+        echo ""
+    fi
+
+    echo -e "  ${D}── Summary ─────────────────────────────────────────────${RST}"
+    local pct=0
+    [ "$count" -gt 0 ] && pct=$(( rand_count * 100 / count ))
+    echo -e "  ${G}Online: ${online_count}${RST} ${D}|${RST} ${R}Stale: ${stale_count}${RST} ${D}|${RST} ${B}Total: ${count}${RST}"
+    echo -e "  ${Y}MAC Randomized: ${rand_count} of ${count} devices (${pct}%)${RST}"
+    echo ""
+    draw_box_top
+    draw_box_line "Scan completed at $(date +%H:%M:%S)"
+    draw_box_bot
+    echo ""
+}
+
+json_output() {
+    local mode; mode=$(cat /etc/phantom/current-mode 2>/dev/null || echo "unknown")
+    echo "{"
+    echo "  \"mode\": \"$mode\","
+    echo "  \"timestamp\": \"$(date -Is)\","
+    echo "  \"clients\": ["
+    local first=true
+    for entry in "${CLIENT_DATA[@]}"; do
+        IFS='|' read -r _ is_online name ip mac remaining <<< "$entry"
+        local rand=false; is_randomized "$mac" && rand=true
+        local status="stale"; [ "$is_online" = "1" ] && status="online"
+        $first || echo ","
+        first=false
+        # Escape special JSON characters in hostname (handles newlines, tabs, control chars)
+        name=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$name" 2>/dev/null || echo "$name")
+        printf '    {"hostname":"%s","ip":"%s","mac":"%s","status":"%s","randomized":%s,"lease_remaining":%d}' \
+            "$name" "$ip" "$mac" "$status" "$rand" "$remaining"
+    done
+    echo ""
+    echo "  ]"
+    echo "}"
+}
+
+# Parse flags
+FLAG_JSON=false FLAG_WATCH=false FLAG_COUNT=false
+for arg in "$@"; do
+    case "$arg" in
+        --json)  FLAG_JSON=true ;;
+        --watch) FLAG_WATCH=true ;;
+        --count) FLAG_COUNT=true ;;
+        -h|--help) echo "Usage: gp-clients [--json] [--watch] [--count]"; exit 0 ;;
+    esac
+done
+
+if $FLAG_COUNT; then
+    gather_clients
+    echo "${#CLIENT_DATA[@]}"
+    exit 0
+fi
+
+if $FLAG_JSON; then
+    gather_clients
+    json_output
+    exit 0
+fi
+
+if $FLAG_WATCH; then
+    while true; do
+        clear
+        gather_clients
+        render
+        sleep 5
+    done
+else
+    gather_clients
+    render
+fi
