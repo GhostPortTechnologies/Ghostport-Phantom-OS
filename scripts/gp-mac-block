@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""gp-mac-block — MAC-address blocklist enforcer.
+
+Maintains an nftables table `inet phantom_blocklist` with a named set of
+MACs that are dropped at the forward hook. Used by Stonefish's Block MAC
+action. Persistent across reboot via state file `/etc/phantom/mac-blocklist.json`.
+
+Subcommands:
+  add <MAC> [note]   — add to blocklist
+  remove <MAC>       — remove from blocklist
+  list               — print current blocklist
+  reload             — rebuild nftables from state file (boot-time)
+  destroy            — tear down the table (keeps state file)
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+STATE_FILE = Path("/etc/phantom/mac-blocklist.json")
+NFT_TABLE = "inet phantom_blocklist"
+SET_NAME = "blocked_macs"
+
+MAC_RE = re.compile(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$")
+
+
+def _nft(*args, check=True, capture=False):
+    result = subprocess.run(["nft", *args], capture_output=True, text=True, timeout=15)
+    if check and result.returncode != 0:
+        raise RuntimeError(f"nft {' '.join(args)} failed: {result.stderr.strip()}")
+    return result.stdout if capture else ""
+
+
+def read_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"blocked": []}
+
+
+def write_state(data: dict) -> None:
+    STATE_FILE.write_text(json.dumps(data, indent=2))
+    try:
+        os.chmod(STATE_FILE, 0o644)
+    except PermissionError:
+        pass
+
+
+def rebuild_nft(blocked: list[dict]) -> None:
+    """Atomically recreate the nftables table from the blocked list.
+    ether_addr sets don't support `flags interval` (MACs are point values, not ranges).
+    """
+    macs = [b["mac"].lower() for b in blocked]
+    lines = [
+        f"table {NFT_TABLE} {{",
+        f"  set {SET_NAME} {{",
+        "    type ether_addr;",
+    ]
+    if macs:
+        lines.append(f"    elements = {{ {', '.join(macs)} }};")
+    lines.extend([
+        "  }",
+        "  chain block {",
+        "    type filter hook forward priority -200; policy accept;",
+        f"    ether saddr @{SET_NAME} drop",
+        "  }",
+        "}",
+    ])
+    ruleset = "\n".join(lines) + "\n"
+    # Delete-then-recreate. The ignored error path handles the "doesn't exist yet" case.
+    subprocess.run(["nft", "delete", "table", *NFT_TABLE.split()], capture_output=True, text=True)
+    child = subprocess.run(["nft", "-f", "-"], input=ruleset, text=True, capture_output=True)
+    if child.returncode != 0:
+        raise RuntimeError(f"nft load failed: {child.stderr.strip()}\n---\n{ruleset}")
+
+
+def cmd_add(args) -> int:
+    mac = (args[0] if args else "").lower()
+    note = " ".join(args[1:]) if len(args) > 1 else ""
+    if not MAC_RE.match(mac):
+        print("invalid MAC format — expected aa:bb:cc:dd:ee:ff", file=sys.stderr)
+        return 2
+    state = read_state()
+    if any(b["mac"] == mac for b in state["blocked"]):
+        print(f"{mac} already blocked", file=sys.stderr)
+        return 0
+    state["blocked"].append({"mac": mac, "note": note, "added_epoch": int(__import__("time").time())})
+    write_state(state)
+    rebuild_nft(state["blocked"])
+    print(f"blocked {mac}" + (f" ({note})" if note else ""), file=sys.stderr)
+    return 0
+
+
+def cmd_remove(args) -> int:
+    mac = (args[0] if args else "").lower()
+    if not MAC_RE.match(mac):
+        print("invalid MAC format", file=sys.stderr)
+        return 2
+    state = read_state()
+    before = len(state["blocked"])
+    state["blocked"] = [b for b in state["blocked"] if b["mac"] != mac]
+    if len(state["blocked"]) == before:
+        print(f"{mac} not in blocklist", file=sys.stderr)
+        return 0
+    write_state(state)
+    rebuild_nft(state["blocked"])
+    print(f"unblocked {mac}", file=sys.stderr)
+    return 0
+
+
+def cmd_list(_args) -> int:
+    state = read_state()
+    print(json.dumps(state["blocked"], indent=2))
+    return 0
+
+
+def cmd_reload(_args) -> int:
+    """Boot-time restore — rebuild nftables from persisted state."""
+    state = read_state()
+    rebuild_nft(state["blocked"])
+    print(f"restored {len(state['blocked'])} blocked MACs", file=sys.stderr)
+    return 0
+
+
+def cmd_destroy(_args) -> int:
+    subprocess.run(["nft", "delete", "table", *NFT_TABLE.split()], capture_output=True, text=True)
+    print(f"tore down {NFT_TABLE}", file=sys.stderr)
+    return 0
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("must run as root", file=sys.stderr)
+        return 1
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    args = sys.argv[2:]
+    handlers = {
+        "add": cmd_add, "remove": cmd_remove, "list": cmd_list,
+        "reload": cmd_reload, "destroy": cmd_destroy,
+    }
+    if cmd in ("", "-h", "--help"):
+        print(__doc__)
+        return 0
+    h = handlers.get(cmd)
+    if not h:
+        print(f"unknown subcommand: {cmd}", file=sys.stderr)
+        return 2
+    try:
+        return h(args)
+    except RuntimeError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

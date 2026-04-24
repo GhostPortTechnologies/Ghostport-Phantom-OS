@@ -1,0 +1,13 @@
+[Unit]
+Description=Phantom OS — restore MAC blocklist nftables rules on boot
+After=network-pre.target nftables.service
+Wants=nftables.service
+Before=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-mac-block reload
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

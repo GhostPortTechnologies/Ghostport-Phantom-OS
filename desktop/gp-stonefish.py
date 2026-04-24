@@ -24,6 +24,129 @@ def run_cmd(cmd):
     except Exception:
         return ""
 
+
+# ── OUI + hostname enrichment (Stonefish #1) ──────────────────────────
+# Tiny built-in OUI map. Not exhaustive — a curated list of the most common
+# vendors seen on US home networks. For unknowns we fall back to "Unknown".
+# Source: IEEE public OUI registry. Extend via /etc/phantom/oui-extras.json.
+_OUI_BASE = {
+    "00:1A:11": "Google", "F4:F5:D8": "Google", "FC:AA:14": "Google",
+    "A4:77:33": "Google", "20:DF:B9": "Google", "AC:63:BE": "Google-Nest",
+    "DC:A6:32": "Raspberry Pi", "B8:27:EB": "Raspberry Pi", "E4:5F:01": "Raspberry Pi",
+    "28:CD:C1": "Raspberry Pi",
+    "AC:DE:48": "Apple", "3C:22:FB": "Apple", "DC:A9:04": "Apple",
+    "F8:FF:C2": "Apple", "A4:83:E7": "Apple", "F4:1B:A1": "Apple",
+    "00:25:00": "Apple", "14:BD:61": "Apple",
+    "00:1D:D8": "Microsoft", "00:50:F2": "Microsoft", "7C:1E:52": "Microsoft",
+    "D8:BB:2C": "Microsoft-Surface",
+    "00:50:56": "VMware", "00:15:5D": "Microsoft-HyperV",
+    "F0:18:98": "Samsung", "5C:0A:5B": "Samsung", "78:25:AD": "Samsung",
+    "BC:72:B1": "Samsung-TV", "44:65:0D": "Amazon-Echo", "F0:D2:F1": "Amazon-Echo",
+    "00:17:88": "Philips-Hue", "EC:B5:FA": "Philips-Hue",
+    "D0:52:A8": "TP-Link", "F0:9F:C2": "Ubiquiti", "24:5A:4C": "Ubiquiti",
+    "18:E8:29": "Ubiquiti", "70:8B:CD": "Ubiquiti",
+    "88:C9:D0": "LG", "B8:AD:3E": "LG-Smart-TV",
+    "E0:75:7D": "Roku", "CC:6D:A0": "Roku",
+    "00:25:F2": "Vizio", "18:B4:30": "Vizio",
+    "00:11:32": "Synology", "00:00:5E": "IANA (virtual)",
+    "94:9A:A9": "Dell", "BC:5F:F4": "Dell",
+    "E4:1D:2D": "Mellanox",
+    "02:00:00": "Locally-Administered",
+    "32:00:00": "Random (likely phone)",
+}
+
+def _load_oui_extras():
+    try:
+        with open("/etc/phantom/oui-extras.json") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_OUI_MAP = {**_OUI_BASE, **_load_oui_extras()}
+
+def oui_lookup(mac):
+    """Return vendor name for MAC prefix, or 'Unknown' / 'Random' for locally-admin MACs."""
+    if not mac or len(mac) < 8:
+        return ""
+    try:
+        first_byte = int(mac[:2], 16)
+    except ValueError:
+        return ""
+    # Locally-administered bit (second-lowest bit of first byte = 1)
+    if first_byte & 0x02:
+        return "Random (iOS/Android privacy)"
+    prefix = mac.upper().replace("-", ":")[:8]
+    return _OUI_MAP.get(prefix, "Unknown")
+
+
+_LEASES_CACHE = {"ts": 0, "map": {}}
+
+def _load_hostname_map():
+    """ip → hostname from dnsmasq leases (both stock and Pi-hole variants)."""
+    import time as _t
+    if _t.time() - _LEASES_CACHE["ts"] < 5:
+        return _LEASES_CACHE["map"]
+    mapping = {}
+    for path in ["/var/lib/misc/dnsmasq.leases", "/etc/pihole/dhcp.leases"]:
+        try:
+            with open(path) as f:
+                for line in f:
+                    parts = line.split()
+                    # dnsmasq format: <expiry> <mac> <ip> <hostname> <client_id>
+                    if len(parts) >= 4 and parts[3] != "*":
+                        mapping[parts[2]] = parts[3]
+        except FileNotFoundError:
+            continue
+        except Exception:
+            continue
+    _LEASES_CACHE["ts"] = _t.time()
+    _LEASES_CACHE["map"] = mapping
+    return mapping
+
+
+def hostname_for(ip):
+    return _load_hostname_map().get(ip, "")
+
+
+# ── Action-hint text (Stonefish #1 companion) ─────────────────────────
+_ACTION_HINTS = {
+    "SPOOFING":   "Disconnect & investigate",
+    "GW CHANGED": "Check router, rebaseline if intended",
+    "FAILED":     "Device likely offline",
+    "CLEAN":      "",
+}
+def _action_hint(threat):
+    return _ACTION_HINTS.get(threat, "")
+
+
+# ── Mako notifications (Stonefish #4) ────────────────────────────────
+# Rate-limit: same (mac, threat) pair won't re-fire within 5 minutes.
+_NOTIFY_COOLDOWN_SEC = 300
+_NOTIFY_LAST = {}  # (mac, threat) → last_epoch
+
+def _fire_notifications(alert_details):
+    import time as _t
+    now = _t.time()
+    for threat, entry in alert_details:
+        key = (entry.get("mac", ""), threat)
+        last = _NOTIFY_LAST.get(key, 0)
+        if now - last < _NOTIFY_COOLDOWN_SEC:
+            continue
+        _NOTIFY_LAST[key] = now
+        label = hostname_for(entry["ip"]) or entry["ip"]
+        vendor = oui_lookup(entry["mac"])
+        vendor_tag = f" [{vendor}]" if vendor and vendor != "Unknown" else ""
+        body = f"{threat}: {label}{vendor_tag} — MAC {entry['mac']}"
+        try:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical", "-a", "Stonefish",
+                 "Phantom: ARP threat", body],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass  # desktop may not be present (headless install)
+
+
 def parse_arp_table():
     """Parse `ip -4 neigh show` for ARP entries."""
     out = run_cmd(["ip", "-4", "neigh", "show"])
@@ -225,31 +348,42 @@ class StonefishApp(GhostPortApp):
         root.pack_start(btn_bar, False, False, 0)
 
         # TreeView
-        # Columns: IP, MAC, Interface, State, Threat
-        self.store = Gtk.ListStore(str, str, str, str, str)
+        # Columns: IP, Hostname, MAC, Vendor, Interface, State, Threat, Action
+        self.store = Gtk.ListStore(str, str, str, str, str, str, str, str)
         self.treeview = Gtk.TreeView(model=self.store)
         self.treeview.set_headers_visible(True)
 
         columns = [
-            ("IP Address", 0, 150),
-            ("MAC Address", 1, 170),
-            ("Interface", 2, 100),
-            ("State", 3, 100),
-            ("Threat", 4, 120),
+            ("IP Address", 0, 135),
+            ("Hostname",   1, 160),
+            ("MAC Address", 2, 150),
+            ("Vendor",     3, 160),
+            ("Interface",  4, 80),
+            ("State",      5, 85),
+            ("Threat",     6, 110),
+            ("Action",     7, 220),
         ]
 
+        THREAT_IDX = 6
         for title, idx, width in columns:
             renderer = Gtk.CellRendererText()
             renderer.set_property("font", "monospace 10")
-            if idx == 4:
+            if idx == THREAT_IDX:
                 # Threat column gets colored
                 col = Gtk.TreeViewColumn(title, renderer, text=idx)
                 col.set_cell_data_func(renderer, self._threat_color)
+            elif idx == 7:
+                # Action column — dim so it reads as advice, not state
+                col = Gtk.TreeViewColumn(title, renderer, text=idx)
+                col.set_cell_data_func(renderer, self._action_color)
             else:
                 col = Gtk.TreeViewColumn(title, renderer, text=idx)
             col.set_min_width(width)
             col.set_resizable(True)
             self.treeview.append_column(col)
+
+        # Right-click → Block/Unblock MAC (Stonefish #10)
+        self.treeview.connect("button-press-event", self._on_treeview_button_press)
 
         scroll = self.make_scrolled(self.treeview)
         scroll.set_margin_start(8)
@@ -261,8 +395,103 @@ class StonefishApp(GhostPortApp):
         self.status_bar = self.make_status_bar("Initializing...")
         root.pack_start(self.status_bar, False, False, 0)
 
+    def _current_blocklist(self):
+        """Read current blocked MACs. Returns set for O(1) lookup."""
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-mac-block", "list"],
+                capture_output=True, text=True, timeout=5,
+            )
+            data = json.loads(r.stdout or "[]")
+            return {b["mac"].lower() for b in data}
+        except Exception:
+            return set()
+
+    def _on_treeview_button_press(self, _widget, event):
+        # Right-click (button 3) shows Block/Unblock menu.
+        if event.button != 3:
+            return False
+        path_info = self.treeview.get_path_at_pos(int(event.x), int(event.y))
+        if not path_info:
+            return False
+        path, _col, _cx, _cy = path_info
+        self.treeview.set_cursor(path)
+        it = self.store.get_iter(path)
+        ip = self.store.get_value(it, 0)
+        hostname = self.store.get_value(it, 1)
+        mac = (self.store.get_value(it, 2) or "").lower()
+        vendor = self.store.get_value(it, 3)
+        if not mac:
+            return False
+
+        menu = Gtk.Menu()
+        blocked = self._current_blocklist()
+        label = hostname or ip
+        vendor_tag = f" [{vendor}]" if vendor and vendor != "Unknown" else ""
+
+        if mac in blocked:
+            item = Gtk.MenuItem(label=f"Unblock {label}{vendor_tag}")
+            item.connect("activate", lambda *_: self._confirm_unblock_mac(mac, label))
+        else:
+            item = Gtk.MenuItem(label=f"Block {label}{vendor_tag}")
+            item.connect("activate", lambda *_: self._confirm_block_mac(mac, label, vendor))
+        menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def _confirm_block_mac(self, mac, label, vendor):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"Block {label}?",
+        )
+        dialog.format_secondary_text(
+            f"MAC {mac}" + (f"\nVendor: {vendor}" if vendor else "") +
+            "\n\nThis device will be unable to access the network "
+            "via this router until you unblock it. Rule persists across reboot."
+        )
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.OK:
+            self._apply_block(mac, label)
+
+    def _confirm_unblock_mac(self, mac, label):
+        dialog = Gtk.MessageDialog(
+            transient_for=self, modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"Unblock {label}?",
+        )
+        dialog.format_secondary_text(f"MAC {mac} will regain network access.")
+        resp = dialog.run()
+        dialog.destroy()
+        if resp == Gtk.ResponseType.OK:
+            self._apply_unblock(mac, label)
+
+    def _apply_block(self, mac, label):
+        r = subprocess.run(
+            ["sudo", "-n", "gp-mac-block", "add", mac, f"stonefish: {label}"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            self.set_status(f"Blocked {label} ({mac})")
+        else:
+            self.set_status(f"Block failed: {(r.stderr or r.stdout).strip()[:80]}")
+
+    def _apply_unblock(self, mac, label):
+        r = subprocess.run(
+            ["sudo", "-n", "gp-mac-block", "remove", mac],
+            capture_output=True, text=True, timeout=10,
+        )
+        if r.returncode == 0:
+            self.set_status(f"Unblocked {label} ({mac})")
+        else:
+            self.set_status(f"Unblock failed: {(r.stderr or r.stdout).strip()[:80]}")
+
     def _threat_color(self, _column, cell, model, iter_, data=None):
-        threat = model.get_value(iter_, 4)
+        threat = model.get_value(iter_, 6)
         if threat == "SPOOFING":
             cell.set_property("foreground", self.colors["danger"])
             cell.set_property("weight", 700)
@@ -275,6 +504,10 @@ class StonefishApp(GhostPortApp):
         else:
             cell.set_property("foreground", self.colors["success"])
             cell.set_property("weight", 400)
+
+    def _action_color(self, _column, cell, _model, _iter, _data=None):
+        cell.set_property("foreground", self.colors["dim"])
+        cell.set_property("weight", 400)
 
     def refresh(self):
         self.run_async(self._scan, self._update_table)
@@ -295,11 +528,24 @@ class StonefishApp(GhostPortApp):
 
         self.store.clear()
         new_alerts = 0
+        alert_details = []  # For mako notification payload
         for e in entries:
             threat = e["threat"]
             if threat in ("SPOOFING", "GW CHANGED"):
                 new_alerts += 1
-            self.store.append([e["ip"], e["mac"], e["iface"], e["state"], threat])
+                alert_details.append((threat, e))
+            vendor = oui_lookup(e["mac"])
+            hostname = hostname_for(e["ip"])
+            action = _action_hint(threat)
+            self.store.append([
+                e["ip"], hostname, e["mac"], vendor, e["iface"],
+                e["state"], threat, action,
+            ])
+
+        # Stonefish #4: fire mako critical notification for each *new* alert,
+        # rate-limited per (mac, threat) pair so flapping doesn't spam.
+        if alert_details:
+            _fire_notifications(alert_details)
 
         if new_alerts > 0:
             self.alert_count += new_alerts
