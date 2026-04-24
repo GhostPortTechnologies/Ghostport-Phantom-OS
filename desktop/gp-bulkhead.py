@@ -481,13 +481,28 @@ class BulkheadApp(GhostPortApp):
         dns_page.set_margin_bottom(8)
 
         dns_help = self.make_label(
-            "DNS-level block rules from /etc/dnsmasq.d/. Click the Blocked "
-            "column to flip any entry; click Reload DNS to apply.",
+            "DNS-level block rules from /etc/dnsmasq.d/. Type a domain + Add "
+            "to block a new one, toggle the Blocked column to flip existing "
+            "entries, then Reload DNS to apply.",
             "gp-dim",
         )
         dns_help.set_line_wrap(True)
         dns_help.set_halign(Gtk.Align.START)
         dns_page.pack_start(dns_help, False, False, 0)
+
+        # Add-new-block bar — feeds gp-dns-rules add. User-added entries
+        # land in /etc/dnsmasq.d/90-user-blocks.conf (OTA preserves it).
+        dns_add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        dns_add_label = self.make_label("Add block:", "gp-text")
+        dns_add_box.pack_start(dns_add_label, False, False, 0)
+        self.dns_add_entry = Gtk.Entry()
+        self.dns_add_entry.set_placeholder_text("e.g. example-tracker.com  (no scheme, no path)")
+        self.dns_add_entry.connect("activate", self._on_dns_add)  # Enter key submits
+        dns_add_box.pack_start(self.dns_add_entry, True, True, 0)
+        dns_add_btn = self.make_button("Add", self._on_dns_add, "gp-btn-primary")
+        dns_add_btn.set_tooltip_text("Add a new block rule and reload DNS")
+        dns_add_box.pack_start(dns_add_btn, False, False, 0)
+        dns_page.pack_start(dns_add_box, False, False, 0)
 
         # DNS filter box
         dns_filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -620,6 +635,47 @@ class BulkheadApp(GhostPortApp):
     def _on_dns_refresh(self, _btn):
         self._load_dns_rules()
         self.set_status("DNS rule list refreshed")
+
+    def _on_dns_add(self, _widget):
+        """Add-new-block handler. Called by the Add button and by Enter
+        on the entry widget (same flow). On success: refreshes the list
+        so the new row appears + auto-reloads DNS so the block is live.
+        Keeps the entry field populated only on error so the user can fix
+        and retry without re-typing.
+        """
+        domain = (self.dns_add_entry.get_text() or "").strip()
+        if not domain:
+            self.set_status("Enter a domain to block (e.g. example.com)")
+            return
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-dns-rules", "add", domain],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self.set_status(f"gp-dns-rules add error: {e}")
+            return
+        if r.returncode != 0:
+            # CLI prints validation / duplicate errors to stderr; surface them verbatim
+            msg = (r.stderr or r.stdout).strip().splitlines()[-1][:160]
+            self.set_status(f"Add failed: {msg}")
+            return  # leave entry populated so user can edit + retry
+        # Success: clear entry, refresh list, auto-reload so the new block
+        # is live immediately (different from the toggle flow where reload
+        # is explicit — here the user's intent is "block this now").
+        self.dns_add_entry.set_text("")
+        self._load_dns_rules()
+        try:
+            rr = subprocess.run(
+                ["sudo", "-n", "gp-dns-rules", "reload"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if rr.returncode == 0:
+                self.set_status(f"Added {domain} and reloaded DNS — block is live")
+            else:
+                self.set_status(f"Added {domain} (reload failed — click Reload DNS to retry)")
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            self.set_status(f"Added {domain} (reload skipped — click Reload DNS manually)")
 
     def _on_dns_reload(self, _btn):
         try:
@@ -1566,16 +1622,23 @@ class BulkheadApp(GhostPortApp):
          "Separate from the Firewall tab above. GhostPort ships a curated "
          "list of fingerprinting and tracking domains (Samba TV, Mixpanel, "
          "Hotjar, etc.) hard-blocked at the DNS layer via files in "
-         "/etc/dnsmasq.d/. This tab lets you flip individual entries on or "
-         "off without editing those files by hand.\n\n"
-         "The toggle in the \"Blocked\" column is the only control — click "
-         "it to allow, click again to re-block. Changes don't take effect "
-         "until you press \"Reload DNS (pihole-FTL)\" at the bottom, so you "
-         "can batch multiple edits into one restart.\n\n"
-         "This tab only TOGGLES existing rules. It can't add new blocks. "
-         "If you need to block a new domain, either use the Dashboard's "
-         "\"Allow / Block Domain\" widget (Pi-hole gravity) or hand-edit "
-         "the dnsmasq drop-in."),
+         "/etc/dnsmasq.d/. This tab lets you manage that list without "
+         "editing files by hand.\n\n"
+         "Three controls:\n"
+         "• Add block (top input + button) — type a domain, click Add, "
+         "it's blocked system-wide. Saves to /etc/dnsmasq.d/90-user-blocks"
+         ".conf and reloads DNS immediately.\n"
+         "• Blocked toggle (middle column) — flip any existing entry on or "
+         "off. Changes stage until you click Reload DNS, so you can batch "
+         "several edits into one restart.\n"
+         "• Reload DNS (bottom button) — restarts pihole-FTL to apply "
+         "pending toggle changes. Not needed after Add — that reloads "
+         "automatically.\n\n"
+         "Layer note: this tab manages dnsmasq address= rules directly. "
+         "The Dashboard's \"Allow / Block Domain\" widget writes to "
+         "Pi-hole gravity, a different layer. For privacy-product lists "
+         "(anti-fingerprint, data brokers) dnsmasq is the right layer; "
+         "for casual ad-block additions, either works."),
 
         ("DNS Rules — why the sites you WANT to visit might show up here",
          "The shipped anti-fingerprint list blocks most third-party "

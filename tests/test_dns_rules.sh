@@ -39,9 +39,15 @@ echo "=== test_dns_rules ==="
 # One consolidated Python block exercises every assertion. Easier to
 # read than 7 nested shell calls and avoids bash -c function-scope issues.
 sudo python3 <<PY
-import sys, importlib.util, json
+import sys, importlib.util, json, types
+from pathlib import Path
 spec = importlib.util.spec_from_file_location("gpdr", "$SANDBOX_MOD")
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+
+# USER_BLOCKS_FILE was pinned at module load from DNSMASQ_DIR. Because we
+# sed'd DNSMASQ_DIR on the sandbox copy, USER_BLOCKS_FILE follows — but
+# make it explicit for clarity in failures.
+m.USER_BLOCKS_FILE = Path("$SANDBOX") / "90-user-blocks.conf"
 
 pass_ct = 0
 fail_ct = 0
@@ -111,6 +117,68 @@ check(
     "scan reflects pre-allowed.test blocked",
     final.get("pre-allowed.test") is True,
     f"state: {final}",
+)
+
+# ── add subcommand ───────────────────────────────────────────────
+# Synthesize argparse-style namespace
+class NS:
+    pass
+
+# 7. invalid domains are rejected
+for bad, label in [
+    ("bad input", "whitespace"),
+    ("http://example.com", "url"),
+    ("*.example.com", "wildcard"),
+    ("noTLD", "no-dot"),
+    ("", "empty"),
+]:
+    ok, reason = m.validate_domain(bad)
+    check(f"validator rejects {label!r}", not ok, f"input={bad!r} ok={ok} reason={reason}")
+
+# 8. valid FQDNs pass validation
+for good in ["example.com", "sub.example.com", "a-b.co.uk", "1-2-3.foo.example"]:
+    ok, _ = m.validate_domain(good)
+    check(f"validator accepts {good!r}", ok)
+
+# 9. add creates the user-blocks file + appends the rule
+args = NS(); args.domain = "fresh-add.test"; args.target = "0.0.0.0"
+rc = m.cmd_add(args)
+check("add succeeds on fresh domain", rc == 0)
+check("user-blocks file was created", m.USER_BLOCKS_FILE.exists())
+content = m.USER_BLOCKS_FILE.read_text()
+check("file has header", "GhostPort User DNS Blocks" in content)
+check("file has the new rule", "address=/fresh-add.test/0.0.0.0" in content)
+check("rule carries the 'added by' annotation", "added by gp-dns-rules" in content)
+
+# 10. duplicate (in user file) is refused
+args2 = NS(); args2.domain = "fresh-add.test"; args2.target = "0.0.0.0"
+rc2 = m.cmd_add(args2)
+check("add refuses duplicate of a user-file entry", rc2 == 1)
+
+# 11. duplicate (against original fixture) is refused across files
+args3 = NS(); args3.domain = "also-block.test"; args3.target = "0.0.0.0"
+rc3 = m.cmd_add(args3)
+check("add refuses duplicate across different files", rc3 == 1)
+
+# 12. second fresh add appends without corrupting previous
+args4 = NS(); args4.domain = "second-add.test"; args4.target = "0.0.0.0"
+rc4 = m.cmd_add(args4)
+check("second add succeeds", rc4 == 0)
+content2 = m.USER_BLOCKS_FILE.read_text()
+check("both entries present", (
+    "address=/fresh-add.test/0.0.0.0" in content2
+    and "address=/second-add.test/0.0.0.0" in content2
+))
+# Count header lines — must still be exactly one header
+header_count = content2.count("GhostPort User DNS Blocks")
+check("header appears exactly once", header_count == 1, f"got {header_count}")
+
+# 13. added domain flows through the toggle path cleanly
+m.toggle_domain("fresh-add.test", block=False)
+content3 = m.USER_BLOCKS_FILE.read_text()
+check(
+    "allow works on added entry",
+    "# address=/fresh-add.test/0.0.0.0" in content3,
 )
 
 print()

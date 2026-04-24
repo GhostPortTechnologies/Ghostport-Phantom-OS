@@ -12,8 +12,13 @@ Subcommands:
   allow <domain>       Comment out every matching rule (domain resolves
                        normally again).
   block <domain>       Uncomment every matching rule (domain is blocked).
-                       Does NOT create new entries — only toggles what
-                       already exists in some .conf file.
+                       Only toggles existing rules — use `add` to create.
+  add <domain> [target]
+                       Create a new block rule for the domain. Writes to
+                       /etc/dnsmasq.d/90-user-blocks.conf (OTA-safe: this
+                       file is user data, not shipped from repo). Default
+                       target is 0.0.0.0. Refuses duplicates across any
+                       /etc/dnsmasq.d/*.conf file.
   reload               Restart pihole-FTL so changes take effect.
 
 Design notes:
@@ -38,11 +43,24 @@ from datetime import date
 from pathlib import Path
 
 DNSMASQ_DIR = Path("/etc/dnsmasq.d")
+USER_BLOCKS_FILE = DNSMASQ_DIR / "90-user-blocks.conf"
 
 # Match: optional indent, optional # prefix, address=/<domain>/<target>, optional trailing comment
 RULE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<hash>#+\s*)?address=/(?P<domain>[^/]+)/(?P<target>\S+?)(?P<tail>\s.*)?$"
 )
+
+# Accepts FQDNs: labels 1-63 chars alnum + hyphen (not leading/trailing), at least one dot.
+DOMAIN_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+$"
+)
+
+USER_BLOCKS_HEADER = """\
+# GhostPort User DNS Blocks
+# Managed by gp-dns-rules (add/allow/block). Hand-edits safe but the tool
+# is the supported interface.
+# Not shipped via OTA — this file is user data. gp-update preserves it.
+"""
 
 
 def scan_rules() -> list[dict]:
@@ -135,6 +153,72 @@ def cmd_block(args) -> int:
     return 0
 
 
+def validate_domain(domain: str) -> tuple[bool, str]:
+    """Return (ok, reason). Rejects wildcards, schemes, paths, whitespace."""
+    if not domain:
+        return False, "domain is empty"
+    if any(c.isspace() for c in domain):
+        return False, "domain contains whitespace"
+    if "://" in domain:
+        return False, "looks like a URL — pass just the hostname"
+    if "/" in domain:
+        return False, "contains '/' — pass just the hostname, no path"
+    if domain.startswith("*"):
+        return False, "wildcards not supported; dnsmasq address= already matches all subdomains of the entry you provide"
+    if len(domain) > 253:
+        return False, "domain exceeds 253 chars"
+    if not DOMAIN_RE.match(domain.lower()):
+        return False, "not a valid FQDN (need at least one dot, alnum + hyphen labels)"
+    return True, ""
+
+
+def cmd_add(args) -> int:
+    domain = args.domain.strip().lower()
+    target = getattr(args, "target", None) or "0.0.0.0"
+    ok, reason = validate_domain(domain)
+    if not ok:
+        print(f"invalid domain: {reason}", file=sys.stderr)
+        return 2
+
+    # Duplicate check: scan every .conf, refuse if domain already exists
+    # (commented or active). Keeps the user from having two rules fighting.
+    for existing in scan_rules():
+        if existing["domain"].lower() == domain:
+            state = "blocked" if existing["blocked"] else "allowed (commented out)"
+            fname = existing["file"].rsplit("/", 1)[-1]
+            print(
+                f"{domain} already exists in {fname} ({state}). "
+                f"Use `gp-dns-rules block {domain}` to (re-)enable it.",
+                file=sys.stderr,
+            )
+            return 1
+
+    # Ensure user-blocks file exists with a header, then append.
+    if not USER_BLOCKS_FILE.exists():
+        USER_BLOCKS_FILE.write_text(USER_BLOCKS_HEADER)
+        os.chmod(USER_BLOCKS_FILE, 0o644)
+
+    line = f"address=/{domain}/{target}  # added by gp-dns-rules {date.today().isoformat()}"
+    # Atomic append: read, add line + newline, write to temp, rename.
+    existing_text = USER_BLOCKS_FILE.read_text()
+    # Guarantee the file ends with a newline before appending, so we don't
+    # accidentally concatenate onto the last line of the header or a prior rule.
+    if existing_text and not existing_text.endswith("\n"):
+        existing_text += "\n"
+    new_text = existing_text + line + "\n"
+    tmp = USER_BLOCKS_FILE.with_suffix(USER_BLOCKS_FILE.suffix + ".gpdr-tmp")
+    tmp.write_text(new_text)
+    os.chmod(tmp, 0o644)
+    os.rename(tmp, USER_BLOCKS_FILE)
+
+    print(
+        f"added: address=/{domain}/{target} → {USER_BLOCKS_FILE.name} "
+        f"(run `gp-dns-rules reload` to apply)",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def cmd_reload(_args) -> int:
     try:
         r = subprocess.run(["systemctl", "restart", "pihole-FTL"],
@@ -163,6 +247,11 @@ def main() -> int:
     p_a.add_argument("domain"); p_a.set_defaults(fn=cmd_allow)
     p_b = sp.add_parser("block", help="re-enable an existing block rule for a domain")
     p_b.add_argument("domain"); p_b.set_defaults(fn=cmd_block)
+    p_add = sp.add_parser("add", help="create a new block rule (writes to 90-user-blocks.conf)")
+    p_add.add_argument("domain")
+    p_add.add_argument("target", nargs="?", default="0.0.0.0",
+                       help="IP the blocked domain resolves to (default 0.0.0.0)")
+    p_add.set_defaults(fn=cmd_add)
     sp.add_parser("reload", help="restart pihole-FTL so edits take effect").set_defaults(fn=cmd_reload)
     args = ap.parse_args()
     return args.fn(args)
