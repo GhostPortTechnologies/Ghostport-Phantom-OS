@@ -2741,7 +2741,7 @@ const ARSENAL_FILE = "/etc/phantom/arsenal.json";
 
 function readArsenal() {
   try { return JSON.parse(fs.readFileSync(ARSENAL_FILE, "utf8")); }
-  catch { return { killSwitch: false, encryptedDns: false, macRandomization: false, blocklistFreq: "weekly", schedules: [] }; }
+  catch { return { killSwitch: false, encryptedDns: false, macRandomization: false, blocklistFreq: "weekly", schedules: [], tcpScrub: false, ghostMode: false }; }
 }
 
 function writeArsenal(data) {
@@ -2900,6 +2900,32 @@ function stopDnsLeakMonitor() {
     await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-quic-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
     console.log("[Arsenal] QUIC block disabled — removed rules on startup");
   }
+  // Restore TCP fingerprint scrub if previously enabled
+  if (arsenal.tcpScrub) {
+    try {
+      const ruleset = [
+        "table ip phantom_scrub {",
+        "  chain scrub {",
+        "    type filter hook postrouting priority mangle; policy accept;",
+        "    ip ttl set 64",
+        "    tcp flags syn tcp option maxseg size set 1360",
+        "  }",
+        "}",
+      ].join("\n") + "\n";
+      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
+      await new Promise((resolve, reject) => {
+        const child = require("child_process").spawn("sudo", ["nft", "-f", "-"]);
+        let stderr = "";
+        child.stderr.on("data", d => stderr += d);
+        child.on("close", code => code === 0 ? resolve() : reject(new Error(stderr || "nft load failed")));
+        child.stdin.write(ruleset);
+        child.stdin.end();
+      });
+      console.log("[Arsenal] TCP scrub restored on startup");
+    } catch (e) {
+      console.error("[Arsenal] TCP scrub restore failed:", e.message);
+    }
+  }
   // Always run DNS leak monitor in protected modes
   startDnsLeakMonitor();
 })();
@@ -3028,6 +3054,8 @@ app.get("/api/arsenal/status", async (req, res) => {
       dreadnoughtApplicable: !inTunnel,          // UI hides control in tunnel modes
       macRandomization: macService.out.trim() === "enabled",
       quicBlock: arsenal.quicBlock !== false, // default true
+      tcpScrub:  !!arsenal.tcpScrub,          // default false
+      ghostMode: !!arsenal.ghostMode,         // default false
       piholeConnected: piholeSid !== null,
       blocklistFreq: arsenal.blocklistFreq,
       schedules: arsenal.schedules || [],
@@ -3223,6 +3251,50 @@ app.post("/api/arsenal/encrypteddns", async (req, res) => {
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/tcpscrub — { enabled: true|false }
+ * TCP/IP fingerprint scrubbing — normalizes packet fields that would otherwise
+ * leak OS/device identity to passive observers.
+ *   - TTL set to 64 (the Linux default, masks Windows/iOS/Android signatures)
+ *   - TCP MSS clamped to 1360 on SYN (masks per-device max-segment variance)
+ * Runs as a standalone nftables table (ip phantom_scrub, postrouting/mangle)
+ * so it is independent of mode switches.
+ */
+app.post("/api/arsenal/tcpscrub", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    await withArsenal(arsenal => { arsenal.tcpScrub = !!enabled; });
+    if (enabled) {
+      const ruleset = [
+        "table ip phantom_scrub {",
+        "  chain scrub {",
+        "    type filter hook postrouting priority mangle; policy accept;",
+        "    ip ttl set 64",
+        "    tcp flags syn tcp option maxseg size set 1360",
+        "  }",
+        "}",
+      ].join("\n") + "\n";
+      // Delete first (idempotent), then reload atomically.
+      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
+      await new Promise((resolve, reject) => {
+        const child = require("child_process").spawn("sudo", ["nft", "-f", "-"]);
+        let stderr = "";
+        child.stderr.on("data", d => stderr += d);
+        child.on("close", code => code === 0 ? resolve() : reject(new Error(stderr || "nft load failed")));
+        child.stdin.write(ruleset);
+        child.stdin.end();
+      });
+    } else {
+      await run('sudo nft delete table ip phantom_scrub 2>/dev/null || true');
+    }
+    console.log(`[Arsenal] TCP scrub ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, tcpScrub: !!enabled });
+  } catch (e) {
+    console.error("[GhostPort] TCP scrub error:", e.message);
+    res.status(500).json({ ok: false, error: e.message.slice(0, 500) });
   }
 });
 

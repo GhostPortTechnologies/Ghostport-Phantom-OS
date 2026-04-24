@@ -67,6 +67,14 @@ function updateArsenalUI(data) {
     quicStatus.textContent = data.quicBlock ? "BLOCKING" : "OFF";
   }
 
+  // TCP Fingerprint Scrub
+  setToggle("tog-tcpscrub", data.tcpScrub);
+  const scrubStatus = document.getElementById("tcpscrub-status");
+  if (scrubStatus) {
+    scrubStatus.className = "arsenal-status " + (data.tcpScrub ? "on" : "off");
+    scrubStatus.textContent = data.tcpScrub ? "SCRUBBING" : "OFF";
+  }
+
   // DNS Protection (read-only — mode section is the source of truth)
   const ednsStatus = document.getElementById("edns-status");
   const ednsDesc = document.getElementById("edns-desc");
@@ -265,6 +273,7 @@ async function arsenalToggle(feature) {
   const toggleMap = {
     killswitch: { endpoint: "/api/arsenal/killswitch", key: "killSwitch", togId: "tog-killswitch" },
     quicblock: { endpoint: "/api/arsenal/quicblock", key: "quicBlock", togId: "tog-quicblock" },
+    tcpscrub:  { endpoint: "/api/arsenal/tcpscrub",  key: "tcpScrub",  togId: "tog-tcpscrub"  },
     macrandom: { endpoint: "/api/arsenal/macrandom", key: "macRandomization", togId: "tog-macrandom" },
     terminalmode: { endpoint: "/api/terminal-mode", key: "terminalMode", togId: "tog-terminalmode" },
   };

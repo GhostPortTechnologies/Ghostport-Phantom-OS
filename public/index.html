@@ -1786,6 +1786,19 @@
               <div class="arsenal-desc">Blocks QUIC to prevent DNS filter bypass</div>
               <div class="arsenal-status on" id="quic-status">BLOCKING</div>
             </div>
+            <div class="arsenal-card" id="ac-tcpscrub">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🧽</span>
+                <span class="arsenal-name">TCP Fingerprint Scrub</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-tcpscrub" onclick="arsenalToggle('tcpscrub')">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">Normalizes outbound TTL + MSS so passive observers can't fingerprint your OS</div>
+              <div class="arsenal-status off" id="tcpscrub-status">OFF</div>
+            </div>
             <div class="arsenal-card" id="ac-macrandom">
               <div class="arsenal-header">
                 <span class="arsenal-icon">🎲</span>
