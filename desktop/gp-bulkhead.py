@@ -9,6 +9,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Pango
 import json
 import re
+import subprocess
 import time
 import threading
 
@@ -284,10 +285,17 @@ class BulkheadApp(GhostPortApp):
         # Header
         root.pack_start(self.make_header("BULKHEAD", "Firewall Rule Builder"), False, False, 0)
 
-        # Main content area: sidebar + rule view
+        # Top-level tabs — Firewall (existing nftables editor) + DNS Rules
+        # (new allowlist editor for dnsmasq drop-ins). Each tab owns its own
+        # content so the firewall sidebar doesn't bleed into the DNS view.
+        self.tabs = Gtk.Notebook()
+        self.tabs.set_vexpand(True)
+        root.pack_start(self.tabs, True, True, 0)
+
+        # Tab 1: Firewall — existing sidebar + rule TreeView layout
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         content.set_vexpand(True)
-        root.pack_start(content, True, True, 0)
+        self.tabs.append_page(content, Gtk.Label(label="Firewall Rules"))
 
         # Left sidebar — table list
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -461,8 +469,171 @@ class BulkheadApp(GhostPortApp):
 
         right.pack_start(btn_bar, False, False, 0)
 
-        # Status bar
+        # ── Tab 2: DNS Rules — dnsmasq drop-in allowlist editor ──────────
+        # Backed by `sudo gp-dns-rules list|allow|block|reload`. Users can
+        # toggle any domain that's currently hard-coded as address= in the
+        # shipped drop-ins (e.g. browserleaks.com in 30-anti-fingerprint.conf)
+        # without editing files directly.
+        dns_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        dns_page.set_margin_start(12)
+        dns_page.set_margin_end(12)
+        dns_page.set_margin_top(8)
+        dns_page.set_margin_bottom(8)
+
+        dns_help = self.make_label(
+            "DNS-level block rules from /etc/dnsmasq.d/. Click the Blocked "
+            "column to flip any entry; click Reload DNS to apply.",
+            "gp-dim",
+        )
+        dns_help.set_line_wrap(True)
+        dns_help.set_halign(Gtk.Align.START)
+        dns_page.pack_start(dns_help, False, False, 0)
+
+        # DNS filter box
+        dns_filter_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        dns_filter_icon = self.make_label("\U0001f50d", "gp-text")
+        dns_filter_box.pack_start(dns_filter_icon, False, False, 0)
+        self.dns_filter = Gtk.Entry()
+        self.dns_filter.set_placeholder_text("Filter by domain…")
+        self.dns_filter.connect("changed", self._on_dns_filter_changed)
+        dns_filter_box.pack_start(self.dns_filter, True, True, 0)
+        dns_page.pack_start(dns_filter_box, False, False, 0)
+
+        # DNS rule TreeView — columns: blocked(toggle), domain, target, file
+        self.dns_store_all = []  # in-memory full rule set; filter pulls from here
+        self.dns_store = Gtk.ListStore(bool, str, str, str)  # blocked, domain, target, file
+        self.dns_tree = Gtk.TreeView(model=self.dns_store)
+        self.dns_tree.set_headers_visible(True)
+
+        toggle_renderer = Gtk.CellRendererToggle()
+        toggle_renderer.set_activatable(True)
+        toggle_renderer.connect("toggled", self._on_dns_toggle)
+        col_blocked = Gtk.TreeViewColumn("Blocked", toggle_renderer, active=0)
+        col_blocked.set_min_width(80)
+        self.dns_tree.append_column(col_blocked)
+
+        dns_col_domain_rend = Gtk.CellRendererText()
+        dns_col_domain_rend.set_property("font", "monospace 11")
+        col_domain = Gtk.TreeViewColumn("Domain", dns_col_domain_rend, text=1)
+        col_domain.set_min_width(220)
+        col_domain.set_resizable(True)
+        col_domain.set_sort_column_id(1)
+        self.dns_tree.append_column(col_domain)
+
+        dns_col_target_rend = Gtk.CellRendererText()
+        dns_col_target_rend.set_property("font", "monospace 10")
+        col_target = Gtk.TreeViewColumn("Resolves to", dns_col_target_rend, text=2)
+        col_target.set_min_width(100)
+        col_target.set_resizable(True)
+        self.dns_tree.append_column(col_target)
+
+        dns_col_file_rend = Gtk.CellRendererText()
+        dns_col_file_rend.set_property("font", "monospace 10")
+        col_file = Gtk.TreeViewColumn("Source file", dns_col_file_rend, text=3)
+        col_file.set_min_width(180)
+        col_file.set_resizable(True)
+        self.dns_tree.append_column(col_file)
+
+        dns_page.pack_start(self.make_scrolled(self.dns_tree), True, True, 0)
+
+        # DNS button bar
+        dns_btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        dns_btn_refresh = self.make_button("Refresh list", self._on_dns_refresh, "gp-btn")
+        dns_btn_bar.pack_start(dns_btn_refresh, False, False, 0)
+        dns_btn_reload = self.make_button("Reload DNS (pihole-FTL)", self._on_dns_reload, "gp-btn-primary")
+        dns_btn_reload.set_tooltip_text("Apply pending allow/block changes by restarting pihole-FTL")
+        dns_btn_bar.pack_start(dns_btn_reload, False, False, 0)
+        dns_page.pack_start(dns_btn_bar, False, False, 0)
+
+        self.tabs.append_page(dns_page, Gtk.Label(label="DNS Rules"))
+
+        # Kick off DNS list load in the background so the tab is populated
+        # by the time the user clicks over to it.
+        GLib.idle_add(self._load_dns_rules)
+
+        # Status bar (shared — reused across both tabs)
         root.pack_start(self.make_status_bar("Loading firewall rules..."), False, False, 0)
+
+    # ── DNS Rules tab handlers ──────────────────────────────────────────
+
+    def _load_dns_rules(self):
+        """Refresh the DNS rule list from `gp-dns-rules list`. Idempotent."""
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-dns-rules", "list"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self.set_status(f"gp-dns-rules list error: {e}")
+            return False
+        if r.returncode != 0:
+            self.set_status(f"gp-dns-rules list failed: {(r.stderr or r.stdout).strip()[:80]}")
+            return False
+        try:
+            data = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            self.set_status("gp-dns-rules returned invalid JSON")
+            return False
+        self.dns_store_all = data.get("rules", [])
+        self._apply_dns_filter()
+        return False  # idle_add should not repeat
+
+    def _apply_dns_filter(self):
+        """Re-render dns_store from dns_store_all applying the current filter text."""
+        needle = (self.dns_filter.get_text() if hasattr(self, "dns_filter") else "").lower().strip()
+        self.dns_store.clear()
+        for rule in self.dns_store_all:
+            if needle and needle not in rule["domain"].lower():
+                continue
+            fname = rule["file"].rsplit("/", 1)[-1]
+            self.dns_store.append([rule["blocked"], rule["domain"], rule["target"], fname])
+
+    def _on_dns_filter_changed(self, _entry):
+        self._apply_dns_filter()
+
+    def _on_dns_toggle(self, _renderer, path):
+        """Click the Blocked cell → flip that domain via gp-dns-rules allow/block."""
+        it = self.dns_store.get_iter(path)
+        currently_blocked = self.dns_store.get_value(it, 0)
+        domain = self.dns_store.get_value(it, 1)
+        action = "allow" if currently_blocked else "block"
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-dns-rules", action, domain],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self.set_status(f"gp-dns-rules {action} error: {e}")
+            return
+        if r.returncode != 0:
+            self.set_status(f"{action} failed: {(r.stderr or r.stdout).strip()[:80]}")
+            return
+        # Update in-memory state + re-render row
+        for rule in self.dns_store_all:
+            if rule["domain"].lower() == domain.lower():
+                rule["blocked"] = not currently_blocked
+        self.dns_store.set_value(it, 0, not currently_blocked)
+        self.set_status(
+            f"{action}ed {domain} — click 'Reload DNS (pihole-FTL)' to apply"
+        )
+
+    def _on_dns_refresh(self, _btn):
+        self._load_dns_rules()
+        self.set_status("DNS rule list refreshed")
+
+    def _on_dns_reload(self, _btn):
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-dns-rules", "reload"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self.set_status(f"reload error: {e}")
+            return
+        if r.returncode != 0:
+            self.set_status(f"reload failed: {(r.stderr or r.stdout).strip()[:80]}")
+            return
+        self.set_status("DNS reloaded — changes are live")
 
     # ── Data Loading ─────────────────────────────────────────────────
 
@@ -1390,6 +1561,34 @@ class BulkheadApp(GhostPortApp):
          "terminal and run `sudo gp-mode status` to see what's going on.\n\n"
          "If you get stuck, the safe reset is: `sudo gp-mode isp` in a "
          "terminal. That reloads the ISP profile and cannot lock you out."),
+
+        ("DNS Rules tab — what it is",
+         "Separate from the Firewall tab above. GhostPort ships a curated "
+         "list of fingerprinting and tracking domains (Samba TV, Mixpanel, "
+         "Hotjar, etc.) hard-blocked at the DNS layer via files in "
+         "/etc/dnsmasq.d/. This tab lets you flip individual entries on or "
+         "off without editing those files by hand.\n\n"
+         "The toggle in the \"Blocked\" column is the only control — click "
+         "it to allow, click again to re-block. Changes don't take effect "
+         "until you press \"Reload DNS (pihole-FTL)\" at the bottom, so you "
+         "can batch multiple edits into one restart.\n\n"
+         "This tab only TOGGLES existing rules. It can't add new blocks. "
+         "If you need to block a new domain, either use the Dashboard's "
+         "\"Allow / Block Domain\" widget (Pi-hole gravity) or hand-edit "
+         "the dnsmasq drop-in."),
+
+        ("DNS Rules — why the sites you WANT to visit might show up here",
+         "The shipped anti-fingerprint list blocks most third-party "
+         "trackers AND two privacy-test sites (browserleaks.com, "
+         "amiunique.org) because those sites use fingerprinting to show "
+         "YOU what's detectable. The shipped default leaves those two "
+         "ALLOWED so you can self-test.\n\n"
+         "If you want a stricter posture (block even the self-test sites), "
+         "find them in the list and click Blocked → the toggle flips ON. "
+         "Click Reload DNS and they'll be blocked going forward.\n\n"
+         "Equivalent CLI: `sudo gp-dns-rules allow <domain>` or "
+         "`sudo gp-dns-rules block <domain>` then `sudo gp-dns-rules "
+         "reload`. Same tool the GUI uses under the hood."),
     ]
 
     def _on_help(self, _btn):
