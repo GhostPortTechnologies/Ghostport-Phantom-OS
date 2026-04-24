@@ -107,8 +107,23 @@ Before declaring done:
 4. **Memory update** if the feature surfaces a new decision pattern worth future sessions knowing.
 5. **Roadmap sync** — mark the item `[x]` if it was on the roadmap.
 
-## 8. Related docs
+## 8. Known platform constraints (read before building)
 
+Before wiring a new feature, know these one-time facts about the Phantom OS platform. Each one cost real debug time when it surfaced mid-feature; documenting them up front saves the same loop on the next feature.
+
+1. **Pi-hole runs at privacy level 3.** `/api/stats/top_domains` and `/api/queries` return empty. Use nftables counters (OBSERVABILITY-PATTERNS-SOP §1.1) for per-broker / per-domain aggregation.
+2. **Arsenal toggle state lives in `/etc/phantom/arsenal.json`** and must be writable by the `ghostport-admin` user. If it ends up root-owned, toggles silently fail. Fix: `sudo chown ghostport-admin:ghostport-admin` + ship a startup ownership sweep.
+3. **nftables `ether_addr` sets don't support `flags interval`** — MAC addresses are point values. Use `type ether_addr;` alone.
+4. **`net.netfilter.nf_conntrack_acct` must be 1** for per-flow byte counters. Shipped via `/etc/sysctl.d/99-phantom-conntrack-acct.conf`.
+5. **Dreadnought applies in ISP / Zero Trust only; Ghost Mode in DoubleHop / ZHop only.** They're mirror-image mode-level toggles — clone the other's row in `public/index.html` when building similar.
+6. **DHCP leases live in two places**: `/var/lib/misc/dnsmasq.leases` (stock dnsmasq) and `/etc/pihole/dhcp.leases` (Pi-hole DHCP mode). Read both when resolving IP→hostname.
+7. **`getaddrinfo` doesn't honor `socket.setdefaulttimeout` reliably on Linux.** Use `subprocess.run(["dig", ...])` with `+time=N +tries=1` for any DNS resolution under a deadline.
+
+See OBSERVABILITY-PATTERNS-SOP.md §4 for the debug-time discovery that each of these caused.
+
+## 9. Related docs
+
+- `OBSERVABILITY-PATTERNS-SOP.md` — three data-source patterns (nftables counters / conntrack / DNS log) + when to use each. **Read this before any metric / counter / anomaly feature.**
 - `INVENTORY-BEFORE-BUILD-SOP.md` — general grep checklist (this SOP builds on it for the app-integration case)
 - `SCOPE-DISCIPLINE-SOP.md` — "fix the reported problem, not the whole app"
 - `FEATURE-DOCS-SOP.md` — user-facing doc requirements per feature

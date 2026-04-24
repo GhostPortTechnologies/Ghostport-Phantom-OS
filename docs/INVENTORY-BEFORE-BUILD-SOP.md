@@ -2,6 +2,8 @@
 
 **Rule: Before building anything, prove it doesn't already exist.**
 
+**Corollary (2026-04-24): Rule also applies BEFORE PROPOSING anything, not just before coding it.** Proposing features that already ship wastes user trust, not just AI time. Before suggesting a feature wave, grep the repo for each candidate and mark the ones that already exist. The 2026-04-24 proposal round embarrassingly pitched WebRTC STUN block and QUIC toggle as "net-new" when both were shipped months ago (Arsenal #5 + #7, all three non-ISP `.nft` profiles, in the privacy score). Two-minute grep would have caught it.
+
 Most of the waste in this project is AIs reinventing features that ship with the OS. This SOP is the grep checklist that prevents it.
 
 ---
