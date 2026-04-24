@@ -54,12 +54,20 @@ tmp/
 Thumbs.db
 .Trash*
 
-# Internal-only docs (operational runbooks, internal plans, infra-revealing compliance)
+# Internal-only docs (operational runbooks, internal plans, infra-revealing)
 docs/TOMORROW.md
 docs/SUDO-HARDENING-PROPOSAL.md
 docs/SUDO-TIGHTEN-TEE.md
 docs/COMMIT-PLAN.md
 docs/DOC-BACKLOG.md
+docs/FIELD-SUPPORT-SOP.md
+docs/GOLDEN-IMAGE-SOP.md
+docs/pen-testing-instructions.md
+docs/disaster-recovery.md
+docs/network-topology.md
+docs/self-healing-architecture.md
+docs/security-audit-*.md
+docs/ghostport-docs.zip
 HUMAN_TASKS.md
 TASKS.md
 compliance/asset-inventory.md
