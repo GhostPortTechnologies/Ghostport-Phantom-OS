@@ -1,0 +1,39 @@
+#!/bin/bash
+# Phantom OS pre-commit hook — secret scan on staged diff
+# Blocks commits containing secrets matching .gitleaks.toml rules.
+# Bypass in emergencies (use sparingly): git commit --no-verify
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+CONFIG="$REPO_ROOT/.gitleaks.toml"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks not installed — skipping secret scan (install with 'sudo apt install gitleaks' or see docs/SECRET-SAFETY-SOP.md)"
+    exit 0
+fi
+
+if [ ! -f "$CONFIG" ]; then
+    echo "pre-commit: .gitleaks.toml missing at repo root — skipping (this should not happen)"
+    exit 0
+fi
+
+# --staged: scans only what's in the git index about to be committed.
+# Exit code 1 = findings detected.
+if ! gitleaks protect --staged --config "$CONFIG" --redact --no-banner 2>&1; then
+    cat <<'MSG'
+
+pre-commit: BLOCKED — gitleaks found a potential secret in your staged changes.
+
+What to do:
+  1. Review the finding above (redacted so your terminal scrollback stays clean).
+  2. Remove the secret from the file (or replace with a placeholder / env-var read).
+  3. Add the file to staging again and re-commit.
+  4. If this is a false positive, add an allowlist entry to .gitleaks.toml.
+  5. Emergency bypass (DANGEROUS, creates an audit trail): git commit --no-verify
+
+Reference: docs/SECRET-SAFETY-SOP.md
+MSG
+    exit 1
+fi
+
+exit 0

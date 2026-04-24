@@ -1,0 +1,77 @@
+# Phantom OS — gitleaks config
+# Loaded by the pre-commit hook and by any future CI secret scan.
+# Rule origin: 2026-04-23 triple-token-leak incident. See docs/SECRET-SAFETY-SOP.md.
+
+title = "Phantom OS gitleaks config"
+
+[extend]
+# Inherit the gitleaks default ruleset (AWS, GitHub, Stripe, Slack, private keys, etc.)
+useDefault = true
+
+# ── Project-specific rules ──────────────────────────────────
+
+[[rules]]
+id = "phantom-bridge-token-known"
+description = "Known-historical leaked bridge/fleet token values — must never reappear"
+regex = '''(***REVOKED-TOKEN***|***REVOKED-TOKEN***|***REVOKED-TOKEN***|***REVOKED-TOKEN***)'''
+tags = ["phantom-os", "historical-leak"]
+
+[[rules]]
+id = "phantom-bridge-token-shape"
+description = "Generic 43-char base64-ish token assigned to BRIDGE/FLEET/ALERT auth variables"
+regex = '''(?i)(bridge_?token|fleet_?token|alert_?token|AUTH_?TOKEN)\s*[:=]\s*["']([A-Za-z0-9+/_-]{40,60})["']'''
+# Allow obvious placeholders so configs with MISSING_BRIDGE_TOKEN / null / empty don't false-trip
+[[rules.allowlists]]
+regexes = [
+  '''MISSING_BRIDGE_TOKEN''',
+  '''YOUR_[A-Z_]+_HERE''',
+  '''<[^>]*>''',
+  '''\*\*\*REVOKED''',
+  '''REPLACE_ME''',
+  '''\$\{[^}]+\}''',
+]
+
+[[rules]]
+id = "wireguard-private-key"
+description = "WireGuard PrivateKey assignment with a real-looking base64 value"
+regex = '''^\s*PrivateKey\s*=\s*([A-Za-z0-9+/=]{40,})'''
+[[rules.allowlists]]
+regexes = ['''PrivateKey\s*=\s*\$\{''', '''PrivateKey\s*=\s*\.\.\.''', '''PrivateKey\s*=\s*<''']
+
+[[rules]]
+id = "phantom-passcode-plaintext"
+description = "Plaintext device passcode committed (we moved to scrypt hash only in March)"
+regex = '''(?i)\bpasscode_plaintext\s*[:=]\s*["'][0-9]{6,12}["']'''
+
+[[rules]]
+id = "tokenized-git-remote-url"
+description = "Token embedded in a git remote URL — forbidden per SECRET-SAFETY-SOP §2.2 and §9.2"
+regex = '''https://(ghp_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|[A-Za-z0-9_-]+:[A-Za-z0-9_-]+)@github\.com'''
+
+# ── Global allowlist ────────────────────────────────────────
+# Paths that contain known-safe content that might otherwise look alarming.
+
+[allowlist]
+description = "paths + patterns exempt from scanning"
+paths = [
+  '''docs/PHANTOM-RENAME-PLAN\.md$''',   # Historical record intentionally references old token prefixes
+  '''docs/SECRET-SAFETY-SOP\.md$''',     # The SOP itself cites historical-leak values in §9.6 context
+  '''\.gitleaks\.toml$''',               # This file — avoids self-match on the known-historical values
+  '''public/logo\.png$''',               # Binary asset
+  '''public/icon-.*\.png$''',            # Binary asset
+  '''desktop/icons/.*\.(svg|png)$''',    # Binary/vector assets
+  '''chamber/.*''',                      # Runtime chat data (gitignored anyway)
+  '''backups/.*''',                      # Backups (gitignored)
+  '''node_modules/.*''',                 # Deps (gitignored)
+  '''ssl/.*''',                          # Runtime TLS keys (gitignored — audit-scan false positive)
+  '''compliance/(risk-register|asset-inventory|incident-response|restore-runbook)\.md$''',  # Internal docs, gitignored
+]
+
+regexes = [
+  '''phChars\s*=\s*["']ABCDEFGHJKMNPQRSTUVWXYZ''',  # passcode alphabet constant
+  '''chars\s*=\s*['"]ABCDEFGHJKMNPQRSTUVWXYZ''',
+  '''MISSING_BRIDGE_TOKEN''',                        # sentinel placeholder after our token scrub
+  '''\$\{[A-Z_]+_TOKEN\}''',                         # shell template placeholders like ${TOKEN}
+  '''YOUR_[A-Z_]+_HERE''',                           # doc placeholders
+  '''(?i)bearer\s+\*\*\*REVOKED''',                  # revoked-marker placeholder
+]

@@ -1,0 +1,39 @@
+# Phantom OS repo attributes
+
+# Default: treat all text as LF-normalized
+* text=auto eol=lf
+
+# Binary assets — don't diff, don't line-end-normalize
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
+
+# SVG is text XML — keep default text handling
+*.svg   text
+
+# Shell scripts — force LF even on Windows checkouts
+*.sh    text eol=lf
+scripts/gp-* text eol=lf
+
+# Generated / vendored files — hide from GitHub language stats
+public/*.min.js     linguist-generated=true
+public/manifest.json linguist-generated=true
+package-lock.json   linguist-generated=true
+
+# Docs + configs are text
+*.md    text
+*.toml  text
+*.yaml  text
+*.yml   text
+*.json  text
+*.conf  text
+*.service text
+*.timer text
+*.nft   text

@@ -1,0 +1,46 @@
+# Phantom OS — pre-commit framework hooks
+# Run once per clone: `pre-commit install`
+# Then every `git commit` auto-runs these checks locally.
+# CI should also run `pre-commit run --all-files` on every PR.
+
+repos:
+  # Secret scanning — configured by .gitleaks.toml at repo root
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.28.0
+    hooks:
+      - id: gitleaks
+        name: gitleaks — secret scan staged diff
+
+  # Generic hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+        exclude: '\.(png|jpg|svg|ico)$'
+      - id: check-added-large-files
+        args: [--maxkb=2048]    # 2 MB cap; logo.png is 1.5 MB so safe
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-yaml
+      - id: check-case-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Python
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # Shell
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: [--severity=warning]
+
+# To bypass in an emergency (use sparingly):  git commit --no-verify
+# To bypass only the secret scan:             SKIP=gitleaks git commit

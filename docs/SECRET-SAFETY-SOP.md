@@ -292,7 +292,80 @@ If rotation #1 also leaked (e.g., tool echoed the new token during setup — exa
 
 ---
 
-## 10. Related documents
+## 10. Defensive stack — installed pre-commit + CI guardrails (2026-04-23)
+
+After the triple-leak incident, the following automated defenses were deployed to make this class of failure hard to repeat even under human error or AI-agent error. Every contributor on this repo operates behind these gates.
+
+### 10.1 `.gitleaks.toml` (repo root, tracked)
+
+Machine-readable secret-detection config. Inherits gitleaks' default rule set (AWS, GitHub, Stripe, Slack, private keys, etc.) and adds Phantom-OS-specific rules:
+
+| Rule id | Catches |
+|---|---|
+| `phantom-bridge-token-known` | The four known-historical leaked token values. Defense-in-depth — ensures they can never reappear even if filter-repo state ever gets out of sync. |
+| `phantom-bridge-token-shape` | Generic 40-60-char base64 tokens assigned to `bridge_token`, `fleet_token`, `alert_token`, `AUTH_TOKEN`, etc. |
+| `wireguard-private-key` | `PrivateKey = <base64>` assignments in WireGuard configs. |
+| `phantom-passcode-plaintext` | Plaintext passcode assignments (product moved to scrypt hash only in March). |
+| `tokenized-git-remote-url` | `https://TOKEN@github.com` URLs — the specific pattern that bit us 2026-04-23. |
+
+Allowlist entries cover known-safe content: binary assets, gitignored compliance docs (kept locally), the SOP itself (cites historical tokens in context), placeholder sentinels like `MISSING_BRIDGE_TOKEN` / `${TOKEN}` / `YOUR_*_HERE`.
+
+### 10.2 `scripts/git-hooks/pre-commit` (repo-tracked hook body)
+
+Client-side hook that runs `gitleaks protect --staged` against every proposed commit. Blocks the commit if any `.gitleaks.toml` rule fires. Emits a redacted finding summary and an instruction block pointing to §5 of this SOP.
+
+**Lives at `scripts/git-hooks/pre-commit` in the repo (tracked).** `.git/hooks/pre-commit` is a symlink to it — so updates to the tracked file propagate immediately to the live hook.
+
+### 10.3 `scripts/install-hooks.sh` (one-shot installer for fresh clones)
+
+Run once after `git clone`:
+```
+./scripts/install-hooks.sh
+```
+Creates the `.git/hooks/pre-commit → scripts/git-hooks/pre-commit` symlink, validates gitleaks is on PATH, reports readiness. Idempotent.
+
+### 10.4 `.pre-commit-config.yaml` (framework integration)
+
+For contributors using the `pre-commit` framework (`pip install pre-commit` then `pre-commit install`). Declares the same gitleaks hook plus: trailing-whitespace / EOF / large-file / merge-conflict / JSON / YAML / case-conflict / mixed-line-ending checks, `ruff` + `ruff-format` for Python, `shellcheck` for bash. Both the framework path and the plain-hook path end up running gitleaks — redundant-on-purpose.
+
+### 10.5 GitHub-side settings (operator action, one-time per repo)
+
+**Enable in GitHub Settings → Code security and analysis:**
+- **Push protection** — rejects `git push` operations containing known secret patterns. Second line of defense after the pre-commit hook.
+- **Secret scanning alerts** — continuously scans the committed tree; emails the maintainer when a new secret is detected.
+- **Dependabot alerts + security updates** — for npm/apt dep vulns.
+- **Code scanning (CodeQL)** — static analysis of JS/Python. Free on public repos.
+
+**Enable in GitHub Settings → Branches (for `main`):**
+- Require pull-request review before merging
+- Require status checks to pass (pre-commit CI run) before merging
+- Require linear history
+- Disallow force-push (except for explicit history-rewrite maintenance, authorized per-incident)
+- Disallow direct deletions
+
+These are not yet scripted because they're one-click UI settings. Re-verify on every new repo.
+
+### 10.6 `.gitattributes` hygiene (tracked)
+
+Repo-wide defaults: `* text=auto eol=lf`. Binary markers on `*.png`/`*.jpg`/`*.pdf`/`*.gz` etc. `linguist-generated=true` on `*.min.js` + `manifest.json` + `package-lock.json` so GitHub's language-stats bar isn't skewed by vendored/generated files.
+
+### 10.7 How contributions now move through the gates
+
+Proposed commit → **pre-commit hook (gitleaks)** → commit lands locally →
+`git push` → **GitHub push protection** → push accepted →
+continuous **GitHub secret scanning** → maintainer alerted on any new detection.
+
+A leak now requires **three sequential failures**: the author's local hook, GitHub's server-side push protection, AND the post-commit scanner. Each is independent; each has different rulesets; each has a different owner. That's what the industry-standard stack looks like and that's what we now run.
+
+### 10.8 Bypassing (DO NOT unless genuinely necessary)
+
+Emergency bypass of local hook: `git commit --no-verify`. This is logged (bash history), shows up in `git reflog`, and is immediately visible to anyone reviewing. Use only when the hook is broken (not when it's catching a real finding). Bypass is NOT available for server-side push protection — that's the point.
+
+If a hook bypass happens, the bypasser owes the operator an immediate Chamber / bridge message with the justification. No exceptions.
+
+---
+
+## 11. Related documents
 
 - `feedback_no_tokens_in_urls.md` (memory) — the specific 2026-04-23 incident that triggered this SOP
 - `feedback_no_passwords.md` (memory) — earlier rule about passwords in memory
