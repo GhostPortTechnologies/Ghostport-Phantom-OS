@@ -1053,6 +1053,30 @@ async function fetchBlocked() {
 }
 
 // ── Enemy List (data brokers + surveillance partners) ────────────────
+// Collapsible card — default collapsed; open/closed state persists in
+// localStorage so the user's choice sticks across refreshes. Only polls
+// the backend when expanded, so a collapsed tile costs nothing.
+
+const ENEMIES_PREF_KEY = "gp.enemies.expanded";
+
+function setEnemiesExpanded(expanded) {
+  const body = document.getElementById("enemies-body");
+  const caret = document.getElementById("enemies-caret");
+  const header = document.getElementById("enemies-header");
+  if (!body || !caret || !header) return;
+  body.style.display = expanded ? "block" : "none";
+  caret.textContent = expanded ? "▾" : "▸";
+  header.setAttribute("aria-expanded", expanded ? "true" : "false");
+  try { localStorage.setItem(ENEMIES_PREF_KEY, expanded ? "1" : "0"); } catch {}
+  if (expanded) fetchEnemies();
+}
+
+function toggleEnemies() {
+  const header = document.getElementById("enemies-header");
+  if (!header) return;
+  const expanded = header.getAttribute("aria-expanded") === "true";
+  setEnemiesExpanded(!expanded);
+}
 
 async function fetchEnemies() {
   const btn = document.getElementById("btn-enemies");
@@ -1566,7 +1590,15 @@ fetchArsenalStatus();
 fetchClients();
 fetchBandwidth();
 fetchBlocked();
-fetchEnemies();
+// Restore Enemy List expand state from localStorage. Default collapsed so
+// users who don't want the surveillance-partner tally staring at them on
+// every dashboard load don't have to see it. When expanded, fetchEnemies()
+// runs; when collapsed, no backend poll happens.
+(function restoreEnemiesPref() {
+  let expanded = false;
+  try { expanded = localStorage.getItem(ENEMIES_PREF_KEY) === "1"; } catch {}
+  setEnemiesExpanded(expanded);
+})();
 fetchWgStatus();
 setInterval(fetchArsenalStatus, 10000);
 setInterval(fetchClients, 15000);

@@ -2011,16 +2011,19 @@
               <div id="blocked-result" style="margin-top:8px"></div>
             </div>
             <div class="arsenal-card arsenal-card-wide" id="ac-enemies">
-              <div class="arsenal-header">
+              <div class="arsenal-header" id="enemies-header" style="cursor:pointer" role="button" tabindex="0" aria-expanded="false" aria-controls="enemies-body">
                 <span class="arsenal-icon">🎯</span>
                 <span class="arsenal-name">Enemy List</span>
                 <span style="margin-left:auto;font-size:11px;color:var(--green)" id="enemies-total">—</span>
-                <div class="arsenal-toggle">
+                <span id="enemies-caret" style="font-size:10px;color:var(--text-faint);margin-left:8px;font-family:monospace;width:10px;text-align:center" aria-hidden="true">▸</span>
+              </div>
+              <div id="enemies-body" style="display:none">
+                <div class="arsenal-desc">Data brokers + surveillance partners your devices tried to reach. Counted by firewall, no per-query data retained.</div>
+                <div style="display:flex;justify-content:flex-end;margin-top:6px">
                   <button class="arsenal-btn" id="btn-enemies" onclick="fetchEnemies()">REFRESH</button>
                 </div>
+                <div id="enemies-result" style="margin-top:8px"><div style="font-size:10px;color:var(--text-faint)">Loading...</div></div>
               </div>
-              <div class="arsenal-desc">Data brokers + surveillance partners your devices tried to reach. Counted by firewall, no per-query data retained.</div>
-              <div id="enemies-result" style="margin-top:8px"><div style="font-size:10px;color:var(--text-faint)">Loading...</div></div>
             </div>
             <div class="arsenal-card" id="ac-backup">
               <div class="arsenal-header">

@@ -1104,6 +1104,13 @@
   if (e) e.addEventListener("click", function() { arsenalToggle('tcpscrub'); });
   var e = document.getElementById("gm-check");
   if (e) e.addEventListener("click", function() { if (typeof toggleGhostMode === 'function') toggleGhostMode(); });
+  var e = document.getElementById("enemies-header");
+  if (e) {
+    e.addEventListener("click", function() { if (typeof toggleEnemies === 'function') toggleEnemies(); });
+    e.addEventListener("keydown", function(ev) {
+      if (ev.key === " " || ev.key === "Enter") { ev.preventDefault(); toggleEnemies(); }
+    });
+  }
   var e = document.getElementById("btn-dnstest");
   if (e) e.addEventListener("click", function() { runDnsTest(); });
   var e = document.getElementById("tog-macrandom");
