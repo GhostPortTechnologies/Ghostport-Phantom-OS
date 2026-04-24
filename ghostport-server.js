@@ -3736,6 +3736,10 @@ const FAMILY_SHIELD_LISTS = {
   facebook: ["https://blocklistproject.github.io/Lists/facebook.txt"],
   tiktok:   ["https://blocklistproject.github.io/Lists/tiktok.txt"],
   twitter:  ["https://blocklistproject.github.io/Lists/twitter.txt"],
+  // ── Palantir-countermeasures categories (2026-04-24) ──
+  // Locally-shipped curated lists. Generated from /etc/phantom/blocklists/data-brokers.json.
+  acr:          ["file:///etc/phantom/blocklists/acr-hosts.txt"],
+  dataBrokers:  ["file:///etc/phantom/blocklists/data-brokers-hosts.txt"],
 };
 
 // IP ranges owned by each service's ASN (not shared CDN — safe to block)
@@ -3877,8 +3881,16 @@ function fsIpBlock(category, enabled) {
 }
 
 function readFamilyShieldConfig() {
-  try { return JSON.parse(fs.readFileSync(FAMILY_SHIELD_FILE, "utf8")); }
-  catch { return { categories: { adult: false, gambling: false, facebook: false, tiktok: false, twitter: false } }; }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(FAMILY_SHIELD_FILE, "utf8"));
+    // Backfill defaults for categories added after first-boot
+    parsed.categories = parsed.categories || {};
+    for (const k of ["adult","gambling","facebook","tiktok","twitter","acr","dataBrokers"]) {
+      if (!(k in parsed.categories)) parsed.categories[k] = false;
+    }
+    return parsed;
+  }
+  catch { return { categories: { adult: false, gambling: false, facebook: false, tiktok: false, twitter: false, acr: false, dataBrokers: false } }; }
 }
 
 function writeFamilyShieldConfig(config) {

@@ -1,0 +1,35 @@
+# ACR / Smart-TV Content Surveillance
+# Curated from /etc/phantom/blocklists/data-brokers.json (version 1, updated 2026-04-24)
+# Format: one domain per line. Compatible with Pi-hole gravity, dnsmasq, hosts-style blocklists.
+# Edit the canonical JSON and regenerate, don't edit this file directly.
+
+# Samba TV
+samba.tv
+samba-ai.com
+sambatv.com
+saymedia-content.com
+
+# Inscape / Vizio ACR
+inscape-ai.com
+inscape.tv
+tvinteractive.tv
+tvmetrix.com
+
+# TVision
+tvisioninsights.com
+tvision.tv
+
+# Nielsen Gracenote
+nielsen.com
+gracenote.com
+imrworldwide.com
+secure-us.imrworldwide.com
+
+# Roku ACR
+scribe.logs.roku.com
+cooper.logs.roku.com
+
+# LG ACR / Alphonso
+alphonso.tv
+lgsmartad.com
+

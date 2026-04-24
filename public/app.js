@@ -870,7 +870,7 @@
 
     function updateUI() {
       tog('tog-family-shield', fs.on);
-      var cats = ['adult','gambling','facebook','tiktok','twitter'];
+      var cats = ['adult','gambling','facebook','tiktok','twitter','acr','dataBrokers'];
       for (var i = 0; i < cats.length; i++) {
         var c = cats[i];
         var card = document.getElementById('fs-cat-' + (c === 'twitter' ? 'x' : c));

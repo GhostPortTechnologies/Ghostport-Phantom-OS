@@ -2110,6 +2110,16 @@
             <div style="flex:1"><div class="fs-cat-name">X</div><div class="fs-cat-status" id="fs-st-twitter">ALLOWED</div></div>
             <div class="toggle-switch" id="tog-fs-twitter"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
           </div>
+          <div class="fs-cat" id="fs-cat-acr" onclick="window._fsToggleCat('acr')" style="opacity:0.35;pointer-events:none">
+            <span>📺</span>
+            <div style="flex:1"><div class="fs-cat-name">Smart TV Surveillance</div><div class="fs-cat-sub">ACR: Samba / Inscape / Vizio / Nielsen / Roku</div><div class="fs-cat-status" id="fs-st-acr">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-acr"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
+          <div class="fs-cat" id="fs-cat-dataBrokers" onclick="window._fsToggleCat('dataBrokers')" style="opacity:0.35;pointer-events:none">
+            <span>🎯</span>
+            <div style="flex:1"><div class="fs-cat-name">Data Brokers</div><div class="fs-cat-sub">Acxiom / LiveRamp / Experian / Palantir</div><div class="fs-cat-status" id="fs-st-dataBrokers">ALLOWED</div></div>
+            <div class="toggle-switch" id="tog-fs-dataBrokers"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          </div>
         </div>
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
@@ -3808,7 +3818,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
 
     function updateUI() {
       tog('tog-family-shield', fs.on);
-      var cats = ['adult','gambling','facebook','tiktok','twitter'];
+      var cats = ['adult','gambling','facebook','tiktok','twitter','acr','dataBrokers'];
       for (var i = 0; i < cats.length; i++) {
         var c = cats[i];
         var card = document.getElementById('fs-cat-' + (c === 'twitter' ? 'x' : c));

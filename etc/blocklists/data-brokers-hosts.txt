@@ -1,0 +1,65 @@
+# Consumer Data Broker Endpoints
+# Curated from /etc/phantom/blocklists/data-brokers.json (version 1, updated 2026-04-24)
+# Format: one domain per line. Compatible with Pi-hole gravity, dnsmasq, hosts-style blocklists.
+# Edit the canonical JSON and regenerate, don't edit this file directly.
+
+# Acxiom
+acxiom.com
+acxiom-online.com
+acxiomapac.com
+
+# LiveRamp
+liveramp.com
+rampid.liveramp.com
+rlcdn.com
+idsync.rlcdn.com
+
+# Experian
+experian.com
+rum.experian.com
+tapad.com
+marketing.experian.com
+
+# LexisNexis
+lexisnexis.com
+risk.lexisnexis.com
+lnrsdata.com
+
+# Epsilon
+epsilon.com
+eccmp.com
+dmtry.com
+
+# TransUnion
+transunion.com
+truvalidate.com
+neustar.biz
+ultradns.com
+
+# Equifax
+equifax.com
+d-3.ns.equifax.com
+
+# Oracle Data Cloud
+bluekai.com
+addthis.com
+datalogix.com
+oracleads.com
+moatads.com
+
+# Palantir
+palantir.com
+foundry.palantir.com
+
+# Outlogic / X-Mode
+x-mode.com
+outlogic.com
+xmode.io
+
+# Babel Street
+babelstreet.com
+locate.x
+
+# Venntel
+venntel.com
+
