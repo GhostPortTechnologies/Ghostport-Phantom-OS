@@ -124,6 +124,24 @@ Feature wave targeting the at-home data-broker / surveillance-partner pipeline. 
 - [ ] Data-broker opt-out concierge (generate CCPA/GDPR deletion requests on behalf of the user)
 - [ ] Bluetooth beacon scanner (detect AirTag-class presence trackers in the home)
 
+### Customer-1 Hardening Pass (2026-04-24)
+
+Post-wave hardening from the honest-assessment review. All shipped + regression-tested.
+
+- [x] #3 ACR first-enable warning modal — prevents silent smart-TV breakage
+- [x] #4 Rate anomaly 7-day observe-only window — prevents false-positive noise during baseline warmup
+- [x] #8 Node `applyNftRuleset` helper — collapsed 14-line Promise-wrapped spawn duplication
+- [x] #11 Broker bootstrap IPs — 119 pre-resolved IPs shipped so first boot counts on minute 1
+- [x] #12 Enemy List collapsible (default collapsed) — respects users who don't want the tally on the dashboard
+- [x] #14 Ghost Mode rollback on rotation failure — tunnel reverts to last-known-good endpoint if new relay doesn't handshake
+- [x] OTA deploy coverage — sysctl, sudoers, blocklists, cron.d, dnsmasq.d now actually deploy
+- [x] `gp-dns-rules` CLI + Bulkhead DNS Rules tab — operator + customer can toggle dnsmasq address= rules from GUI or terminal
+- [x] Anti-fingerprint config shipped via repo (was dev-only drift)
+- [x] Regression suite — 6 test files, 51+ assertions, `tests/run-all.sh` meta-runner
+- [ ] #5 TCP scrub extension — window scale, timestamp, SACK-PERM normalization (current covers TTL + MSS)
+- [ ] #6 Block MAC hardening — detect MAC rotation on blocked devices + re-block
+- [ ] #2 Broker list maintenance pipeline — 22 orgs curated manually, will rot without a refresh process
+
 ### Stonefish (ARP Guard) upgrades (2026-04-24)
 
 - [x] Vendor + hostname in device table (OUI lookup + DHCP lease hostname)
