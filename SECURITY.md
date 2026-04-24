@@ -8,7 +8,6 @@ If you discover a security vulnerability in Phantom OS, **please do not open a p
 
 **Alternate paths:**
 - Email: `support@ghostporttechnologies.com`
-- Web form: [ghostporttechnologies.com/report-vulnerability](https://ghostporttechnologies.com/report-vulnerability)
 
 ### What to include
 

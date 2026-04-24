@@ -163,9 +163,10 @@ For commercial licensing inquiries contact: licensing@ghostporttechnologies.com
 
 ## Support
 
-- Docs — [ghostporttechnologies.com/docs](https://ghostporttechnologies.com/docs)
+- Docs — [docs/ in this repository](./docs)
 - Discord — [discord.gg/ghostport](https://discord.gg/ghostport)
-- Buy a Kit — [ghostporttechnologies.com](https://ghostporttechnologies.com)
+- Blog — [blog.ghostporttechnologies.com](https://blog.ghostporttechnologies.com)
+- Buy a Kit — [www.ghostporttechnologies.com](https://www.ghostporttechnologies.com)
 - Email — support@ghostporttechnologies.com
 
 ---

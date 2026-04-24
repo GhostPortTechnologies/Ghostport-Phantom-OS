@@ -1,6 +1,7 @@
 {
   "name": "ghostport-desktop",
   "version": "1.2.0",
+  "private": true,
   "description": "GhostPort Command Deck — Desktop App",
   "main": "main.js",
   "scripts": {

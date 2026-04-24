@@ -260,7 +260,7 @@ Use the canonical script at `/tmp/rotate-gh-pat.sh` (staged 2026-04-23). It:
 
 **Step E — verify `.git/config` contains NO token.**
 ```
-grep -E '^\s*url\s*=' /opt/ghostport/.git/config
+grep -E '^\s*url\s*=' /opt/phantom/.git/config
 ```
 Expected: `url = https://github.com/GhostPortTechnologies/<repo>.git`. No `@` in the URL. If the URL still has `TOKEN@`, rotation failed — start over from Step C.
 
