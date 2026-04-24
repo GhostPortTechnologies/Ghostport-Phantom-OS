@@ -19,7 +19,7 @@ A safety net for DoubleHop / ZHop modes. If your VPN tunnel silently fails (peer
 |------|------|
 | `~/.config/phantom/killswitch.json` | Persisted armed state `{"armed": true|false}` |
 | `/etc/phantom/current-mode` | Read-only; Anchor checks current mode before allowing arm |
-| Tunnel targets | `wg0` = 44.214.101.82 (control plane), `wg1` = 54.211.104.73 (data plane) |
+| Tunnel targets | `wg0` = GhostPort control-plane endpoint, `wg1` = GhostPort data-plane endpoint |
 
 Thresholds (set in source, not user-configurable):
 - Latency grade: A ≤50ms, B ≤100ms, C ≤150ms, D ≤300ms
