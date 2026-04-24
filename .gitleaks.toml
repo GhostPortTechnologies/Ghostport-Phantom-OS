@@ -41,6 +41,19 @@ regex = '''^\s*PrivateKey\s*=\s*([A-Za-z0-9+/=]{40,})'''
 regexes = ['''PrivateKey\s*=\s*\$\{''', '''PrivateKey\s*=\s*\.\.\.''', '''PrivateKey\s*=\s*<''']
 
 [[rules]]
+id = "private-key-header-only"
+description = "PEM private-key header on its own — gitleaks default rule requires a body, this catches bare-header placeholders that could become real keys if someone pastes into the file later"
+regex = '''-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'''
+[[rules.allowlists]]
+regexes = [
+  '''BEGIN [A-Z0-9 ]*PRIVATE KEY-----\s*\\n\s*\.\.\.''',   # doc example with ellipsis
+  '''`-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----`''',           # backtick'd inline doc reference
+]
+paths = [
+  '''docs/SECRET-SAFETY-SOP\.md$''',                        # SOP legitimately cites the header format
+]
+
+[[rules]]
 id = "phantom-passcode-plaintext"
 description = "Plaintext device passcode committed (we moved to scrypt hash only in March)"
 regex = '''(?i)\bpasscode_plaintext\s*[:=]\s*["'][0-9]{6,12}["']'''
