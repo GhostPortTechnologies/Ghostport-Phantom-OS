@@ -1,0 +1,8 @@
+[Unit]
+Description=Phantom OS — per-device outbound rate anomaly detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gp-device-anomaly collect

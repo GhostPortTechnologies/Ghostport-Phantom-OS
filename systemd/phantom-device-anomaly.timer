@@ -1,0 +1,11 @@
+[Unit]
+Description=Phantom OS — per-device anomaly detector (5 min cadence)
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

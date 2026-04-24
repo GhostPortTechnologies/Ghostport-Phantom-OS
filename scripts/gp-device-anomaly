@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""gp-device-anomaly — per-device outbound rate anomaly detector.
+
+Samples conntrack byte-counters (requires net.netfilter.nf_conntrack_acct=1)
+to estimate per-LAN-device outbound throughput. Maintains a rolling 7-day
+baseline per device per hour-of-day bucket. When a device exceeds 10x its
+own hour-of-day median over a 5-minute window, writes a rate_anomaly event
+to /etc/phantom/ids-events.json — Crow's Nest picks it up automatically.
+
+Storage (separate file from gp-lookout's aggregate baseline):
+  /etc/phantom/device-baselines.json — per-device samples + hourly medians
+
+Designed to run every 5 minutes via systemd timer. Needs ≥24h of data for
+confident anomaly detection; earlier samples collect silently.
+
+Privacy: only aggregate byte counts per LAN IP per 5-minute window are
+retained. No destination, no per-flow, no per-query data.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import ipaddress
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+BASELINE_FILE = Path("/etc/phantom/device-baselines.json")
+IDS_EVENTS    = Path("/etc/phantom/ids-events.json")
+PREV_STATE    = Path("/etc/phantom/device-anomaly-prev.json")
+
+# Anomaly thresholds
+MIN_BYTES_PER_5MIN = 10 * 1024 * 1024  # 10 MB — ignore chatter under this
+MULTIPLIER         = 10                # flag if current > 10× baseline median
+MIN_SAMPLES        = 24                # need ≥24 samples before trusting median
+SAMPLE_CAP         = 2016              # 7 days at 5 min
+
+LAN_NETS = [
+    ipaddress.ip_network("192.168.50.0/24"),  # Phantom AP subnet
+    ipaddress.ip_network("192.168.0.0/16"),   # Broader RFC1918 coverage
+]
+
+
+def is_lan_ip(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in LAN_NETS)
+
+
+def get_device_bytes() -> dict[str, int]:
+    """Sum outbound bytes per LAN source IP from conntrack."""
+    try:
+        out = subprocess.run(
+            ["sudo", "conntrack", "-L"],
+            capture_output=True, text=True, timeout=20, check=False,
+        ).stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return {}
+    totals: dict[str, int] = {}
+    # Match "src=<lan_ip>" (first src only — that's the original-direction source).
+    # Followed somewhere by "bytes=<N>" in the ORIGINAL direction counter.
+    # conntrack line format: src=A dst=B sport=X dport=Y packets=P bytes=N src=B dst=A ... packets=P' bytes=N'
+    src_re = re.compile(r"\bsrc=(\d+\.\d+\.\d+\.\d+)")
+    bytes_re = re.compile(r"\bbytes=(\d+)")
+    for line in out.splitlines():
+        srcs = src_re.findall(line)
+        byts = bytes_re.findall(line)
+        if not srcs or not byts:
+            continue
+        # First src + first bytes = original direction (LAN → WAN)
+        ip = srcs[0]
+        if not is_lan_ip(ip):
+            continue
+        totals[ip] = totals.get(ip, 0) + int(byts[0])
+    return totals
+
+
+def read_prev_state() -> dict:
+    try:
+        return json.loads(PREV_STATE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"ts": 0, "device_bytes": {}}
+
+
+def write_prev_state(data: dict) -> None:
+    PREV_STATE.write_text(json.dumps(data, separators=(",", ":")))
+    try:
+        os.chmod(PREV_STATE, 0o644)
+    except PermissionError:
+        pass
+
+
+def read_baselines() -> dict:
+    try:
+        return json.loads(BASELINE_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"samples": [], "devices": {}}
+
+
+def write_baselines(data: dict) -> None:
+    BASELINE_FILE.write_text(json.dumps(data, separators=(",", ":")))
+    try:
+        os.chmod(BASELINE_FILE, 0o644)
+    except PermissionError:
+        pass
+
+
+def append_ids_event(event: dict) -> None:
+    """Append a single event to the ids-events.json array (Crow's Nest tails this)."""
+    existing = []
+    try:
+        existing = json.loads(IDS_EVENTS.read_text())
+        if not isinstance(existing, list):
+            existing = []
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    existing.append(event)
+    # Cap at 500 most recent
+    if len(existing) > 500:
+        existing = existing[-500:]
+    IDS_EVENTS.write_text(json.dumps(existing, separators=(",", ":")))
+
+
+def median(vals: list[float]) -> float:
+    if not vals:
+        return 0
+    s = sorted(vals)
+    n = len(s)
+    if n % 2:
+        return s[n // 2]
+    return (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def hostname_for_ip(ip: str) -> str:
+    """Best-effort human-readable label from dnsmasq leases or ARP."""
+    for leases_path in ["/tmp/pihole-FTL.db", "/var/lib/misc/dnsmasq.leases"]:
+        try:
+            if leases_path.endswith(".leases"):
+                for line in open(leases_path):
+                    parts = line.split()
+                    if len(parts) >= 4 and parts[2] == ip:
+                        return parts[3]
+        except FileNotFoundError:
+            continue
+    return ip
+
+
+def humanize_bytes(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    if n < 1024 ** 3:
+        return f"{n / (1024 * 1024):.1f} MB"
+    return f"{n / (1024 ** 3):.2f} GB"
+
+
+def run_collect() -> None:
+    now_ts = int(time.time())
+    now_dt = dt.datetime.fromtimestamp(now_ts)
+    hour = now_dt.hour
+
+    current = get_device_bytes()
+    prev = read_prev_state()
+    prev_bytes = prev.get("device_bytes", {})
+    prev_ts = prev.get("ts", 0)
+    interval_sec = max(1, now_ts - prev_ts) if prev_ts else 300
+
+    # Compute deltas per device (bytes this window)
+    deltas: dict[str, int] = {}
+    for ip, total in current.items():
+        prev_total = prev_bytes.get(ip, 0)
+        if total < prev_total:
+            # Counter reset (reboot or conntrack table flush)
+            deltas[ip] = total
+        else:
+            deltas[ip] = total - prev_total
+
+    # Persist current as previous for next run
+    write_prev_state({"ts": now_ts, "device_bytes": current})
+
+    if prev_ts == 0:
+        # First run — no baseline yet, just establish prev state and exit
+        print(f"first run — {len(current)} devices snapshotted", file=sys.stderr)
+        return
+
+    # Load / update per-device baselines
+    data = read_baselines()
+    devices = data.setdefault("devices", {})
+
+    anomalies = []
+    for ip, delta in deltas.items():
+        dev = devices.setdefault(ip, {"samples": [], "hourly_medians": {}})
+        # Record this sample
+        dev["samples"].append({"ts": now_ts, "hour": hour, "bytes": delta, "interval": interval_sec})
+        # Prune old (>7 days) + cap
+        week_ago = now_ts - 7 * 86400
+        dev["samples"] = [s for s in dev["samples"] if s.get("ts", 0) >= week_ago]
+        if len(dev["samples"]) > SAMPLE_CAP:
+            dev["samples"] = dev["samples"][-SAMPLE_CAP:]
+
+        # Recompute hourly medians
+        by_hour: dict[int, list[int]] = {}
+        for s in dev["samples"]:
+            by_hour.setdefault(s["hour"], []).append(s.get("bytes", 0))
+        dev["hourly_medians"] = {str(h): int(median(vs)) for h, vs in by_hour.items()}
+
+        # Anomaly detection — requires enough samples
+        if len(dev["samples"]) < MIN_SAMPLES:
+            continue
+        baseline_median = dev["hourly_medians"].get(str(hour), 0)
+        if baseline_median == 0:
+            continue  # no baseline for this hour yet
+        if delta < MIN_BYTES_PER_5MIN:
+            continue  # too small to care
+        if delta > baseline_median * MULTIPLIER:
+            anomalies.append({
+                "ip": ip,
+                "delta": delta,
+                "baseline": baseline_median,
+                "multiplier": round(delta / baseline_median, 1),
+                "hour": hour,
+            })
+
+    write_baselines(data)
+
+    # Emit events
+    for a in anomalies:
+        label = hostname_for_ip(a["ip"])
+        event = {
+            "ts": now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+            "epoch": now_ts,
+            "severity": "WARNING",
+            "type": "RATE_ANOMALY",
+            "alert_class": "rate_anomaly",
+            "source": a["ip"],
+            "device": label,
+            "detail": (
+                f"{label} sent {humanize_bytes(a['delta'])} in {interval_sec//60}min "
+                f"— {a['multiplier']}× this device's {a['hour']:02d}:00 baseline "
+                f"({humanize_bytes(a['baseline'])})"
+            ),
+            "education": (
+                "A sudden outbound spike often indicates silent telemetry, a firmware "
+                "update that enabled new analytics, or a compromised device phoning home. "
+                "Investigate in Dragnet (packet capture) or Tide Chart (bandwidth). "
+                "If the device shouldn't be active, consider blocking via Stonefish or "
+                "family-shielding it in the dashboard."
+            ),
+        }
+        append_ids_event(event)
+        # Desktop notification (best-effort)
+        subprocess.run(
+            ["notify-send", "-u", "critical", "Phantom: outbound spike",
+             f"{label}: {humanize_bytes(a['delta'])} in {interval_sec//60}min ({a['multiplier']}×)"],
+            check=False, capture_output=True,
+        )
+    print(f"processed {len(current)} devices, {len(anomalies)} anomalies", file=sys.stderr)
+
+
+def run_status() -> None:
+    """Print JSON summary of per-device baselines."""
+    data = read_baselines()
+    devices = data.get("devices", {})
+    out = []
+    for ip, dev in devices.items():
+        samples = dev.get("samples", [])
+        out.append({
+            "ip": ip,
+            "label": hostname_for_ip(ip),
+            "samples": len(samples),
+            "hourly_medians": dev.get("hourly_medians", {}),
+        })
+    print(json.dumps({"devices": out}, indent=2))
+
+
+def run_reset() -> None:
+    for p in (BASELINE_FILE, PREV_STATE):
+        try:
+            p.unlink()
+        except FileNotFoundError:
+            pass
+    print("baselines cleared", file=sys.stderr)
+
+
+def main() -> int:
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "collect"
+    if cmd in ("-h", "--help"):
+        print(__doc__)
+        print("Subcommands: collect | status | reset")
+        return 0
+    try:
+        if cmd == "collect":
+            run_collect()
+        elif cmd == "status":
+            run_status()
+        elif cmd == "reset":
+            run_reset()
+        else:
+            print(f"unknown subcommand: {cmd}", file=sys.stderr)
+            return 2
+    except Exception as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
