@@ -28,4 +28,4 @@ Launch: desktop icon, or `python3 /opt/phantom/desktop/gp-quartermaster.py`
 - **Score dropped unexpectedly** → click the failing check row for the specific reason. Common: encrypted DNS turned off (`sudo gp-dns-switch on`), SSH allowed password auth (`/etc/ssh/sshd_config.d/` override), or TOTP enrolled but session cookie weak.
 - **Audit won't run** → script expects passwordless sudo on `gp-*`. If installed fresh, re-run `sudo gp-provision`.
 - **"HMAC check: skipped"** → fleet bridge not configured (normal on a standalone unit). Not a blocker — just means no fleet pairing.
-- **Score flatlines at 85** → the final 15 points are certification-class items (CMMC roadmap, pen-test receipt). Not reachable without the external audit pipeline.
+- **Score flatlines at 85** → the final 15 points are certification-class items (external pen-test receipt, formal audit attestation). Not reachable without an external audit pipeline.

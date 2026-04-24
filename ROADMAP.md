@@ -108,7 +108,6 @@
 - [x] Batch 1 production ready (10 units, all 5 phases complete)
 - [ ] Kickstarter campaign
 - [ ] Security Hall of Fame page (responsible disclosure)
-- [ ] CMMC Level 2 full self-assessment (target 2027)
 - [ ] OS Demo VM (live browser-streamed Phantom OS on demo.ghostporttechnologies.com — ARM64 Graviton + KasmVNC, ~2 weeks, see `docs/OS-DEMO-VM-PLAN.md`)
 
 ---
