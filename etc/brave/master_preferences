@@ -1,0 +1,18 @@
+{
+  "browser": {
+    "custom_chrome_frame": false
+  },
+  "distribution": {
+    "import_bookmarks": false,
+    "import_history": false,
+    "import_search_engine": false,
+    "skip_first_run_ui": true,
+    "make_chrome_default_for_user": false,
+    "do_not_create_desktop_shortcut": true,
+    "do_not_create_quick_launch_shortcut": true,
+    "do_not_create_taskbar_shortcut": true,
+    "do_not_register_for_update_launch": true,
+    "verbose_logging": false
+  },
+  "first_run_tabs": []
+}
