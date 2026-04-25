@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<labwc_config>
+
+  <!-- Screen edge resistance — hard drag-clamp at usable-area edges
+       (respects dock exclusive_zone at bottom + waybar at top).
+       9999 = effectively a wall. Dial down if drag feels too sticky. -->
+  <resistance>
+    <screenEdgeStrength>9999</screenEdgeStrength>
+  </resistance>
+
+  <!-- Window Decorations -->
+  <theme>
+    <titlebar>
+      <layout>iconify,maximize,close</layout>
+    </titlebar>
+  </theme>
+
+  <!-- Window Rules -->
+  <windowRules>
+    <windowRule identifier="ghostport-deck">
+      <action name="Maximize"/>
+    </windowRule>
+  </windowRules>
+
+  <!-- Mouse bindings -->
+  <mouse>
+    <default />
+    <!-- Desktop background: right = root menu, middle = window list -->
+    <context name="Root">
+      <mousebind button="Right" action="Press">
+        <action name="ShowMenu" menu="root-menu" />
+      </mousebind>
+      <mousebind button="Middle" action="Press">
+        <action name="ShowMenu" menu="client-list-combined-menu" />
+      </mousebind>
+    </context>
+  </mouse>
+
+  <!-- Keybindings -->
+  <keyboard>
+    <!-- Load defaults: Alt+Tab, Alt+F4, Super+Arrow snap, etc. -->
+    <default />
+
+    <!-- Fullscreen toggle — works on any focused window, including frameless
+         brave app-mode windows that do not intercept F11 themselves -->
+    <keybind key="F11">
+      <action name="ToggleFullscreen"/>
+    </keybind>
+    <keybind key="W-f">
+      <action name="ToggleFullscreen"/>
+    </keybind>
+
+    <!-- Terminal -->
+    <keybind key="W-Return">
+      <action name="Execute"><command>foot</command></action>
+    </keybind>
+    <!-- File manager -->
+    <keybind key="W-e">
+      <action name="Execute"><command>thunar</command></action>
+    </keybind>
+    <!-- Browser -->
+    <keybind key="W-b">
+      <action name="Execute"><command>brave-browser</command></action>
+    </keybind>
+    <!-- Lock screen: Super+L (local) AND Ctrl+Alt+L (remote-friendly) -->
+    <keybind key="W-l">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-lockscreen</command></action>
+    </keybind>
+    <keybind key="C-A-l">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-lockscreen</command></action>
+    </keybind>
+    <!-- Log out: Super+Shift+Q (local) AND Ctrl+Alt+Q (remote-friendly) -->
+    <keybind key="W-S-q">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-logout</command></action>
+    </keybind>
+    <keybind key="C-A-q">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-logout</command></action>
+    </keybind>
+    <!-- Start menu -->
+    <keybind key="W-Space">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-menu</command></action>
+    </keybind>
+    <!-- Screenshot region (saves to ~/Screenshots + copies to clipboard) -->
+    <keybind key="Print">
+      <action name="Execute"><command>bash -c "mkdir -p ~/Screenshots; F=~/Screenshots/$(date +%Y%m%d_%H%M%S).png; grim -g \"$(slurp)\" \"$F\" &amp;&amp; wl-copy --type image/png &lt; \"$F\""</command></action>
+    </keybind>
+    <!-- Screenshot full (saves to ~/Screenshots + copies to clipboard) -->
+    <keybind key="S-Print">
+      <action name="Execute"><command>bash -c "mkdir -p ~/Screenshots; F=~/Screenshots/$(date +%Y%m%d_%H%M%S).png; grim \"$F\" &amp;&amp; wl-copy --type image/png &lt; \"$F\""</command></action>
+    </keybind>
+    <!-- Toggle shortcuts widget -->
+    <keybind key="W-g">
+      <action name="Execute"><command>python3 /opt/ghostport/desktop/ghostport-shortcuts.py</command></action>
+    </keybind>
+    <!-- Open Widget Library -->
+    <keybind key="W-w">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-widgets library</command></action>
+    </keybind>
+    <!-- Window list (fuzzel picker for all open windows) -->
+    <keybind key="W-Tab">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-window-switcher</command></action>
+    </keybind>
+    <!-- Window list menu (invoked by middle-click on desktop via wtype) -->
+    <keybind key="W-F12">
+      <action name="ShowMenu" menu="client-list-combined-menu" />
+    </keybind>
+    <!-- Quick Settings panel -->
+    <keybind key="W-q">
+      <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-quick-settings</command></action>
+    </keybind>
+  </keyboard>
+
+</labwc_config>
