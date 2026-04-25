@@ -20,7 +20,8 @@ from datetime import datetime
 
 # ── Constants ─────────────────────────────────────────────────────────
 
-CAPTURES_DIR = os.path.expanduser("~/captures")
+CAPTURES_DIR = os.path.expanduser("~/captures")  # where Save .pcap persists files
+BUFFER_DIR = "/tmp/dragnet-buffer"                # scratch path for live capture (cleared on Start/Stop)
 MAX_LIVE_PACKETS = 500
 MAX_PCAP_SIZE_KB = 102400   # 100 MB max pcap file
 MIN_DISK_FREE_MB = 200
@@ -68,9 +69,12 @@ class DragnetApp(GhostPortApp):
          "Stop — halt capture. The collected packets stay in the view; you can "
          "scroll, sort, save, or clear them.\n\n"
          "Clear — empty the packet list (doesn't stop capture).\n\n"
-         "Save .pcap — write the current capture to a timestamped file in your "
-         "home folder. You can open this file in Wireshark or with Dragnet's "
-         "File Analysis tab. Enabled once you have packets to save."),
+         "Save .pcap — copy the current capture into ~/captures/ (or anywhere "
+         "you pick) so it persists. Live captures live in /tmp/dragnet-buffer/ "
+         "until you save them; if you don't save, the buffer is wiped on the "
+         "next Start or on reboot — so test captures don't pile up. You can "
+         "open saved files in Wireshark or with Dragnet's File Analysis tab. "
+         "Enabled once you have packets to save."),
 
         ("Packet list columns",
          "Every row is one packet. Columns, left to right:\n\n"
@@ -104,8 +108,9 @@ class DragnetApp(GhostPortApp):
          "Useful for \"why was my network slow from 2-4pm\" investigations."),
 
         ("Gotchas",
-         "• Capture requires root — Dragnet uses `sudo tshark`. The scoped sudo rule "
-         "only allows tshark; it can't run other commands.\n\n"
+         "• Capture runs unprivileged via the `wireshark` group + dumpcap capabilities. "
+         "If you ever rebuild from source, make sure your user is in `wireshark` and "
+         "dumpcap has the right caps, or the capture button does nothing.\n\n"
          "• Captures auto-stop at 50,000 packets or 10 minutes (whichever first) — "
          "this prevents runaway memory use (tshark has documented leaks on long runs).\n\n"
          "• If the interface you want isn't in the dropdown, it's probably down. "
@@ -626,11 +631,20 @@ class DragnetApp(GhostPortApp):
         except ValueError:
             pkt_limit = MAX_LIVE_PACKETS
 
+        # Live capture writes to a scratch buffer in /tmp. The file becomes
+        # permanent only when the user clicks Save .pcap. Any prior buffer
+        # file is purged here so test captures don't accumulate.
+        os.makedirs(BUFFER_DIR, exist_ok=True)
+        if self.capture_output_file and os.path.isfile(self.capture_output_file):
+            try:
+                os.unlink(self.capture_output_file)
+            except OSError:
+                pass
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.capture_output_file = os.path.join(CAPTURES_DIR, f"dragnet_{ts}.pcap")
+        self.capture_output_file = os.path.join(BUFFER_DIR, f"dragnet_{ts}.pcap")
 
         cmd = [
-            "sudo", "tshark",
+            "tshark",
             "-i", iface,
             "-l",
             "-w", self.capture_output_file,
@@ -661,7 +675,7 @@ class DragnetApp(GhostPortApp):
                 bufsize=1,
             )
         except PermissionError:
-            self.set_status("Error: Permission denied. Need sudo privileges.")
+            self.set_status("Error: Permission denied. Need wireshark group membership.")
             return
         except FileNotFoundError:
             self.set_status("Error: tshark not found.")
