@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# gp-golden-strip — automate GOLDEN-IMAGE-SOP §6 strip steps on a mounted target.
+#
+# Usage:
+#   sudo gp-golden-strip validate <target>       — run §7 verification checks
+#   sudo gp-golden-strip strip <target>          — dry-run the strip (shows what would be removed)
+#   sudo gp-golden-strip strip --yes <target>    — actually strip
+#
+# <target> is the mount point of the customer-destined SD card (e.g. /mnt/sd).
+# The script NEVER touches paths outside <target>. If <target> is "/" it refuses.
+#
+# Run as root (sudo). Exits non-zero on any failure.
+
+set -euo pipefail
+
+# ── help guard (must be before any while loop per SOP) ─────────────
+case "${1:-}" in
+    -h|--help|help|"")
+        sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+esac
+
+# ── theme colors ────────────────────────────────────────────────────
+if [[ -f /usr/local/lib/gp-theme-colors.sh ]]; then
+    source /usr/local/lib/gp-theme-colors.sh
+fi
+: "${SUCCESS:=\033[32m}" "${WARNING:=\033[33m}" "${DANGER:=\033[31m}" "${RESET:=\033[0m}" "${DIM:=\033[2m}"
+
+ok()   { printf "${SUCCESS}✓${RESET} %s\n" "$*"; }
+warn() { printf "${WARNING}! %s${RESET}\n" "$*"; }
+err()  { printf "${DANGER}✗ %s${RESET}\n" "$*" >&2; }
+log()  { printf "${DIM}  %s${RESET}\n" "$*"; }
+
+# ── sanity: require root ────────────────────────────────────────────
+if [[ $EUID -ne 0 ]]; then
+    err "Must be run as root. Try: sudo $0 $*"
+    exit 1
+fi
+
+CMD="$1"
+shift
+
+# Parse --yes flag (strip command)
+CONFIRMED=0
+if [[ "${1:-}" == "--yes" ]]; then
+    CONFIRMED=1
+    shift
+fi
+
+TARGET="${1:-}"
+
+# Refuse if target missing or looks like the host root
+if [[ -z "$TARGET" ]]; then
+    err "No target specified. Usage: $0 $CMD <mountpoint>"
+    exit 1
+fi
+if [[ "$TARGET" == "/" ]]; then
+    err "Target cannot be / — refusing to strip the running system."
+    exit 1
+fi
+if [[ ! -d "$TARGET" ]]; then
+    err "Target directory does not exist: $TARGET"
+    exit 1
+fi
+if [[ ! -d "$TARGET/etc" ]] || [[ ! -d "$TARGET/home" ]]; then
+    err "Target doesn't look like a GhostPort image root (missing /etc or /home): $TARGET"
+    exit 1
+fi
+
+# ── paths ───────────────────────────────────────────────────────────
+T="${TARGET%/}"  # strip trailing slash
+HOME_DIR="$T/home/ghostport-admin"
+ETC_GP="$T/etc/phantom"
+SUDOERS_D="$T/etc/sudoers.d"
+
+# Helper: either print (dry) or delete (confirmed)
+do_rm() {
+    local path="$1"
+    if [[ -e "$path" || -L "$path" ]]; then
+        if (( CONFIRMED )); then
+            rm -rf -- "$path"
+            ok "removed $path"
+        else
+            log "[DRY] would remove $path"
+        fi
+    fi
+}
+
+do_rm_glob() {
+    # shellcheck disable=SC2206
+    local -a matches=($1)
+    for m in "${matches[@]}"; do
+        [[ -e "$m" ]] && do_rm "$m"
+    done
+}
+
+do_truncate() {
+    local path="$1"
+    if [[ -f "$path" ]]; then
+        if (( CONFIRMED )); then
+            : >"$path"
+            ok "truncated $path"
+        else
+            log "[DRY] would truncate $path"
+        fi
+    fi
+}
+
+# ── STRIP ───────────────────────────────────────────────────────────
+cmd_strip() {
+    printf "\n${WARNING}Golden-image strip on target: %s${RESET}\n\n" "$T"
+    if (( CONFIRMED == 0 )); then
+        printf "${DIM}(dry-run — re-invoke with --yes to actually remove)${RESET}\n\n"
+    fi
+
+    echo "── 6.1 Fleet / bridge secrets ──"
+    do_rm "$ETC_GP/fleet-auth.json"
+    do_rm_glob "$ETC_GP/fleet-auth.json.bak-*"
+
+    echo
+    echo "── 6.2 SSH keys ──"
+    do_rm_glob "$HOME_DIR/.ssh/*.pem"
+    do_rm_glob "$HOME_DIR/Downloads/*.pem"
+    do_rm "$HOME_DIR/ec2-key.pem"
+    do_rm "$HOME_DIR/pi.key"
+    do_rm "$HOME_DIR/.ssh/known_hosts"
+    do_truncate "$HOME_DIR/.ssh/authorized_keys"
+
+    echo
+    echo "── 6.3 Sudoers backups ──"
+    do_rm_glob "$SUDOERS_D/*.bak-*"
+    do_rm_glob "$SUDOERS_D/*.disabled.*"
+
+    echo
+    echo "── 6.4 AI session artifacts ──"
+    do_rm "$HOME_DIR/.claude"
+    do_rm "$HOME_DIR/.claude-memory-backups"
+    do_rm "$HOME_DIR/.local/share/ghostport-bridge-pending"
+
+    echo
+    echo "── 6.5 Chamber message history ──"
+    do_rm "$HOME_DIR/.config/chamber"
+    do_rm "$T/var/lib/chamber"
+
+    echo
+    echo "── 6.6 Runtime state ──"
+    for f in activity.json ads-tally.json ids-events.json ids-trends.json \
+             health-state.json sni-devices.json device-profiles.json \
+             wan.json preflight-state.json quartermaster-history.json \
+             stonefish-baseline.json lockout.json; do
+        do_rm "$ETC_GP/$f"
+    done
+
+    echo
+    echo "── 6.7 Dev desktop customization ──"
+    do_rm "$HOME_DIR/.config/phantom/icon-positions.json"
+    do_rm_glob "$HOME_DIR/.config/phantom/icon-positions.json.bak-*"
+    do_rm "$HOME_DIR/.config/phantom/widget-layout.json"
+
+    echo
+    echo "── 6.8 Shell history ──"
+    do_truncate "$HOME_DIR/.bash_history"
+    do_truncate "$T/root/.bash_history"
+    do_rm "$HOME_DIR/.lesshst"
+    do_rm "$HOME_DIR/.viminfo"
+
+    echo
+    if (( CONFIRMED )); then
+        ok "Strip complete. Run 'gp-golden-strip validate $T' to verify."
+    else
+        warn "Dry run done. Re-run with --yes to actually strip."
+    fi
+}
+
+# ── VALIDATE ────────────────────────────────────────────────────────
+cmd_validate() {
+    printf "\n${WARNING}Golden-image verification on target: %s${RESET}\n\n" "$T"
+    local fails=0
+
+    check() {
+        local desc="$1"; shift
+        if "$@" &>/dev/null; then
+            err "$desc — STILL PRESENT"
+            fails=$((fails+1))
+        else
+            ok "$desc"
+        fi
+    }
+
+    # check_present: inverted helper — fails if the target file/dir is MISSING.
+    # Use for fleet-default artifacts that must ship on the customer image.
+    check_present() {
+        local desc="$1"; shift
+        if "$@" &>/dev/null; then
+            ok "$desc"
+        else
+            err "$desc — MISSING"
+            fails=$((fails+1))
+        fi
+    }
+
+    # §4 + §7 combined
+    check "sudoers *.bak-* / *.disabled.* absent" \
+          bash -c "ls $SUDOERS_D/*.bak-* $SUDOERS_D/*.disabled.* 2>/dev/null | grep -q ."
+    check "No .pem keys in /home/*/.ssh" \
+          bash -c "ls $T/home/*/.ssh/*.pem 2>/dev/null | grep -q ."
+    check "No .pem keys in /home/*/Downloads" \
+          bash -c "ls $T/home/*/Downloads/*.pem 2>/dev/null | grep -q ."
+    check "No .claude-memory-backups/" \
+          bash -c "ls $T/home/*/.claude-memory-backups 2>/dev/null | grep -q ."
+    check "No bridge-pending/" \
+          bash -c "ls $T/home/*/.local/share/ghostport-bridge-pending 2>/dev/null | grep -q ."
+    check "fleet-auth.json absent or empty" \
+          bash -c "[[ -s $ETC_GP/fleet-auth.json ]]"
+    check ".claude/ tree absent" \
+          bash -c "ls -d $T/home/*/.claude 2>/dev/null | grep -q ."
+    check "chamber message history absent" \
+          bash -c "ls -d $T/home/*/.config/chamber $T/var/lib/chamber 2>/dev/null | grep -q ."
+    check "No activity.json / ads-tally / ids-events / etc." \
+          bash -c "ls $ETC_GP/{activity,ads-tally,ids-events,ids-trends}.json 2>/dev/null | grep -q ."
+    check ".bash_history truncated" \
+          bash -c "[[ -s $T/home/*/.bash_history ]] || [[ -s $T/root/.bash_history ]]"
+
+    # Fleet-default presence checks — must EXIST on customer images
+    check_present "brave master_preferences shipped" \
+                  test -f "$T/opt/brave.com/brave/master_preferences"
+
+    echo
+    if (( fails == 0 )); then
+        ok "All checks passed. Image appears strip-clean."
+    else
+        err "$fails check(s) failed. Re-run strip or investigate manually."
+        exit 1
+    fi
+}
+
+case "$CMD" in
+    strip)    cmd_strip ;;
+    validate) cmd_validate ;;
+    *)
+        err "Unknown command: $CMD (use: strip, validate)"
+        exit 1
+        ;;
+esac
