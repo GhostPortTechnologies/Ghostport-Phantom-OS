@@ -69,6 +69,7 @@ DESKTOP_APPS = [
     ("Logbook",        "gp-logbook.svg",     "python3 /opt/phantom/desktop/gp-logbook.py",      "Event Log"),
     ("Quartermaster",  "gp-audit.svg",       "python3 /opt/phantom/desktop/gp-quartermaster.py", "Security Scan"),
     ("Dashboard",      "gp-dashboard.png",   "brave-browser --app=https://localhost:4201",         "Web UI"),
+    ("Brave",          "gp-brave.png",       "brave-browser",                                      "Web Browser"),
     ("Widget Library", "gp-widget-library.svg", "python3 /opt/phantom/desktop/gp-widget-library.py", "Desktop Widgets"),
     ("Treasure Chest", "gp-treasurebox.svg", "python3 /opt/phantom/desktop/gp-treasurechest.py", "Stowed Apps"),
 ]
@@ -801,7 +802,7 @@ class DesktopCanvas:
         app = next((a for a in DESKTOP_APPS if a[0] == sp.name), None)
         if not app:
             return False
-        label, icon_file, cmd = app
+        label, icon_file, cmd = app[0], app[1], app[2]
         try:
             with open(DOCK_CONFIG) as fh:
                 cfg = json.load(fh)
