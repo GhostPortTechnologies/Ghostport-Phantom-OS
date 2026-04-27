@@ -409,12 +409,18 @@ class SonarApp(GhostPortApp):
         self.run_async(self._do_scan, self._on_scan_done)
 
     def _do_scan(self):
-        """Background: run iw scan."""
-        stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan"], timeout=30)
+        """Background: run a passive iw scan.
+
+        `passive` makes iw listen for beacons rather than broadcasting probe
+        requests. Slower (must wait for each channel's beacon interval) but
+        keeps Sonar invisible to other networks during the scan — matches the
+        privacy claim in HELP_SECTIONS.
+        """
+        stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan", "passive"], timeout=45)
         if rc != 0 and "busy" in stderr.lower():
-            # Interface busy, try ap scan
+            # Interface busy, retry once
             time.sleep(2)
-            stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan"], timeout=30)
+            stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan", "passive"], timeout=45)
         return stdout, stderr, rc
 
     def _on_scan_done(self, result):
