@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "updated": "2026-04-26",
+  "_doc": "Sonar attack-toolkit signature database. Each signature flags an AP whose beacon matches a known offensive-tool default. Override locally at /etc/phantom/sonar-signatures.json. Discipline: every entry must cite a public source. Prefer empty over false-positive.",
+  "signatures": [
+    {
+      "id": "pineapple_default",
+      "name": "WiFi Pineapple",
+      "description": "Default SSID on stock Hak5 Pineapple firmware",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^Pineapple$"
+      },
+      "source": "Hak5 Pineapple Mark V-VII firmware default config — public Hak5 docs"
+    },
+    {
+      "id": "pineap_module",
+      "name": "WiFi Pineapple (PineAP module)",
+      "description": "PineAP module advertises SSIDs starting with PineAP",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^PineAP\\b"
+      },
+      "source": "Hak5 PineAP module documentation"
+    },
+    {
+      "id": "pineapple_named",
+      "name": "WiFi Pineapple (named instance)",
+      "description": "Pineapple firmware naming convention: Pineapple-<id> or Pineapple_<name>",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^Pineapple[-_]"
+      },
+      "source": "Pineapple firmware default naming convention"
+    },
+    {
+      "id": "wifi_pineapple_explicit",
+      "name": "WiFi Pineapple",
+      "description": "Explicit Pineapple naming — wifi-pineapple, WiFi Pineapple, etc.",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "(?i)wifi.?pineapple"
+      },
+      "source": "Common Pineapple owner naming convention"
+    },
+    {
+      "id": "hak5_mango",
+      "name": "Hak5 WiFi Mango",
+      "description": "Default SSID on Hak5 WiFi Mango travel router",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^Mango$"
+      },
+      "source": "Hak5 WiFi Mango product documentation"
+    },
+    {
+      "id": "hak5_tetra",
+      "name": "Hak5 WiFi Tetra",
+      "description": "Default SSID on legacy Hak5 WiFi Tetra (Pineapple Tetra)",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^Tetra$"
+      },
+      "source": "Hak5 WiFi Tetra product documentation (legacy)"
+    },
+    {
+      "id": "hak5_coconut",
+      "name": "Hak5 WiFi Coconut",
+      "description": "Default SSID on Hak5 WiFi Coconut multi-radio platform",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^Coconut$"
+      },
+      "source": "Hak5 WiFi Coconut product documentation"
+    },
+    {
+      "id": "hostapd_mana_default",
+      "name": "hostapd-mana toolkit",
+      "description": "Default SSID on the sensepost/hostapd-mana karma fork",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "(?i)^mana$"
+      },
+      "source": "github.com/sensepost/hostapd-mana default config"
+    },
+    {
+      "id": "bettercap_default",
+      "name": "bettercap WiFi attack",
+      "description": "Default AP name from the bettercap WiFi module",
+      "severity": "dangerous",
+      "match": {
+        "ssid_regex": "^bettercap$"
+      },
+      "source": "bettercap source / docs default WiFi module config"
+    },
+    {
+      "id": "historic_worm_ssid",
+      "name": "Free Public WiFi (historic worm / Mana template)",
+      "description": "Famous computer-worm SSID also used as a Mana toolkit honeypot template. Treated as warning rather than dangerous because some legitimate venues genuinely use this name.",
+      "severity": "warning",
+      "match": {
+        "ssid_regex": "^Free Public WiFi$"
+      },
+      "source": "Microsoft Windows XP worm artifact + sensepost/mana templates"
+    }
+  ]
+}
