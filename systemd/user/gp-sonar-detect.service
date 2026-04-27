@@ -1,0 +1,15 @@
+[Unit]
+Description=Phantom Sonar — headless passive scan + cross-bus event emit
+Documentation=man:gp-sonar-detect
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gp-sonar-detect
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

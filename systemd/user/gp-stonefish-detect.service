@@ -1,0 +1,14 @@
+[Unit]
+Description=Phantom Stonefish — headless ARP-spoof check + cross-bus event emit
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gp-stonefish-detect
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

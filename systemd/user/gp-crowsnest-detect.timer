@@ -1,0 +1,12 @@
+[Unit]
+Description=Phantom Crow's Nest background detection — every 30 seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=30s
+RandomizedDelaySec=5s
+Unit=gp-crowsnest-detect.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

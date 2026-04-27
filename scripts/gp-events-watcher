@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""gp-events-watcher — cross-app correlation engine for the Phantom event bus.
+
+Periodically calls gp_events.detect_correlations() and surfaces any new
+findings via mako notifications. Dedupes in-memory so a sustained pattern
+doesn't notify repeatedly.
+
+Run via systemd or labwc autostart. Idle CPU footprint is near-zero
+(short SQLite queries every POLL_INTERVAL seconds).
+"""
+
+import sys
+import os
+import time
+import subprocess
+
+sys.path.insert(0, "/opt/phantom/desktop")
+import gp_events  # noqa: E402
+
+POLL_INTERVAL = 15  # seconds — fast enough to catch correlations promptly,
+                    # slow enough to keep CPU/disk negligible
+PRUNE_INTERVAL = 3600  # seconds — drop old events once an hour
+DEDUP_TTL = 600  # seconds — same finding won't re-notify within 10 minutes
+
+_last_prune = 0
+_recent_findings = {}  # pattern_id -> last_emit_ts
+
+
+def fire_notification(finding):
+    """Surface a correlation finding via mako."""
+    title = f"Phantom: {finding['name']}"
+    body = (
+        f"{finding['description']}\n\n"
+        f"Evidence ({finding['evidence_count']}):\n"
+        + "\n".join(f"• {e}" for e in finding["evidence_summary"][:5])
+    )
+    try:
+        subprocess.Popen(
+            [
+                "notify-send",
+                "-u", "critical",
+                "-a", "Phantom Correlation",
+                "-t", "30000",  # 30s display
+                title, body,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        # Headless install — log but don't crash
+        sys.stderr.write(f"[gp-events-watcher] notify-send failed for {finding['pattern_id']}\n")
+
+
+def should_emit(pattern_id):
+    """Dedup: skip if we've fired this pattern within DEDUP_TTL."""
+    now = time.time()
+    last = _recent_findings.get(pattern_id, 0)
+    if now - last < DEDUP_TTL:
+        return False
+    _recent_findings[pattern_id] = now
+    # Garbage-collect old entries
+    cutoff = now - DEDUP_TTL * 2
+    for k in [k for k, v in _recent_findings.items() if v < cutoff]:
+        del _recent_findings[k]
+    return True
+
+
+def main():
+    global _last_prune
+    sys.stderr.write(f"[gp-events-watcher] starting, poll={POLL_INTERVAL}s\n")
+
+    # Honor --once flag for testing
+    once = "--once" in sys.argv
+
+    while True:
+        try:
+            findings = gp_events.detect_correlations()
+            for f in findings:
+                if should_emit(f["pattern_id"]):
+                    sys.stderr.write(
+                        f"[gp-events-watcher] firing: {f['pattern_id']} "
+                        f"({f['evidence_count']} pieces)\n"
+                    )
+                    fire_notification(f)
+
+            now = time.time()
+            if now - _last_prune > PRUNE_INTERVAL:
+                gp_events.prune()
+                _last_prune = now
+        except Exception as e:
+            sys.stderr.write(f"[gp-events-watcher] poll error: {e}\n")
+
+        if once:
+            return
+        time.sleep(POLL_INTERVAL)
+
+
+if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+    main()

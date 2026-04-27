@@ -1,0 +1,12 @@
+[Unit]
+Description=Phantom Stonefish background detection — every minute
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=1min
+RandomizedDelaySec=10s
+Unit=gp-stonefish-detect.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Phantom Sonar background detection — every 5 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+Unit=gp-sonar-detect.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

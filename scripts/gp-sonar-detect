@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""gp-sonar-detect — headless Sonar passive scan + cross-bus event emit.
+
+Invoked by a systemd user timer every ~5 minutes. Runs a passive WiFi
+scan, classifies each AP via Sonar's existing detection functions, and
+emits SPOOFED IE / EVIL TWIN / ATTACK TOOLKIT events to the gp_events
+bus. Persistent dedup prevents the bus from flooding when a threat
+condition is sustained.
+
+Karma probing is NOT done here — active probes are explicit user action
+(the HUNT KARMA button). This helper stays passive and quiet.
+
+Exit codes:
+  0  scan completed
+  1  iw scan failed (sudo / hardware / etc)
+  2  module import failed
+"""
+
+import sys
+import os
+import json
+import time
+import subprocess
+import importlib.util
+
+EVENT_DIR = os.path.expanduser("~/.local/share/phantom")
+DEDUP_FILE = os.path.join(EVENT_DIR, "sonar-detect-emitted.json")
+RE_EMIT_TTL_SEC = 1800  # 30 min — re-emit sustained conditions to keep bus current
+
+sys.path.insert(0, "/opt/phantom/desktop")
+import gp_events  # noqa: E402
+
+
+def load_dedup():
+    try:
+        with open(DEDUP_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dedup(state):
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        with open(DEDUP_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        sys.stderr.write(f"[gp-sonar-detect] dedup save failed: {e}\n")
+
+
+def should_emit(state, key):
+    now = time.time()
+    last = state.get(key, 0)
+    if now - last < RE_EMIT_TTL_SEC:
+        return False
+    state[key] = now
+    return True
+
+
+def main():
+    # 1. Load Sonar's detection module
+    spec = importlib.util.spec_from_file_location(
+        "sonar_app", "/opt/ghostport/desktop/gp-sonar.py"
+    )
+    try:
+        sonar = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sonar)
+    except Exception as e:
+        sys.stderr.write(f"[gp-sonar-detect] import failed: {e}\n")
+        return 2
+
+    # 2. Run passive scan
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "iw", "dev", "wlan0", "scan", "passive"],
+            capture_output=True, text=True, timeout=45,
+        )
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("[gp-sonar-detect] scan timed out\n")
+        return 1
+    if result.returncode != 0:
+        sys.stderr.write(
+            f"[gp-sonar-detect] scan failed rc={result.returncode}: "
+            f"{result.stderr[:120]}\n"
+        )
+        return 1
+
+    # 3. Detection
+    our_ssid, our_bssid = sonar.get_our_ap()
+    trusted = sonar.load_trusted_aps()
+    signatures = sonar.load_signatures()
+
+    aps = sonar.parse_iw_scan(
+        result.stdout, our_ssid, our_bssid, trusted, signatures
+    )
+
+    # 4. Emit events for each detection-class AP
+    state = load_dedup()
+    emitted = 0
+
+    for ap in aps:
+        label = ap.get("threat_label", "")
+        bssid = ap.get("bssid", "")
+        if not bssid or ap.get("is_ours"):
+            continue
+
+        cat = None
+        summary = ""
+        if label == "SPOOFED IE":
+            cat = "spoofed_ie"
+            summary = f"Sonar (bg): AP {bssid[:8]}... fingerprint mismatch"
+        elif label == "EVIL TWIN":
+            cat = "evil_twin"
+            summary = f"Sonar (bg): AP {bssid[:8]}... claims our SSID"
+        elif label.startswith("ATTACK TOOLKIT"):
+            cat = "attack_toolkit"
+            sig = ap.get("signature_match") or {}
+            summary = f"Sonar (bg): {sig.get('name', 'attack toolkit')} on {bssid[:8]}..."
+        if cat is None:
+            continue
+
+        key = f"{cat}|{bssid}"
+        if not should_emit(state, key):
+            continue
+
+        gp_events.emit(
+            "sonar", cat, gp_events.SEVERITY_DANGEROUS, summary,
+            details={
+                "bssid": bssid,
+                "ssid": ap.get("ssid", ""),
+                "signal": ap.get("signal"),
+                "encryption": ap.get("encryption"),
+                "via": "background_helper",
+            },
+        )
+        emitted += 1
+
+    # Garbage-collect dedup entries older than 2x TTL
+    cutoff = time.time() - (RE_EMIT_TTL_SEC * 2)
+    state = {k: v for k, v in state.items() if v >= cutoff}
+    save_dedup(state)
+
+    sys.stderr.write(
+        f"[gp-sonar-detect] scan done — {len(aps)} APs seen, {emitted} events emitted\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+    sys.exit(main())

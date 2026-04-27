@@ -1,0 +1,14 @@
+[Unit]
+Description=Phantom Crow's Nest — headless firewall pattern check + cross-bus event emit
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/gp-crowsnest-detect
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

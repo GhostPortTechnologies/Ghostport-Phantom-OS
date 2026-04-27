@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""gp-crowsnest-detect — headless firewall-pattern check + bus event emit.
+
+Invoked by a systemd user timer every ~30 seconds. Reads recent firewall
+drop events, runs the same pattern detection the UI app uses (PORT SCAN /
+BRUTE FORCE / SYN FLOOD), and emits events to the cross-app bus.
+Persistent dedup prevents the bus from flooding while a pattern is
+sustained.
+
+Exit codes:
+  0  poll completed
+  2  module import failed
+"""
+
+import sys
+import os
+import json
+import time
+import importlib.util
+
+EVENT_DIR = os.path.expanduser("~/.local/share/phantom")
+DEDUP_FILE = os.path.join(EVENT_DIR, "crowsnest-detect-emitted.json")
+RE_EMIT_TTL_SEC = 900  # 15 min — patterns are shorter-lived
+
+sys.path.insert(0, "/opt/phantom/desktop")
+import gp_events  # noqa: E402
+
+
+def load_dedup():
+    try:
+        with open(DEDUP_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dedup(state):
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        with open(DEDUP_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        sys.stderr.write(f"[gp-crowsnest-detect] dedup save failed: {e}\n")
+
+
+def should_emit(state, key):
+    now = time.time()
+    last = state.get(key, 0)
+    if now - last < RE_EMIT_TTL_SEC:
+        return False
+    state[key] = now
+    return True
+
+
+def main():
+    spec = importlib.util.spec_from_file_location(
+        "crowsnest_app", "/opt/ghostport/desktop/gp-crowsnest.py"
+    )
+    try:
+        crowsnest = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(crowsnest)
+    except Exception as e:
+        sys.stderr.write(f"[gp-crowsnest-detect] import failed: {e}\n")
+        return 2
+
+    drops = crowsnest.fetch_drops()
+    patterns = crowsnest.detect_attack_patterns(drops)
+
+    state = load_dedup()
+    emitted = 0
+
+    cat_map = {
+        "PORT SCAN": "port_scan",
+        "BRUTE FORCE": "brute_force",
+        "SYN FLOOD": "syn_flood",
+    }
+
+    for pat in patterns:
+        ptype = pat.get("type", "")
+        cat = cat_map.get(ptype)
+        if not cat:
+            continue
+        psrc = pat.get("source_ip") or pat.get("src") or "?"
+
+        key = f"{cat}|{psrc}"
+        if not should_emit(state, key):
+            continue
+
+        summary = f"Crow's Nest (bg): {ptype} from {psrc}"
+        gp_events.emit(
+            "crowsnest", cat, gp_events.SEVERITY_DANGEROUS, summary,
+            details={
+                "source_ip": psrc,
+                "pattern_type": ptype,
+                "via": "background_helper",
+            },
+        )
+        emitted += 1
+
+    # Also emit a firewall_drop_burst signal if many critical drops landed
+    # since last poll. We track the highest-id we've seen so far.
+    new_critical = sum(1 for d in drops if d.get("severity") == "danger")
+    last_known = state.get("__last_critical_count", 0)
+    if isinstance(last_known, (int, float)) and new_critical > last_known:
+        diff = int(new_critical - last_known)
+        if diff >= 3 and should_emit(state, "firewall_drop_burst|recent"):
+            gp_events.emit(
+                "crowsnest", "firewall_drop_burst", gp_events.SEVERITY_DANGEROUS,
+                f"Crow's Nest (bg): {diff} new critical drops since last poll",
+                details={"diff": diff, "total_critical": new_critical, "via": "background_helper"},
+            )
+            emitted += 1
+    state["__last_critical_count"] = new_critical
+
+    cutoff = time.time() - (RE_EMIT_TTL_SEC * 2)
+    state = {
+        k: v for k, v in state.items()
+        if k.startswith("__") or (isinstance(v, (int, float)) and v >= cutoff)
+    }
+    save_dedup(state)
+
+    sys.stderr.write(
+        f"[gp-crowsnest-detect] poll done — {len(drops)} drops, "
+        f"{len(patterns)} patterns, {emitted} events emitted\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+    sys.exit(main())

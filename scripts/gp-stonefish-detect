@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""gp-stonefish-detect — headless ARP-spoof check + cross-bus event emit.
+
+Invoked by a systemd user timer every ~1 minute. Reads the kernel ARP
+table, compares to the saved baseline, and emits arp_gateway_change /
+arp_spoof events when threats are detected. Persistent dedup keeps the
+bus from flooding when a condition is sustained.
+
+Detection logic is reused verbatim from gp-stonefish.py — no logic
+duplication, the helper just calls the same parse_arp_table /
+detect_threats / load_baseline functions the UI app uses.
+
+Exit codes:
+  0  poll completed
+  2  module import failed
+"""
+
+import sys
+import os
+import json
+import time
+import importlib.util
+
+EVENT_DIR = os.path.expanduser("~/.local/share/phantom")
+DEDUP_FILE = os.path.join(EVENT_DIR, "stonefish-detect-emitted.json")
+RE_EMIT_TTL_SEC = 1800  # 30 min
+
+sys.path.insert(0, "/opt/phantom/desktop")
+import gp_events  # noqa: E402
+
+
+def load_dedup():
+    try:
+        with open(DEDUP_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dedup(state):
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        with open(DEDUP_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        sys.stderr.write(f"[gp-stonefish-detect] dedup save failed: {e}\n")
+
+
+def should_emit(state, key):
+    now = time.time()
+    last = state.get(key, 0)
+    if now - last < RE_EMIT_TTL_SEC:
+        return False
+    state[key] = now
+    return True
+
+
+def main():
+    spec = importlib.util.spec_from_file_location(
+        "stonefish_app", "/opt/ghostport/desktop/gp-stonefish.py"
+    )
+    try:
+        stonefish = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stonefish)
+    except Exception as e:
+        sys.stderr.write(f"[gp-stonefish-detect] import failed: {e}\n")
+        return 2
+
+    entries = stonefish.parse_arp_table()
+    baseline = stonefish.load_baseline()
+    entries = stonefish.detect_threats(entries, baseline)
+
+    state = load_dedup()
+    emitted = 0
+
+    category_map = {
+        "GW CHANGED": "arp_gateway_change",
+        "SPOOFING": "arp_spoof",
+        "FAILED": "arp_failed",
+    }
+
+    for e in entries:
+        threat = e.get("threat", "CLEAN")
+        if threat not in category_map:
+            continue
+        cat = category_map[threat]
+        mac = e.get("mac", "")
+        ip = e.get("ip", "")
+
+        key = f"{cat}|{mac}|{ip}"
+        if not should_emit(state, key):
+            continue
+
+        summary = f"Stonefish (bg): {threat} on {ip} (MAC {mac})"
+        gp_events.emit(
+            "stonefish", cat, gp_events.SEVERITY_DANGEROUS, summary,
+            details={
+                "ip": ip,
+                "mac": mac,
+                "threat": threat,
+                "via": "background_helper",
+            },
+        )
+        emitted += 1
+
+    cutoff = time.time() - (RE_EMIT_TTL_SEC * 2)
+    state = {k: v for k, v in state.items() if v >= cutoff}
+    save_dedup(state)
+
+    sys.stderr.write(
+        f"[gp-stonefish-detect] poll done — {len(entries)} ARP entries, {emitted} events emitted\n"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        sys.exit(0)
+    sys.exit(main())
