@@ -3,6 +3,7 @@
 import sys, os
 sys.path.insert(0, "/opt/phantom/desktop")
 from gp_app_base import GhostPortApp
+import gp_events
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -122,7 +123,7 @@ def _action_hint(threat):
 # ── Mako notifications (Stonefish #4) ────────────────────────────────
 # Rate-limit: same (mac, threat) pair won't re-fire within 5 minutes.
 _NOTIFY_COOLDOWN_SEC = 300
-_NOTIFY_LAST = {}  # (mac, threat) → last_epoch
+_NOTIFY_LAST: dict = {}  # (mac, threat) → last_epoch
 
 def _fire_notifications(alert_details):
     import time as _t
@@ -145,6 +146,27 @@ def _fire_notifications(alert_details):
             )
         except Exception:
             pass  # desktop may not be present (headless install)
+
+        # Push to cross-app event bus for correlation with Sonar / Crow's
+        # Nest. Categories normalized so the correlation engine can join
+        # across sources.
+        category_map = {
+            "GW CHANGED": "arp_gateway_change",
+            "SPOOFING": "arp_spoof",
+            "FAILED": "arp_failed",
+        }
+        cat = category_map.get(threat)
+        if cat:
+            gp_events.emit(
+                "stonefish", cat, gp_events.SEVERITY_DANGEROUS,
+                f"Stonefish: {threat} on {label}{vendor_tag}",
+                details={
+                    "ip": entry.get("ip"),
+                    "mac": entry.get("mac"),
+                    "vendor": vendor,
+                    "threat": threat,
+                },
+            )
 
 
 def parse_arp_table():

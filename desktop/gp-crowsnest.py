@@ -2,6 +2,7 @@
 """gp-crowsnest — Crow's Nest: Intrusion Detection Dashboard for Phantom OS"""
 import sys, os, re, json, time, math, ipaddress, csv
 sys.path.insert(0, "/opt/phantom/desktop")
+import gp_events
 from gp_app_base import GhostPortApp
 
 import gi
@@ -816,6 +817,39 @@ class CrowsNestApp(GhostPortApp):
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
             except Exception:
                 pass
+
+            # Push to cross-app event bus — a burst of critical drops paired
+            # with a Karma rig or SPOOFED IE in the same window indicates a
+            # coordinated attack the correlation engine should flag.
+            gp_events.emit(
+                "crowsnest", "firewall_drop_burst", gp_events.SEVERITY_DANGEROUS,
+                f"Crow's Nest: {diff} new critical drop(s)",
+                details={"new_critical_count": diff, "total_critical": new_critical},
+            )
+
+        # Emit per-pattern events (PORT SCAN / BRUTE FORCE / SYN FLOOD).
+        # Dedupe by pattern type + source IP so a sustained scan doesn't spam.
+        emitted = getattr(self, "_emitted_patterns", set())
+        for pat in patterns:
+            ptype = pat.get("type", "")
+            psrc = pat.get("source_ip") or pat.get("src") or "?"
+            key = (ptype, psrc)
+            if key in emitted:
+                continue
+            emitted.add(key)
+            cat_map = {
+                "PORT SCAN": "port_scan",
+                "BRUTE FORCE": "brute_force",
+                "SYN FLOOD": "syn_flood",
+            }
+            cat = cat_map.get(ptype)
+            if cat:
+                gp_events.emit(
+                    "crowsnest", cat, gp_events.SEVERITY_DANGEROUS,
+                    f"Crow's Nest: {ptype} from {psrc}",
+                    details={"source_ip": psrc, "pattern_type": ptype},
+                )
+        self._emitted_patterns = emitted
 
         self.drops = drops
         self._trends = trends
