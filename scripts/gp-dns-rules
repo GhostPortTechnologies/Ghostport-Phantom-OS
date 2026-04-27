@@ -34,6 +34,7 @@ Design notes:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import re
@@ -172,12 +173,29 @@ def validate_domain(domain: str) -> tuple[bool, str]:
     return True, ""
 
 
+def validate_target(target: str) -> tuple[bool, str]:
+    """Target must be a valid IPv4/IPv6 address. Anything else makes pihole-FTL
+    refuse to load the config on next reload — DNS dies until hand-edit.
+    """
+    if not target:
+        return False, "target is empty"
+    try:
+        ipaddress.ip_address(target)
+    except ValueError:
+        return False, f"target '{target}' is not a valid IPv4 or IPv6 address"
+    return True, ""
+
+
 def cmd_add(args) -> int:
     domain = args.domain.strip().lower()
     target = getattr(args, "target", None) or "0.0.0.0"
     ok, reason = validate_domain(domain)
     if not ok:
         print(f"invalid domain: {reason}", file=sys.stderr)
+        return 2
+    ok, reason = validate_target(target)
+    if not ok:
+        print(f"invalid target: {reason}", file=sys.stderr)
         return 2
 
     # Duplicate check: scan every .conf, refuse if domain already exists

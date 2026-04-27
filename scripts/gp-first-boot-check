@@ -180,17 +180,34 @@ fi
 # ── 8. Critical config files ───────────────────────────────────────
 declare -A FILE_PERMS=(
     ["/etc/phantom/arsenal.json"]="ghostport-admin"
-    ["/etc/phantom/auth.json"]="ghostport-admin"
     ["/etc/phantom/family-shield.json"]="ghostport-admin"
     ["/etc/phantom/blocklists/data-brokers.json"]="root"
     ["/etc/dnsmasq.d/30-anti-fingerprint.conf"]="root"
     ["/etc/sysctl.d/99-phantom-conntrack-acct.conf"]="root"
     ["/etc/sudoers.d/022_gp-palantir"]="root"
 )
+# Files that exist only AFTER first activation — missing = pre-activation, not error.
+declare -A FILE_PERMS_OPTIONAL=(
+    ["/etc/phantom/auth.json"]="ghostport-admin"
+    ["/etc/phantom/fleet-auth.json"]="ghostport-admin"
+)
 for path in "${!FILE_PERMS[@]}"; do
     expected_owner="${FILE_PERMS[$path]}"
     if [ ! -f "$path" ]; then
         record "config.$(basename $path)" FAIL "missing"
+    else
+        actual_owner=$(stat -c %U "$path" 2>/dev/null)
+        if [ "$actual_owner" = "$expected_owner" ]; then
+            record "config.$(basename $path)" OK "owner=$actual_owner"
+        else
+            record "config.$(basename $path)" WARN "owner=$actual_owner (expected $expected_owner)"
+        fi
+    fi
+done
+for path in "${!FILE_PERMS_OPTIONAL[@]}"; do
+    expected_owner="${FILE_PERMS_OPTIONAL[$path]}"
+    if [ ! -f "$path" ]; then
+        record "config.$(basename $path)" WARN "missing — device not yet activated (normal pre-activation state)"
     else
         actual_owner=$(stat -c %U "$path" 2>/dev/null)
         if [ "$actual_owner" = "$expected_owner" ]; then

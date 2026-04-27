@@ -44,20 +44,33 @@ check() {
 echo
 echo "— Arsenal default schema (readArsenal fallback) —"
 
-ARSENAL_DEFAULTS=$(python3 <<'PY'
+ARSENAL_DEFAULTS=$(python3 <<'PY' 2>&1
 import re, json, sys
 src = open("/opt/ghostport/ghostport-server.js").read()
 m = re.search(r"function readArsenal\(\).*?catch\s*\{[^{}]*return\s*(\{[^}]*\})", src, re.S)
 if not m:
-    print("ERROR: could not find readArsenal fallback object", file=sys.stderr)
+    print("__PARSER_BROKEN__", file=sys.stderr)
     sys.exit(2)
-# Convert JS-like object to JSON. JS uses unquoted keys; quote them.
 js_obj = m.group(1)
+# JS unquoted keys → JSON quoted; JS values left alone (works for our true/false/strings)
 js_obj = re.sub(r'(\w+)\s*:', r'"\1":', js_obj)
-# js arrays/strings translate fine as-is for our cases
+# Sanity: must round-trip through json
+try:
+    json.loads(js_obj)
+except json.JSONDecodeError as e:
+    print(f"__JSON_INVALID__:{e}", file=sys.stderr)
+    sys.exit(3)
 print(js_obj)
 PY
-) || { echo "  FAIL: could not parse readArsenal defaults"; fail=$((fail + 1)); ARSENAL_DEFAULTS="{}"; }
+)
+ARSENAL_RC=$?
+if [ $ARSENAL_RC -ne 0 ] || echo "$ARSENAL_DEFAULTS" | grep -q "^__"; then
+    echo "  FAIL: test parser cannot read readArsenal defaults from ghostport-server.js"
+    echo "        — readArsenal() shape changed; UPDATE THE TEST PARSER, not the defaults"
+    echo "        (rc=$ARSENAL_RC, output: $ARSENAL_DEFAULTS)"
+    fail=$((fail + 1))
+    ARSENAL_DEFAULTS="{}"
+fi
 
 assert_arsenal_default() {
     local key=$1
@@ -84,18 +97,29 @@ assert_arsenal_default ghostMode          false
 echo
 echo "— Family Shield default schema —"
 
-FS_DEFAULTS=$(python3 <<'PY'
-import re, sys
+FS_DEFAULTS=$(python3 <<'PY' 2>&1
+import re, json, sys
 src = open("/opt/ghostport/ghostport-server.js").read()
 m = re.search(r"readFamilyShieldConfig\(\).*?catch\s*\{[^{}]*return\s*(\{(?:[^{}]|\{[^{}]*\})*\})", src, re.S)
 if not m:
-    print("ERROR: could not find FS fallback", file=sys.stderr); sys.exit(2)
+    print("__PARSER_BROKEN__", file=sys.stderr); sys.exit(2)
 js_obj = m.group(1)
-# Convert: js unquoted keys → json quoted
 js_obj = re.sub(r'(\w+)\s*:', r'"\1":', js_obj)
+try:
+    json.loads(js_obj)
+except json.JSONDecodeError as e:
+    print(f"__JSON_INVALID__:{e}", file=sys.stderr); sys.exit(3)
 print(js_obj)
 PY
-) || { echo "  FAIL: could not parse Family Shield defaults"; fail=$((fail + 1)); FS_DEFAULTS='{"categories":{}}'; }
+)
+FS_RC=$?
+if [ $FS_RC -ne 0 ] || echo "$FS_DEFAULTS" | grep -q "^__"; then
+    echo "  FAIL: test parser cannot read readFamilyShieldConfig defaults from ghostport-server.js"
+    echo "        — readFamilyShieldConfig() shape changed; UPDATE THE TEST PARSER, not the defaults"
+    echo "        (rc=$FS_RC, output: $FS_DEFAULTS)"
+    fail=$((fail + 1))
+    FS_DEFAULTS='{"categories":{}}'
+fi
 
 assert_fs_default() {
     local cat=$1

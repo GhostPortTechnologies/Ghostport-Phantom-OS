@@ -41,12 +41,7 @@ import sys
 from pathlib import Path
 
 CURRENT_MODE_FILE = Path("/etc/phantom/current-mode")
-
-# Known fleet relay IPs — for tunnel modes the public-IP check should
-# return one of these (not the home WAN IP).
-FLEET_RELAY_IPS = {
-    "54.211.104.73",  # us-east-1 primary (control + data plane today)
-}
+GHOST_ENDPOINTS_FILE = Path("/etc/phantom/ghost-endpoints.json")
 
 
 def run(cmd: list[str], timeout: int = 10) -> tuple[int, str, str]:
@@ -148,16 +143,47 @@ def check_dns_upstream(mode: str) -> tuple[str, str]:
     return "FAIL", f"upstream not in expected set for mode={mode}: {upstreams_text.strip()[:80]}"
 
 
+def get_expected_relay_ips() -> set[str]:
+    """Source-of-truth set of fleet relay IPs the data-plane tunnel could
+    legitimately exit from. Reads in priority order:
+      1. /etc/phantom/ghost-endpoints.json  (set when Ghost Mode is configured)
+      2. `wg show wg1 endpoints`            (current peer endpoint, dynamic)
+    Returns empty set if neither yields anything — caller should treat that
+    as "can't verify" not "leak detected."
+    """
+    ips: set[str] = set()
+    # Priority 1: Ghost Mode config (covers multi-relay rotation when shipped)
+    try:
+        cfg = json.loads(GHOST_ENDPOINTS_FILE.read_text())
+        for ep in cfg.get("endpoints", []):
+            host = ep.get("host", "").strip()
+            if host:
+                ips.add(host)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    # Priority 2: live wg1 peer endpoint (current truth)
+    rc, out, _ = run(["wg", "show", "wg1", "endpoints"])
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and ":" in parts[1] and parts[1] != "(none)":
+                ips.add(parts[1].rsplit(":", 1)[0])
+    return ips
+
+
 def check_outbound_ip(mode: str) -> tuple[str, str]:
-    """For tunnel modes, public IP must be the WG relay IP, not home WAN."""
+    """For tunnel modes, public IP must match the WG relay endpoint, not home WAN."""
     rc, out, _ = run(["curl", "-s", "--max-time", "8", "https://ifconfig.me"], timeout=10)
     if rc != 0 or not out.strip():
         return "WARN", "could not reach ifconfig.me (skipping)"
     public_ip = out.strip()
     if mode in ("doublehop", "zhop"):
-        if public_ip in FLEET_RELAY_IPS:
-            return "OK", f"outbound IP = {public_ip} (fleet relay, real home IP hidden)"
-        return "FAIL", f"outbound IP = {public_ip} (NOT a known fleet relay — possible tunnel leak)"
+        expected = get_expected_relay_ips()
+        if not expected:
+            return "WARN", f"outbound IP = {public_ip} (could not determine expected relay IPs — ghost-endpoints.json absent and wg1 has no peer)"
+        if public_ip in expected:
+            return "OK", f"outbound IP = {public_ip} (matches wg1 relay, real home IP hidden)"
+        return "FAIL", f"outbound IP = {public_ip} not in expected relay set {sorted(expected)} — possible tunnel leak"
     # ISP / zerotrust: outbound IP IS the home WAN IP. Just confirm we got one.
     return "OK", f"outbound IP = {public_ip} (home WAN — expected in mode={mode})"
 

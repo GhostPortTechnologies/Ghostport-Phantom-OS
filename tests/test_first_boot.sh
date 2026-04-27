@@ -49,11 +49,13 @@ else
     fail=$((fail + 1))
 fi
 
-# 3. Specific invariants the suite assumes — file existence + ownership
+# 3. Specific invariants the suite assumes — file existence + ownership.
+# auth.json + fleet-auth.json deliberately NOT in this required set —
+# they only exist after first activation; missing == fresh-pre-activation,
+# which is a valid healthy state (gp-first-boot-check warns, doesn't fail).
 declare -A REQUIRED_FILES=(
     ["/etc/phantom/arsenal.json"]="ghostport-admin"
     ["/etc/phantom/family-shield.json"]="ghostport-admin"
-    ["/etc/phantom/auth.json"]="ghostport-admin"
     ["/etc/phantom/blocklists/data-brokers.json"]="root"
     ["/etc/dnsmasq.d/30-anti-fingerprint.conf"]="root"
     ["/etc/sysctl.d/99-phantom-conntrack-acct.conf"]="root"
