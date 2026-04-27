@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""gp-leak-check — headless network-layer leak verifier for the current mode.
+
+Automates ~70% of the manual leak walkthrough. Tests the current mode for:
+
+  1. IPv6 disabled (no shadow stack to leak through)
+  2. WebRTC STUN egress blocked at firewall
+  3. QUIC blocked at firewall (in non-ISP modes — forces DNS-filterable TCP)
+  4. DNS resolves correctly + via the expected upstream path for this mode
+  5. Outbound public IP — for tunnel modes, confirms wg relay IP, not home WAN
+
+What it does NOT cover (browser layer — no headless equivalent):
+  - TLS ClientHello fingerprint (JA3 / JA4)
+  - HTTP/2 SETTINGS fingerprint (Akamai hash)
+  - User-Agent / Sec-CH-UA leak in HTTP headers
+  - Canvas / WebGL / font fingerprinting
+
+Run after switching modes manually. Operator should still hit
+browserleaks.com (or similar) in a real browser to cover the layer
+above. This tool covers what GhostPort's network layer is responsible
+for — nothing more, and importantly nothing less.
+
+Usage:
+  sudo gp-leak-check              # human summary, current mode
+  sudo gp-leak-check --json       # machine-readable
+  sudo gp-leak-check --quiet      # exit code only
+
+Exit:
+  0 — no leaks detected at the network layer for the current mode
+  1 — at least one leak / misconfiguration detected
+  2 — could not run (e.g. not root, or a check tool missing)
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+CURRENT_MODE_FILE = Path("/etc/phantom/current-mode")
+
+# Known fleet relay IPs — for tunnel modes the public-IP check should
+# return one of these (not the home WAN IP).
+FLEET_RELAY_IPS = {
+    "54.211.104.73",  # us-east-1 primary (control + data plane today)
+}
+
+
+def run(cmd: list[str], timeout: int = 10) -> tuple[int, str, str]:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout, r.stderr
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        return 1, "", str(e)
+
+
+def current_mode() -> str:
+    try:
+        return CURRENT_MODE_FILE.read_text().strip()
+    except FileNotFoundError:
+        return "isp"
+
+
+def check_ipv6_disabled() -> tuple[str, str]:
+    """IPv6 must be off — otherwise apps may bypass IPv4-only firewall rules."""
+    try:
+        v = Path("/proc/sys/net/ipv6/conf/all/disable_ipv6").read_text().strip()
+    except FileNotFoundError:
+        return "FAIL", "IPv6 sysctl not readable"
+    if v != "1":
+        return "FAIL", f"disable_ipv6={v} (should be 1)"
+    # Also: no IPv6 routes pointing out should exist
+    rc, out, _ = run(["ip", "-6", "route", "show", "default"])
+    if out.strip():
+        return "FAIL", f"IPv6 default route present: {out.strip()[:80]}"
+    return "OK", "IPv6 fully disabled (sysctl + no default route)"
+
+
+def check_webrtc_block() -> tuple[str, str]:
+    """STUN egress must be blocked. Look for the nftables rule by comment."""
+    rc, out, _ = run(["nft", "list", "ruleset"])
+    if rc != 0:
+        return "FAIL", "nft list ruleset failed"
+    # Either the gp-webrtc-block comment, or rules dropping common STUN ports
+    if "gp-webrtc-block" in out:
+        return "OK", "gp-webrtc-block rule present"
+    if re.search(r"udp dport (\{[^}]*3478[^}]*\}|3478|5349)", out):
+        return "OK", "STUN ports (3478/5349) blocked at firewall"
+    return "FAIL", "no rule blocking STUN egress"
+
+
+def check_quic_block(mode: str) -> tuple[str, str]:
+    """QUIC (UDP/443) blocked in non-ISP modes — forces DNS-filterable TCP path."""
+    rc, out, _ = run(["nft", "list", "ruleset"])
+    if rc != 0:
+        return "FAIL", "nft list ruleset failed"
+    if mode == "isp":
+        # ISP mode is intentionally permissive — QUIC pass-through is correct
+        if "gp-quic-block" in out:
+            return "WARN", "QUIC blocked even in ISP mode (operator preference)"
+        return "OK", "ISP mode passes QUIC through (expected)"
+    # Non-ISP modes: must block
+    if "gp-quic-block" in out:
+        return "OK", "gp-quic-block rule present"
+    return "FAIL", f"mode={mode} should block QUIC but no gp-quic-block rule found"
+
+
+def check_dns_works() -> tuple[str, str]:
+    """A non-blocked domain should resolve to a real IP via the local resolver."""
+    rc, out, _ = run(["dig", "+short", "+time=2", "+tries=1", "@127.0.0.1", "cloudflare.com"])
+    if rc != 0:
+        return "FAIL", "dig @127.0.0.1 returned non-zero"
+    ips = [line.strip() for line in out.splitlines() if re.match(r"^\d+\.\d+\.\d+\.\d+$", line.strip())]
+    if not ips:
+        return "FAIL", f"no IPv4 answers, raw: {out.strip()[:60]}"
+    if any(ip == "0.0.0.0" for ip in ips):
+        return "FAIL", "resolver returned 0.0.0.0 (Pi-hole blocking by mistake)"
+    return "OK", f"cloudflare.com → {ips[0]}"
+
+
+def check_dns_upstream(mode: str) -> tuple[str, str]:
+    """Verify Pi-hole's upstream is set correctly for this mode."""
+    expected = {
+        "isp":         ("DoH or local cloudflared", ["127.0.0.1#5053", "1.1.1.1", "9.9.9.9", "doh.pub"]),
+        "zerotrust":   ("DoH or local cloudflared", ["127.0.0.1#5053", "1.1.1.1"]),
+        "doublehop":   ("EC2 unbound through wg1", ["10.66.67.1"]),
+        "zhop":        ("EC2 unbound through wg1", ["10.66.67.1"]),
+    }
+    label, valid = expected.get(mode, (None, None))
+    if not valid:
+        return "WARN", f"unknown mode={mode}, can't verify upstream"
+    # Pi-hole v6 stores upstreams in /etc/pihole/pihole.toml
+    try:
+        toml = Path("/etc/pihole/pihole.toml").read_text()
+    except (FileNotFoundError, PermissionError):
+        return "WARN", "/etc/pihole/pihole.toml not readable, skipping upstream check"
+    # Extract upstreams = [ ... ] block
+    m = re.search(r"^\s*upstreams\s*=\s*\[(.*?)\]", toml, re.S | re.M)
+    if not m:
+        return "WARN", "could not find upstreams setting in pihole.toml"
+    upstreams_text = m.group(1)
+    matched = [v for v in valid if v in upstreams_text]
+    if matched:
+        return "OK", f"DNS upstream is {matched[0]} (expected {label})"
+    return "FAIL", f"upstream not in expected set for mode={mode}: {upstreams_text.strip()[:80]}"
+
+
+def check_outbound_ip(mode: str) -> tuple[str, str]:
+    """For tunnel modes, public IP must be the WG relay IP, not home WAN."""
+    rc, out, _ = run(["curl", "-s", "--max-time", "8", "https://ifconfig.me"], timeout=10)
+    if rc != 0 or not out.strip():
+        return "WARN", "could not reach ifconfig.me (skipping)"
+    public_ip = out.strip()
+    if mode in ("doublehop", "zhop"):
+        if public_ip in FLEET_RELAY_IPS:
+            return "OK", f"outbound IP = {public_ip} (fleet relay, real home IP hidden)"
+        return "FAIL", f"outbound IP = {public_ip} (NOT a known fleet relay — possible tunnel leak)"
+    # ISP / zerotrust: outbound IP IS the home WAN IP. Just confirm we got one.
+    return "OK", f"outbound IP = {public_ip} (home WAN — expected in mode={mode})"
+
+
+CHECKS = [
+    ("ipv6_disabled",   check_ipv6_disabled,                     None),
+    ("webrtc_block",    check_webrtc_block,                      None),
+    ("quic_block",      lambda mode: check_quic_block(mode),     "mode"),
+    ("dns_works",       check_dns_works,                         None),
+    ("dns_upstream",    lambda mode: check_dns_upstream(mode),   "mode"),
+    ("outbound_ip",     lambda mode: check_outbound_ip(mode),    "mode"),
+]
+
+
+def run_all() -> tuple[dict, int]:
+    mode = current_mode()
+    results = {"mode": mode, "checks": {}, "browser_layer_uncovered": [
+        "TLS ClientHello fingerprint (JA3/JA4)",
+        "HTTP/2 SETTINGS fingerprint (Akamai hash)",
+        "User-Agent / Sec-CH-UA HTTP header values",
+        "Canvas / WebGL / font fingerprinting",
+    ]}
+    for name, fn, takes_mode in CHECKS:
+        if takes_mode:
+            status, detail = fn(mode)
+        else:
+            status, detail = fn()
+        results["checks"][name] = {"status": status, "detail": detail}
+    fail_count = sum(1 for c in results["checks"].values() if c["status"] == "FAIL")
+    return results, (1 if fail_count > 0 else 0)
+
+
+def render_human(results: dict) -> None:
+    mode = results["mode"]
+    statuses = [c["status"] for c in results["checks"].values()]
+    fail_n = statuses.count("FAIL")
+    warn_n = statuses.count("WARN")
+    pass_n = statuses.count("OK")
+    if fail_n > 0:
+        banner_color, banner_glyph, banner_text = "\033[31m", "✗", "leak / misconfig detected"
+    elif warn_n > 0:
+        banner_color, banner_glyph, banner_text = "\033[33m", "⚠", "no leaks but warnings"
+    else:
+        banner_color, banner_glyph, banner_text = "\033[32m", "✓", "no network-layer leaks"
+    print(f"{banner_color}═══════════════════════════════════════════════════════════")
+    print(f"  {banner_glyph}  Mode={mode.upper()} — {banner_text}")
+    print(f"═══════════════════════════════════════════════════════════\033[0m\n")
+    for name, c in results["checks"].items():
+        marker = {"OK": ("✓", "\033[32m"), "WARN": ("⚠", "\033[33m"), "FAIL": ("✗", "\033[31m")}[c["status"]]
+        print(f"  {marker[1]}{marker[0]}\033[0m  {name:<18}  {c['detail']}")
+    print(f"\n  pass: {pass_n}  warn: {warn_n}  fail: {fail_n}")
+    print()
+    print("  ── browser-layer leaks NOT covered by this tool ──")
+    for item in results["browser_layer_uncovered"]:
+        print(f"    • {item}")
+    print("  Verify the above by visiting browserleaks.com in a real browser.")
+
+
+def main() -> int:
+    if os.geteuid() != 0:
+        print("must run as root (use sudo)", file=sys.stderr)
+        return 2
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--quiet", action="store_true", help="exit code only")
+    args = ap.parse_args()
+
+    results, exit_code = run_all()
+
+    if args.json:
+        print(json.dumps(results, indent=2))
+    elif not args.quiet:
+        render_human(results)
+    return exit_code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

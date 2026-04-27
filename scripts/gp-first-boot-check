@@ -1,0 +1,280 @@
+#!/bin/bash
+# gp-first-boot-check — health check for fresh / running Phantom OS device.
+#
+# Designed to be runnable any time, but most useful on first-boot to verify
+# every load-bearing component came up correctly. Outputs human summary +
+# exits non-zero if any required check failed.
+#
+# Usage:
+#   sudo gp-first-boot-check          # full check, human output
+#   sudo gp-first-boot-check --json   # machine-readable, for the dashboard
+#   sudo gp-first-boot-check --quiet  # exit code only, no output
+#
+# Categories of check (each returns OK / WARN / FAIL):
+#   1. Core services (ghostport, ghostport-boot, hostapd, dnsmasq, pihole-FTL,
+#      tailscaled)
+#   2. Phantom timers (broker-counters, broker-refresh, device-anomaly)
+#   3. nftables tables (filter chain, phantom_brokers, phantom_scrub if on)
+#   4. DNS sanity (Pi-hole answers, broker resolution path correct)
+#   5. OTA reachability (gp-update can fetch version metadata)
+#   6. Tailscale connectivity (always-on management plane)
+#   7. WireGuard control + data plane (only if mode is doublehop/zhop)
+#   8. Critical config files present + correct ownership
+#
+# Exit codes:
+#   0  — all checks PASS or WARN (operational)
+#   1  — one or more checks FAIL (operator intervention needed)
+#   2  — script could not run (e.g. not root)
+
+set -uo pipefail
+
+QUIET=0
+JSON_OUT=0
+for arg in "$@"; do
+    case "$arg" in
+        --quiet) QUIET=1 ;;
+        --json)  JSON_OUT=1 ;;
+        --help|-h)
+            sed -n '2,30p' "$0" | sed 's/^# \?//'
+            exit 0
+            ;;
+    esac
+done
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "must run as root (use sudo)" >&2
+    exit 2
+fi
+
+# Collect results in arrays so JSON path can emit cleanly
+declare -A RESULT_STATUS  # key -> OK|WARN|FAIL
+declare -A RESULT_DETAIL  # key -> message
+
+record() {
+    local key=$1 status=$2 detail=$3
+    RESULT_STATUS[$key]=$status
+    RESULT_DETAIL[$key]=$detail
+}
+
+# ── 1. Core services ───────────────────────────────────────────────
+# Note: dnsmasq.service is INTENTIONALLY not in this list. Pi-hole v6's
+# pihole-FTL fully replaces dnsmasq as the DNS resolver and binds the
+# socket itself; dnsmasq.service NOT running is the correct state.
+for svc in ghostport hostapd pihole-FTL tailscaled; do
+    if systemctl is-active --quiet "$svc"; then
+        record "service.$svc" OK "active"
+    else
+        record "service.$svc" FAIL "not active"
+    fi
+done
+
+# ghostport-boot is a one-shot — check that it ran successfully (active or
+# inactive both fine; failed = problem).
+if systemctl is-failed --quiet ghostport-boot; then
+    record "service.ghostport-boot" FAIL "ghostport-boot.service failed at last run"
+else
+    record "service.ghostport-boot" OK "ran cleanly"
+fi
+
+# ── 2. Phantom timers ──────────────────────────────────────────────
+for timer in phantom-broker-counters.timer phantom-broker-refresh.timer phantom-device-anomaly.timer; do
+    if systemctl is-active --quiet "$timer"; then
+        record "timer.$timer" OK "active"
+    else
+        record "timer.$timer" FAIL "not active"
+    fi
+done
+
+# ── 3. nftables tables ─────────────────────────────────────────────
+NFT_TABLES=$(nft list tables 2>/dev/null)
+if [ -n "$NFT_TABLES" ]; then
+    record "nftables.loaded" OK "$(echo "$NFT_TABLES" | wc -l) table(s)"
+else
+    record "nftables.loaded" FAIL "nft list tables returned nothing"
+fi
+
+if echo "$NFT_TABLES" | grep -q "table inet phantom_brokers"; then
+    record "nftables.phantom_brokers" OK "broker counter table loaded"
+else
+    record "nftables.phantom_brokers" WARN "missing — broker counters won't increment"
+fi
+
+# phantom_scrub is conditional on the toggle, so warn (not fail) if missing
+if echo "$NFT_TABLES" | grep -q "table ip phantom_scrub"; then
+    record "nftables.phantom_scrub" OK "TCP fingerprint scrub active"
+else
+    record "nftables.phantom_scrub" WARN "TCP scrub off (Arsenal toggle disabled — informational)"
+fi
+
+# ── 4. DNS sanity ──────────────────────────────────────────────────
+# A non-broker domain should resolve. A broker domain should NOT resolve to
+# a real IP if the device is shielded; we don't shield by default so just
+# verify resolution works at all.
+if dig +short +time=2 +tries=1 @127.0.0.1 cloudflare.com >/dev/null 2>&1; then
+    R=$(dig +short +time=2 +tries=1 @127.0.0.1 cloudflare.com | head -1)
+    if [ -n "$R" ] && [ "$R" != "0.0.0.0" ]; then
+        record "dns.resolves" OK "cloudflare.com → $R"
+    else
+        record "dns.resolves" FAIL "Pi-hole answered but with $R"
+    fi
+else
+    record "dns.resolves" FAIL "no answer from 127.0.0.1:53"
+fi
+
+# Pi-hole FTL responds to its summary endpoint
+if curl -s --max-time 3 "http://localhost/admin/api.php?summary" 2>&1 | grep -q "dns_queries_today"; then
+    record "dns.pihole" OK "Pi-hole API responding"
+else
+    record "dns.pihole" WARN "Pi-hole API not responsive (may still work for clients)"
+fi
+
+# ── 5. OTA reachability ────────────────────────────────────────────
+# gp-update status doesn't hit the network; gp-update check does. Use status
+# for the cheap path; warn (not fail) if it can't return a version, since
+# OTA being down doesn't break operation.
+if gp-update status 2>&1 | grep -q "Current version"; then
+    record "ota.gp-update" OK "gp-update status returns a version"
+else
+    record "ota.gp-update" WARN "gp-update status returned no version"
+fi
+
+# ── 6. Tailscale ───────────────────────────────────────────────────
+if tailscale status >/dev/null 2>&1; then
+    TS_IP=$(tailscale ip 2>/dev/null | head -1)
+    if [ -n "$TS_IP" ]; then
+        record "tailscale.up" OK "$TS_IP"
+    else
+        record "tailscale.up" WARN "tailscale status OK but no IP yet"
+    fi
+else
+    record "tailscale.up" FAIL "tailscale status failed — remote management broken"
+fi
+
+# ── 7. WireGuard (conditional on tunnel mode) ──────────────────────
+MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo isp)
+record "mode.current" OK "$MODE"
+
+if [ "$MODE" = "doublehop" ] || [ "$MODE" = "zhop" ]; then
+    # Both wg0 and wg1 must be up
+    for iface in wg0 wg1; do
+        if ip link show "$iface" 2>/dev/null | grep -q "state UNKNOWN\|state UP"; then
+            record "wireguard.$iface" OK "interface up"
+        else
+            record "wireguard.$iface" FAIL "$iface not up but mode requires it"
+        fi
+        # And have a recent handshake
+        HS=$(wg show "$iface" latest-handshakes 2>/dev/null | awk '{print $2}' | head -1)
+        if [ -n "${HS:-}" ] && [ "$HS" -gt 0 ]; then
+            AGE=$(( $(date +%s) - HS ))
+            if [ "$AGE" -lt 600 ]; then
+                record "wireguard.$iface.handshake" OK "${AGE}s ago"
+            else
+                record "wireguard.$iface.handshake" WARN "stale (${AGE}s ago)"
+            fi
+        fi
+    done
+else
+    record "wireguard.tunnel" OK "not required in mode=$MODE"
+fi
+
+# ── 8. Critical config files ───────────────────────────────────────
+declare -A FILE_PERMS=(
+    ["/etc/phantom/arsenal.json"]="ghostport-admin"
+    ["/etc/phantom/auth.json"]="ghostport-admin"
+    ["/etc/phantom/family-shield.json"]="ghostport-admin"
+    ["/etc/phantom/blocklists/data-brokers.json"]="root"
+    ["/etc/dnsmasq.d/30-anti-fingerprint.conf"]="root"
+    ["/etc/sysctl.d/99-phantom-conntrack-acct.conf"]="root"
+    ["/etc/sudoers.d/022_gp-palantir"]="root"
+)
+for path in "${!FILE_PERMS[@]}"; do
+    expected_owner="${FILE_PERMS[$path]}"
+    if [ ! -f "$path" ]; then
+        record "config.$(basename $path)" FAIL "missing"
+    else
+        actual_owner=$(stat -c %U "$path" 2>/dev/null)
+        if [ "$actual_owner" = "$expected_owner" ]; then
+            record "config.$(basename $path)" OK "owner=$actual_owner"
+        else
+            record "config.$(basename $path)" WARN "owner=$actual_owner (expected $expected_owner)"
+        fi
+    fi
+done
+
+# ── conntrack accounting (kernel toggle) ───────────────────────────
+ACCT=$(sysctl -n net.netfilter.nf_conntrack_acct 2>/dev/null || echo 0)
+if [ "$ACCT" = "1" ]; then
+    record "kernel.conntrack_acct" OK "enabled (rate-anomaly will see byte counters)"
+else
+    record "kernel.conntrack_acct" WARN "disabled — rate anomaly detector blind"
+fi
+
+# ── Render output ──────────────────────────────────────────────────
+PASS_COUNT=0
+WARN_COUNT=0
+FAIL_COUNT=0
+for k in "${!RESULT_STATUS[@]}"; do
+    case "${RESULT_STATUS[$k]}" in
+        OK)   PASS_COUNT=$((PASS_COUNT + 1)) ;;
+        WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
+        FAIL) FAIL_COUNT=$((FAIL_COUNT + 1)) ;;
+    esac
+done
+
+if [ "$JSON_OUT" -eq 1 ]; then
+    python3 <<PY
+import json
+checks = {}
+$(for k in "${!RESULT_STATUS[@]}"; do
+    echo "checks['$k'] = {'status': '${RESULT_STATUS[$k]}', 'detail': '${RESULT_DETAIL[$k]//\'/\\\'}'}"
+done)
+print(json.dumps({
+    "summary": {"pass": $PASS_COUNT, "warn": $WARN_COUNT, "fail": $FAIL_COUNT},
+    "checks": checks,
+    "healthy": $FAIL_COUNT == 0,
+}, indent=2))
+PY
+elif [ "$QUIET" -eq 0 ]; then
+    if [ "$FAIL_COUNT" -eq 0 ]; then
+        if [ "$WARN_COUNT" -eq 0 ]; then
+            printf '\033[32m'
+            echo "═══════════════════════════════════════════════════════════"
+            echo "  ✓  Phantom OS — all systems green"
+            echo "═══════════════════════════════════════════════════════════"
+            printf '\033[0m'
+        else
+            printf '\033[33m'
+            echo "═══════════════════════════════════════════════════════════"
+            echo "  ⚠  Phantom OS — operational with warnings"
+            echo "═══════════════════════════════════════════════════════════"
+            printf '\033[0m'
+        fi
+    else
+        printf '\033[31m'
+        echo "═══════════════════════════════════════════════════════════"
+        echo "  ✗  Phantom OS — failures detected"
+        echo "═══════════════════════════════════════════════════════════"
+        printf '\033[0m'
+    fi
+    echo
+    # Print FAILs first, WARNs second, OKs alphabetical
+    for status in FAIL WARN OK; do
+        for k in $(echo "${!RESULT_STATUS[@]}" | tr ' ' '\n' | sort); do
+            if [ "${RESULT_STATUS[$k]}" = "$status" ]; then
+                case "$status" in
+                    FAIL) marker="✗"; color='\033[31m' ;;
+                    WARN) marker="⚠"; color='\033[33m' ;;
+                    OK)   marker="✓"; color='\033[32m' ;;
+                esac
+                printf "  ${color}%s\033[0m  %-40s %s\n" "$marker" "$k" "${RESULT_DETAIL[$k]}"
+            fi
+        done
+    done
+    echo
+    echo "  pass: $PASS_COUNT   warn: $WARN_COUNT   fail: $FAIL_COUNT"
+fi
+
+if [ "$FAIL_COUNT" -gt 0 ]; then
+    exit 1
+fi
+exit 0

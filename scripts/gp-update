@@ -248,6 +248,28 @@ with open(os.environ['GP_OUT'], 'w') as f:
         done
       fi
 
+      # Deploy Brave system preferences (sets system-titlebar etc.)
+      if [ -d "$EXTRACT_DIR/etc/brave" ]; then
+        mkdir -p /etc/brave
+        for bf in "$EXTRACT_DIR"/etc/brave/*; do
+          [ -f "$bf" ] || continue
+          cp "$bf" "/etc/brave/$(basename "$bf")"
+          chmod 644 "/etc/brave/$(basename "$bf")"
+          chown root:root "/etc/brave/$(basename "$bf")"
+        done
+      fi
+
+      # Deploy labwc compositor config
+      if [ -d "$EXTRACT_DIR/etc/labwc" ]; then
+        mkdir -p /etc/labwc
+        for lf in "$EXTRACT_DIR"/etc/labwc/*; do
+          [ -f "$lf" ] || continue
+          cp "$lf" "/etc/labwc/$(basename "$lf")"
+          chmod 644 "/etc/labwc/$(basename "$lf")"
+          chown root:root "/etc/labwc/$(basename "$lf")"
+        done
+      fi
+
       # Deploy dnsmasq drop-ins (e.g. 30-anti-fingerprint.conf). We restart
       # pihole-FTL afterwards to load the new/changed drop-ins; dnsmasq is
       # process-local, no atomic reload.
