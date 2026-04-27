@@ -55,6 +55,84 @@ def _hex_to_rgb(hex_str):
 
 
 class TideChart(GhostPortApp):
+    # Per-region contextual help. Dialog logic lives in GhostPortApp.show_help_dialog.
+    HELP_SECTIONS = [
+        ("What is Tide Chart?",
+         "Tide Chart is a long-window bandwidth heatmap. Each row is one day; each "
+         "column is one hour. Cells are color-coded by the peak throughput observed "
+         "during that hour, so you can spot \"when does this device get loud?\" at "
+         "a glance.\n\n"
+         "Data updates every 5 seconds and is stored locally in "
+         "~/.config/phantom/tidechart-history.json. Retention is configurable in "
+         "/etc/phantom/retention.json (default 30 days, range 1–60)."),
+
+        ("Interface selector",
+         "The dropdown on the left picks which network interface the heatmap shows:\n\n"
+         "• eth0 — wired WAN uplink\n"
+         "• wlan0 — your AP (LAN-side WiFi)\n"
+         "• wg0 — control-plane tunnel (low-volume; spikes here are unusual)\n"
+         "• wg1 — data-plane tunnel (where most internet traffic flows in DoubleHop/ZHop)\n\n"
+         "Switching interface re-paints the heatmap and changes which throughput "
+         "live-rate shows on the right of the toolbar."),
+
+        ("Reading the heatmap",
+         "The y-axis (rows) is dates, newest at the top. The x-axis (columns) is "
+         "hours 0–23 in your local time.\n\n"
+         "Cell color goes from dim (background) at idle to your accent color at peak. "
+         "The mapping is logarithmic — a cell that's twice as bright is roughly an "
+         "order of magnitude more bandwidth, not double. This makes overnight idle "
+         "patterns and daytime spikes both visible without one drowning the other.\n\n"
+         "Hover any cell to see the exact peak rate for that hour."),
+
+        ("Compare mode",
+         "The \"Compare\" dropdown adds a second heatmap below the first, showing a "
+         "different interface side-by-side. Useful for: \"is the wg1 spike at 3am "
+         "matched on eth0?\" (yes → real traffic; no → tunnel artifact).\n\n"
+         "Pick \"(none)\" to hide the compare panel."),
+
+        ("Anomaly detection",
+         "When \"Anomalies: ON\" is active (the default), Tide Chart computes a "
+         "per-hour baseline (the 90th percentile across recent days) and visually "
+         "flags any hour that exceeds 1.5× that baseline. The flagged cells get a "
+         "small marker so they stand out from the normal color gradient.\n\n"
+         "Use it to catch \"this Tuesday afternoon is way busier than every other "
+         "Tuesday afternoon\" without staring at the chart yourself.\n\n"
+         "Toggle off if the markers get noisy during onboarding (need ~7 days of "
+         "history before the baseline is stable)."),
+
+        ("Throughput display",
+         "The right side of the toolbar shows the live RX/TX rate in bytes-per-second "
+         "for the currently-selected interface. Updates every 5 seconds with the "
+         "rest of the chart. This is a real-time value, not a chart cell."),
+
+        ("Export",
+         "The Export button opens a save dialog with two formats:\n\n"
+         "• CSV — raw 5-second samples for ALL interfaces, all retained days. One "
+         "row per sample (interface, date, hour, rx_bps, tx_bps). Useful when you "
+         "want to crunch the numbers yourself or share with a technical helper.\n\n"
+         "• PNG — a screenshot of the currently-displayed heatmap canvas. Useful "
+         "for slack/email/incident reports.\n\n"
+         "Pick the format by typing the extension into the filename (.csv or .png) "
+         "or selecting from the format filter."),
+
+        ("Reset History",
+         "Wipes the entire history file. Affects ALL interfaces and ALL retained "
+         "days — there's no per-interface or per-date partial reset. Use when you've "
+         "got noisy startup data or want a clean baseline.\n\n"
+         "Confirmation dialog will ask before actually wiping. The "
+         "tidechart-history.json file is rewritten empty; nothing is recoverable."),
+
+        ("Gotchas",
+         "• Baselines need history. The first ~7 days after install, anomaly "
+         "detection will be jumpy as it builds the percentile baseline. Trust it more "
+         "after a week of normal traffic.\n\n"
+         "• Mode switches affect what you see. In ISP mode, wg1 stays flat (no traffic). "
+         "In DoubleHop, eth0 only shows tunnel-encapsulated traffic, not your real "
+         "browsing — for that, watch wg1.\n\n"
+         "• Retention applies per-interface. If you change /etc/phantom/retention.json "
+         "from 30 to 7, the next poll will trim each interface's history to 7 days."),
+    ]
+
     def __init__(self):
         super().__init__("TIDE CHART", "tidechart", (950, 650))
         self.current_iface = "eth0"
@@ -228,6 +306,13 @@ class TideChart(GhostPortApp):
         # Reset button
         reset_btn = self.make_button("Reset History", self._on_reset, "gp-btn-danger")
         toolbar.pack_end(reset_btn, False, False, 0)
+
+        # Export button (CSV / PNG)
+        export_btn = self.make_button("Export", self._on_export, "gp-btn")
+        toolbar.pack_end(export_btn, False, False, 0)
+
+        # Help button (uses gp_app_base shared dialog pattern)
+        toolbar.pack_end(self.make_help_button(sections=self.HELP_SECTIONS), False, False, 0)
 
         root.pack_start(toolbar, False, False, 0)
 
@@ -600,6 +685,89 @@ class TideChart(GhostPortApp):
     def _on_leave(self, widget, event):
         self.hover_cell = None
         widget.queue_draw()
+
+    # ── Export ────────────────────────────────────────────────────────
+
+    def _on_export(self, _btn):
+        """Open a save dialog and dispatch to PNG or CSV based on the chosen filename."""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dialog = Gtk.FileChooserDialog(
+            title="Export Tide Chart",
+            parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_SAVE, Gtk.ResponseType.OK,
+        )
+        dialog.set_do_overwrite_confirmation(True)
+        dialog.set_current_folder(os.path.expanduser("~"))
+        dialog.set_current_name(f"tidechart_{self.current_iface}_{ts}.csv")
+
+        f_csv = Gtk.FileFilter()
+        f_csv.set_name("CSV (raw samples, all interfaces)")
+        f_csv.add_pattern("*.csv")
+        dialog.add_filter(f_csv)
+
+        f_png = Gtk.FileFilter()
+        f_png.set_name("PNG (heatmap screenshot)")
+        f_png.add_pattern("*.png")
+        dialog.add_filter(f_png)
+
+        try:
+            response = dialog.run()
+            if response != Gtk.ResponseType.OK:
+                return
+            path = dialog.get_filename()
+        finally:
+            dialog.destroy()
+
+        # Default to .csv if the user typed no extension
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".png":
+            self._export_png(path)
+        elif ext == ".csv":
+            self._export_csv(path)
+        else:
+            self._export_csv(path + ".csv")
+
+    def _export_csv(self, path):
+        """Dump every retained sample to CSV."""
+        try:
+            import csv
+            with open(path, "w", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["interface", "date", "hour", "rx_bps", "tx_bps"])
+                for iface in sorted(self.history.keys()):
+                    for date_str in sorted(self.history[iface].keys()):
+                        for sample in self.history[iface][date_str]:
+                            # samples are [hour, rx_bps, tx_bps]
+                            if len(sample) >= 3:
+                                w.writerow([iface, date_str, sample[0], sample[1], sample[2]])
+            self.set_status(f"Exported CSV: {path}")
+        except Exception as e:
+            self.set_status(f"Export failed: {e}")
+
+    def _export_png(self, path):
+        """Capture the live drawing area as PNG (what the user sees on screen)."""
+        try:
+            win = self.drawing_area.get_window()
+            if win is None:
+                self.set_status("Export failed: drawing area not realized")
+                return
+            w = self.drawing_area.get_allocated_width()
+            h = self.drawing_area.get_allocated_height()
+            if w <= 0 or h <= 0:
+                self.set_status("Export failed: drawing area has no size")
+                return
+            pixbuf = Gdk.pixbuf_get_from_window(win, 0, 0, w, h)
+            if pixbuf is None:
+                self.set_status("Export failed: could not capture canvas")
+                return
+            pixbuf.savev(path, "png", [], [])
+            self.set_status(f"Exported PNG: {path}")
+        except Exception as e:
+            self.set_status(f"Export failed: {e}")
 
     def _on_destroy(self, *args):
         self._save_history()
