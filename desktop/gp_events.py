@@ -50,6 +50,10 @@ def _ensure_db():
     """Create the events DB and schema if missing. Idempotent."""
     os.makedirs(EVENTS_DIR, exist_ok=True)
     with sqlite3.connect(EVENTS_DB, timeout=10) as conn:
+        # WAL journaling so prune() DELETE doesn't block concurrent emit().
+        # Persists in DB header — only takes effect on first write to a fresh
+        # DB or first call against a legacy rollback-journal DB. Idempotent.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
