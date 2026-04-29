@@ -225,18 +225,39 @@ else
     fi
 fi
 
-# ── 6. Conntrack accounting sysctl shipped ────────────────────────────
+# ── 6. Critical sysctl drop-ins shipped from repo ─────────────────────
+# These are load-bearing for performance + security + routing. Without any
+# of them shipped through OTA, customer devices arrive misconfigured.
+# Each was previously a "live-only on dev Pi, missing from repo" gap.
 echo
 echo "— Critical sysctl drop-ins shipped from repo —"
 
-CONNTRACK_CONF=$REPO/etc/sysctl.d/99-phantom-conntrack-acct.conf
-if [ -f "$CONNTRACK_CONF" ] && grep -q "nf_conntrack_acct = 1" "$CONNTRACK_CONF"; then
-    echo "  PASS: 99-phantom-conntrack-acct.conf shipped + sets nf_conntrack_acct=1"
-    pass=$((pass + 1))
-else
-    echo "  FAIL: conntrack accounting sysctl drop-in missing or misconfigured"
-    fail=$((fail + 1))
-fi
+assert_sysctl_setting() {
+    local file=$1
+    local pattern=$2
+    local label=$3
+    if [ -f "$REPO/etc/sysctl.d/$file" ] && grep -qE "$pattern" "$REPO/etc/sysctl.d/$file"; then
+        echo "  PASS: $file → $label"
+        pass=$((pass + 1))
+    else
+        echo "  FAIL: $file missing or misconfigured ($label)"
+        fail=$((fail + 1))
+    fi
+}
+
+# Conntrack accounting (rate-anomaly detector depends on it)
+assert_sysctl_setting "99-phantom-conntrack-acct.conf"  "nf_conntrack_acct *= *1"          "conntrack accounting"
+# Performance tunings (the 500/50 fix)
+assert_sysctl_setting "99-ghostport-perf.conf"          "tcp_congestion_control *= *bbr"   "BBR congestion control"
+assert_sysctl_setting "99-ghostport-perf.conf"          "default_qdisc *= *fq"             "fq qdisc"
+assert_sysctl_setting "99-ghostport-perf.conf"          "rmem_max *= *16777216"            "16MB TCP receive buffers"
+assert_sysctl_setting "99-ghostport-perf.conf"          "wmem_max *= *16777216"            "16MB TCP send buffers"
+# IP forwarding (router can't route without it)
+assert_sysctl_setting "99-ghostport-routing.conf"       "ip_forward *= *1"                 "IPv4 forwarding"
+# Security hardening
+assert_sysctl_setting "99-ghostport-hardening.conf"     "rp_filter *= *1"                  "reverse-path filter"
+assert_sysctl_setting "99-ghostport-hardening.conf"     "ipv6.*disable_ipv6 *= *1"         "IPv6 disabled"
+assert_sysctl_setting "99-ghostport-hardening.conf"     "accept_source_route *= *0"        "source-routing rejected"
 
 echo
 echo "=== summary ==="
