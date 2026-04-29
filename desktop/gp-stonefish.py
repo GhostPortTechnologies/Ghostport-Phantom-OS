@@ -149,16 +149,24 @@ def _fire_notifications(alert_details):
 
         # Push to cross-app event bus for correlation with Sonar / Crow's
         # Nest. Categories normalized so the correlation engine can join
-        # across sources.
+        # across sources. FAILED is informational — sleeping clients drop
+        # out of the ARP table routinely; emitting them at DANGEROUS
+        # pollutes the bus and would skew any future correlation pattern.
         category_map = {
             "GW CHANGED": "arp_gateway_change",
             "SPOOFING": "arp_spoof",
             "FAILED": "arp_failed",
         }
+        severity_map = {
+            "GW CHANGED": gp_events.SEVERITY_DANGEROUS,
+            "SPOOFING": gp_events.SEVERITY_DANGEROUS,
+            "FAILED": gp_events.SEVERITY_INFO,
+        }
         cat = category_map.get(threat)
         if cat:
             gp_events.emit(
-                "stonefish", cat, gp_events.SEVERITY_DANGEROUS,
+                "stonefish", cat,
+                severity_map.get(threat, gp_events.SEVERITY_DANGEROUS),
                 f"Stonefish: {threat} on {label}{vendor_tag}",
                 details={
                     "ip": entry.get("ip"),
@@ -211,20 +219,24 @@ def save_baseline(data):
 
 def detect_threats(entries, baseline):
     """Detect ARP spoofing threats. Returns entries with 'threat' field added."""
-    # Check for duplicate MACs (same MAC, different IPs)
-    mac_to_ips = {}
+    # Duplicate-MAC detection is scoped per-interface. A device that connects
+    # to our LAN AP (wlan0) AND the upstream router (eth0) legitimately shows
+    # the same MAC on both subnets — that's roaming, not spoofing. Only
+    # collisions within a single interface are real ARP-table conflicts.
+    iface_mac_to_ips = {}
     for e in entries:
         if e["mac"] and e["mac"] != "":
-            mac_to_ips.setdefault(e["mac"], []).append(e["ip"])
+            key = (e.get("iface", ""), e["mac"])
+            iface_mac_to_ips.setdefault(key, []).append(e["ip"])
 
-    dup_macs = {mac for mac, ips in mac_to_ips.items() if len(ips) > 1}
+    dup_keys = {k for k, ips in iface_mac_to_ips.items() if len(ips) > 1}
 
     # Check gateway MAC changes
     gw_baseline = baseline.get("gateway_macs", {})
 
     for e in entries:
         threat = "CLEAN"
-        if e["mac"] in dup_macs:
+        if (e.get("iface", ""), e["mac"]) in dup_keys:
             threat = "SPOOFING"
         elif e["ip"] in gw_baseline and gw_baseline[e["ip"]] != e["mac"] and e["mac"]:
             threat = "GW CHANGED"
