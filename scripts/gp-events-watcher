@@ -47,8 +47,11 @@ def fire_notification(finding):
         f"Evidence ({finding['evidence_count']}):\n"
         + "\n".join(f"• {e}" for e in finding["evidence_summary"][:5])
     )
+    # T-0012: subprocess.run with timeout. notify-send returns instantly
+    # against a healthy mako; the 5s ceiling catches a hung daemon before
+    # the watcher accumulates orphan processes over days of uptime.
     try:
-        subprocess.Popen(
+        subprocess.run(
             [
                 "notify-send",
                 "-u", "critical",
@@ -58,10 +61,12 @@ def fire_notification(finding):
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
         )
-    except Exception:
-        # Headless install — log but don't crash
-        sys.stderr.write(f"[gp-events-watcher] notify-send failed for {finding['pattern_id']}\n")
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # Headless install or hung mako — log but don't crash
+        sys.stderr.write(f"[gp-events-watcher] notify-send unavailable for {finding['pattern_id']}\n")
 
 
 def load_dedup():

@@ -431,13 +431,18 @@ class DesktopCanvas:
                 self._show_sprite_menu(sp, event)
             return True
         if event.button == 2:
-            # Middle-click: trigger labwc's client-list menu via W-F12 keybind
+            # Middle-click: trigger labwc's client-list menu via W-F12 keybind.
+            # T-0012: subprocess.run with timeout instead of fire-and-forget
+            # Popen. wtype emits the chord and exits in ms; 5s catches the
+            # case where the compositor's input device is unreachable.
             try:
-                subprocess.Popen(
+                subprocess.run(
                     ["wtype", "-M", "logo", "-k", "F12", "-m", "logo"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
                 )
-            except Exception:
+            except (FileNotFoundError, subprocess.TimeoutExpired):
                 pass
             return True
         if event.button != 1:
@@ -720,6 +725,12 @@ class DesktopCanvas:
         else:
             argv = list(cmd)
         def _run(_mi):
+            # T-0012: long-running app launcher. Cannot wrap in
+            # subprocess.run with timeout — the launched app is meant to
+            # outlive this function call (Brave, terminals, etc.).
+            # start_new_session=True puts the child in its own process
+            # group so it's reaped by init when the user closes it,
+            # not by us — that's the orphan-prevention mechanism.
             try:
                 subprocess.Popen(argv, shell=False,
                                  stdout=subprocess.DEVNULL,
@@ -734,6 +745,10 @@ class DesktopCanvas:
     def _launch(self, sp):
         if not sp.command:
             return
+        # T-0012: long-running app launcher (icon click). Same rationale
+        # as _make_menu_launcher — start_new_session=True is the
+        # orphan-prevention path; a timeout on Popen would kill the app
+        # the user is trying to use.
         try:
             argv = shlex.split(sp.command)
             subprocess.Popen(argv, shell=False,

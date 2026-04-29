@@ -138,14 +138,20 @@ def _fire_notifications(alert_details):
         vendor = oui_lookup(entry["mac"])
         vendor_tag = f" [{vendor}]" if vendor and vendor != "Unknown" else ""
         body = f"{threat}: {label}{vendor_tag} — MAC {entry['mac']}"
+        # T-0012: subprocess.run with timeout instead of fire-and-forget
+        # Popen. notify-send returns instantly when mako is healthy; the
+        # 5s timeout catches a hung mako before processes accumulate
+        # over days of uptime.
         try:
-            subprocess.Popen(
+            subprocess.run(
                 ["notify-send", "-u", "critical", "-a", "Stonefish",
                  "Phantom: ARP threat", body],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
             )
-        except Exception:
-            pass  # desktop may not be present (headless install)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass  # headless install or hung mako — both safe to ignore
 
         # Push to cross-app event bus for correlation with Sonar / Crow's
         # Nest. Categories normalized so the correlation engine can join
