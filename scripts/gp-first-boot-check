@@ -46,6 +46,19 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 2
 fi
 
+# T-0009: theme-derived colors instead of hardcoded ANSI. Lib provides
+# $SUCCESS / $WARNING / $DANGER / $RESET, derived from /etc/ghostport/theme.json.
+# Fall back to literal ANSI if the lib is missing (dev install pre-deploy).
+if [ -r /usr/local/lib/gp-theme-colors.sh ]; then
+    # shellcheck disable=SC1091
+    source /usr/local/lib/gp-theme-colors.sh
+else
+    SUCCESS=$'\033[32m'
+    WARNING=$'\033[33m'
+    DANGER=$'\033[31m'
+    RESET=$'\033[0m'
+fi
+
 # Collect results in arrays so JSON path can emit cleanly
 declare -A RESULT_STATUS  # key -> OK|WARN|FAIL
 declare -A RESULT_DETAIL  # key -> message
@@ -252,26 +265,17 @@ print(json.dumps({
 }, indent=2))
 PY
 elif [ "$QUIET" -eq 0 ]; then
+    # Variables interpolated inside format string (matches gp-golden-strip
+    # convention) so the lib's literal-\033 RESET gets escape-processed by
+    # printf rather than emitted as literal text.
     if [ "$FAIL_COUNT" -eq 0 ]; then
         if [ "$WARN_COUNT" -eq 0 ]; then
-            printf '\033[32m'
-            echo "═══════════════════════════════════════════════════════════"
-            echo "  ✓  Phantom OS — all systems green"
-            echo "═══════════════════════════════════════════════════════════"
-            printf '\033[0m'
+            printf "${SUCCESS}═══════════════════════════════════════════════════════════\n  ✓  Phantom OS — all systems green\n═══════════════════════════════════════════════════════════${RESET}\n"
         else
-            printf '\033[33m'
-            echo "═══════════════════════════════════════════════════════════"
-            echo "  ⚠  Phantom OS — operational with warnings"
-            echo "═══════════════════════════════════════════════════════════"
-            printf '\033[0m'
+            printf "${WARNING}═══════════════════════════════════════════════════════════\n  ⚠  Phantom OS — operational with warnings\n═══════════════════════════════════════════════════════════${RESET}\n"
         fi
     else
-        printf '\033[31m'
-        echo "═══════════════════════════════════════════════════════════"
-        echo "  ✗  Phantom OS — failures detected"
-        echo "═══════════════════════════════════════════════════════════"
-        printf '\033[0m'
+        printf "${DANGER}═══════════════════════════════════════════════════════════\n  ✗  Phantom OS — failures detected\n═══════════════════════════════════════════════════════════${RESET}\n"
     fi
     echo
     # Print FAILs first, WARNs second, OKs alphabetical
@@ -279,11 +283,11 @@ elif [ "$QUIET" -eq 0 ]; then
         for k in $(echo "${!RESULT_STATUS[@]}" | tr ' ' '\n' | sort); do
             if [ "${RESULT_STATUS[$k]}" = "$status" ]; then
                 case "$status" in
-                    FAIL) marker="✗"; color='\033[31m' ;;
-                    WARN) marker="⚠"; color='\033[33m' ;;
-                    OK)   marker="✓"; color='\033[32m' ;;
+                    FAIL) marker="✗"; color="$DANGER" ;;
+                    WARN) marker="⚠"; color="$WARNING" ;;
+                    OK)   marker="✓"; color="$SUCCESS" ;;
                 esac
-                printf "  ${color}%s\033[0m  %-40s %s\n" "$marker" "$k" "${RESULT_DETAIL[$k]}"
+                printf "  ${color}%s${RESET}  %-40s %s\n" "$marker" "$k" "${RESULT_DETAIL[$k]}"
             fi
         done
     done

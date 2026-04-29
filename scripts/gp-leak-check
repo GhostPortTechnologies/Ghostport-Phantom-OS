@@ -44,6 +44,42 @@ CURRENT_MODE_FILE = Path("/etc/phantom/current-mode")
 GHOST_ENDPOINTS_FILE = Path("/etc/phantom/ghost-endpoints.json")
 
 
+def _load_theme_colors() -> dict:
+    """Return semantic ANSI strings, derived from /etc/ghostport/theme.json
+    via /usr/local/lib/gp-theme-colors.sh. Falls back to literal ANSI if the
+    lib isn't available (e.g. dev install pre-deploy). T-0009."""
+    fallback = {
+        "SUCCESS": "\033[32m",
+        "WARNING": "\033[33m",
+        "DANGER": "\033[31m",
+        "RESET": "\033[0m",
+    }
+    # Variables interpolated INSIDE the printf format string (not as %s args)
+    # because the lib's RESET is stored as literal "\033[0m" rather than
+    # $'\E[0m' — printf escape-processes the format but not %s arguments.
+    # Matches the gp-golden-strip convention.
+    try:
+        out = subprocess.run(
+            [
+                "bash", "-c",
+                "source /usr/local/lib/gp-theme-colors.sh && "
+                'printf "${SUCCESS}\\x00${WARNING}\\x00${DANGER}\\x00${RESET}"',
+            ],
+            capture_output=True, text=True, timeout=2,
+        )
+        if out.returncode == 0:
+            parts = out.stdout.split("\x00")
+            if len(parts) == 4 and all(parts):
+                return {"SUCCESS": parts[0], "WARNING": parts[1],
+                        "DANGER": parts[2], "RESET": parts[3]}
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return fallback
+
+
+_THEME = _load_theme_colors()
+
+
 def run(cmd: list[str], timeout: int = 10) -> tuple[int, str, str]:
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -238,17 +274,21 @@ def render_human(results: dict) -> None:
     warn_n = statuses.count("WARN")
     pass_n = statuses.count("OK")
     if fail_n > 0:
-        banner_color, banner_glyph, banner_text = "\033[31m", "✗", "leak / misconfig detected"
+        banner_color, banner_glyph, banner_text = _THEME["DANGER"], "✗", "leak / misconfig detected"
     elif warn_n > 0:
-        banner_color, banner_glyph, banner_text = "\033[33m", "⚠", "no leaks but warnings"
+        banner_color, banner_glyph, banner_text = _THEME["WARNING"], "⚠", "no leaks but warnings"
     else:
-        banner_color, banner_glyph, banner_text = "\033[32m", "✓", "no network-layer leaks"
+        banner_color, banner_glyph, banner_text = _THEME["SUCCESS"], "✓", "no network-layer leaks"
     print(f"{banner_color}═══════════════════════════════════════════════════════════")
     print(f"  {banner_glyph}  Mode={mode.upper()} — {banner_text}")
-    print(f"═══════════════════════════════════════════════════════════\033[0m\n")
+    print(f"═══════════════════════════════════════════════════════════{_THEME['RESET']}\n")
     for name, c in results["checks"].items():
-        marker = {"OK": ("✓", "\033[32m"), "WARN": ("⚠", "\033[33m"), "FAIL": ("✗", "\033[31m")}[c["status"]]
-        print(f"  {marker[1]}{marker[0]}\033[0m  {name:<18}  {c['detail']}")
+        marker = {
+            "OK":   ("✓", _THEME["SUCCESS"]),
+            "WARN": ("⚠", _THEME["WARNING"]),
+            "FAIL": ("✗", _THEME["DANGER"]),
+        }[c["status"]]
+        print(f"  {marker[1]}{marker[0]}{_THEME['RESET']}  {name:<18}  {c['detail']}")
     print(f"\n  pass: {pass_n}  warn: {warn_n}  fail: {fail_n}")
     print()
     print("  ── browser-layer leaks NOT covered by this tool ──")
