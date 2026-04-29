@@ -226,6 +226,14 @@ with open(os.environ['GP_OUT'], 'w') as f:
         # Reload + enable timers under the ghostport-admin user instance.
         # XDG_RUNTIME_DIR/uid hardcoded for the single-user privacy router.
         if id ghostport-admin >/dev/null 2>&1; then
+          # T-0015: enable lingering so the user systemd manager runs
+          # continuously, including on headless customer Pis with no
+          # GUI/SSH session at boot. Without this, T-0007's user-unit
+          # install does nothing on any device the customer doesn't log
+          # into — same passive-scanning-silently-dead failure mode.
+          # Idempotent (no-op if already enabled). Must come before
+          # daemon-reload so the user manager is alive to receive it.
+          loginctl enable-linger ghostport-admin 2>/dev/null || true
           sudo -u ghostport-admin XDG_RUNTIME_DIR=/run/user/1000 \
             systemctl --user daemon-reload 2>/dev/null || true
           for utimer in "$EXTRACT_DIR"/systemd/user/*.timer; do
