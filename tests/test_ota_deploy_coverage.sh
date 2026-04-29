@@ -52,6 +52,8 @@ check_pair() {
 
 check_pair "scripts deploy"          'scripts/gp-\*'          '/usr/local/bin/'
 check_pair "systemd units deploy"    'systemd/\*\.service'    '/etc/systemd/system'
+check_pair "systemd user units deploy" 'systemd/user'         '/etc/systemd/user'
+check       "user timers enabled"     'systemctl --user enable --now'
 check_pair "nftables profiles"       'etc/gpmodes/\*\.nft'    '/etc/gpmodes'
 check_pair "sysctl drop-ins"         'etc/sysctl\.d'          '/etc/sysctl\.d'
 check_pair "sudoers drop-ins"        'etc/sudoers\.d/\*'      '/etc/sudoers\.d/'
