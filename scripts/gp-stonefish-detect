@@ -78,6 +78,13 @@ def main():
         "SPOOFING": "arp_spoof",
         "FAILED": "arp_failed",
     }
+    # FAILED = sleeping client; informational only. SPOOFING/GW CHANGED
+    # are the real attack signals.
+    severity_map = {
+        "GW CHANGED": gp_events.SEVERITY_DANGEROUS,
+        "SPOOFING": gp_events.SEVERITY_DANGEROUS,
+        "FAILED": gp_events.SEVERITY_INFO,
+    }
 
     for e in entries:
         threat = e.get("threat", "CLEAN")
@@ -93,7 +100,9 @@ def main():
 
         summary = f"Stonefish (bg): {threat} on {ip} (MAC {mac})"
         gp_events.emit(
-            "stonefish", cat, gp_events.SEVERITY_DANGEROUS, summary,
+            "stonefish", cat,
+            severity_map.get(threat, gp_events.SEVERITY_DANGEROUS),
+            summary,
             details={
                 "ip": ip,
                 "mac": mac,
