@@ -40,12 +40,19 @@ assert 'summary' in d
 assert 'checks' in d
 assert 'healthy' in d
 assert isinstance(d['summary'].get('pass'), int)
-assert d['summary']['pass'] >= 15, f'expected ≥15 passing checks, got {d[\"summary\"][\"pass\"]}'
+# T-0013: bumped from >=15 to >=25 to close the silent-regression hole.
+# gp-first-boot-check has ~28 distinct checks in current state; 25 leaves
+# margin for mode-gated checks (wireguard.* only fire in tunnel modes)
+# while still catching breakage of any meaningful subset.
+assert d['summary']['pass'] >= 25, f'expected >=25 passing checks, got {d[\"summary\"][\"pass\"]}'
+# T-0013: invariant — a healthy run must have zero FAILs. Cheap, high-signal.
+fail_count = d['summary'].get('fail', 0)
+assert fail_count == 0, f'expected fail=0, got {fail_count}: {[k for k,v in d[\"checks\"].items() if v.get(\"status\")==\"FAIL\"]}'
 " 2>/dev/null; then
-    echo "  PASS: --json output parses + has expected shape"
+    echo "  PASS: --json output parses + has expected shape (pass>=25, fail==0)"
     pass=$((pass + 1))
 else
-    echo "  FAIL: --json output malformed"
+    echo "  FAIL: --json output malformed or assertions broken"
     fail=$((fail + 1))
 fi
 
