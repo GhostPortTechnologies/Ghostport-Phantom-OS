@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""gp-tickets — AI trouble-ticket CLI.
+
+Light JSON store at /opt/ghostport/data/ai-tickets.json. AIs propose tickets;
+humans approve or reject. Every state change is mirrored to the Chamber
+'tickets' room so AIs can see status from the web UI as well as the CLI.
+
+Status lifecycle:
+    proposed -> approved -> in_progress -> done
+    proposed -> rejected
+"""
+
+import argparse
+import datetime as dt
+import fcntl
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from pathlib import Path
+
+STORE = Path("/opt/ghostport/data/ai-tickets.json")
+LOCK = Path("/opt/ghostport/data/.ai-tickets.lock")
+CHAMBER = "http://127.0.0.1:4242"
+TICKETS_ROOM = "tickets"
+SYSTEM_USER = "tickets-bot"
+
+VALID_TYPES = {"bug", "feature", "task", "incident"}
+VALID_PRIORITIES = {"low", "normal", "high", "critical"}
+
+
+def now_iso():
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+@contextmanager
+def locked_store():
+    """Open store with exclusive lock; create skeleton if missing."""
+    STORE.parent.mkdir(parents=True, exist_ok=True)
+    LOCK.touch(exist_ok=True)
+    with open(LOCK, "r+") as lockf:
+        fcntl.flock(lockf, fcntl.LOCK_EX)
+        try:
+            if STORE.exists():
+                with open(STORE) as f:
+                    data = json.load(f)
+            else:
+                data = {"next_id": 1, "tickets": []}
+            yield data
+            tmp = STORE.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp, STORE)
+        finally:
+            fcntl.flock(lockf, fcntl.LOCK_UN)
+
+
+def chamber_post(text):
+    """Mirror an event to the Chamber tickets room. Best-effort, never fails the CLI."""
+    # Login first so the user record exists. A 409 means the user is already
+    # active within Chamber's 60s window — that's fine, we can still post.
+    try:
+        login = json.dumps({"username": SYSTEM_USER, "role": "ai"}).encode()
+        req = urllib.request.Request(
+            f"{CHAMBER}/api/login",
+            data=login,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except urllib.error.HTTPError as e:
+        if e.code != 409:
+            return  # Real auth failure — skip
+    except (urllib.error.URLError, OSError):
+        return  # Chamber down — silent skip
+    try:
+        msg = json.dumps({"username": SYSTEM_USER, "text": text, "room": TICKETS_ROOM}).encode()
+        req = urllib.request.Request(
+            f"{CHAMBER}/api/messages",
+            data=msg,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
+        pass
+
+
+def chamber_role(handle):
+    """Look up a Chamber user's role. Returns 'human', 'ai', or None."""
+    try:
+        with urllib.request.urlopen(f"{CHAMBER}/api/users", timeout=3) as r:
+            users = json.loads(r.read()).get("users", {})
+            return users.get(handle, {}).get("role")
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+        return None
+
+
+def find_ticket(data, ticket_id):
+    for t in data["tickets"]:
+        if t["id"] == ticket_id:
+            return t
+    return None
+
+
+def fmt_id(n):
+    return f"T-{n:04d}"
+
+
+def cmd_propose(args):
+    if args.type not in VALID_TYPES:
+        sys.exit(f"--type must be one of {sorted(VALID_TYPES)}")
+    if args.priority not in VALID_PRIORITIES:
+        sys.exit(f"--priority must be one of {sorted(VALID_PRIORITIES)}")
+    with locked_store() as data:
+        tid = fmt_id(data["next_id"])
+        data["next_id"] += 1
+        ticket = {
+            "id": tid,
+            "title": args.title,
+            "body": args.body or "",
+            "type": args.type,
+            "priority": args.priority,
+            "status": "proposed",
+            "proposed_by": args.by,
+            "proposed_at": now_iso(),
+            "approved_by": None,
+            "approved_at": None,
+            "rejected_by": None,
+            "rejected_at": None,
+            "reject_reason": None,
+            "assignee": None,
+            "claimed_at": None,
+            "closed_at": None,
+            "updates": [],
+        }
+        data["tickets"].append(ticket)
+    chamber_post(f"[{tid}] PROPOSED by {args.by}: {args.title} ({args.priority} {args.type})")
+    print(f"{tid} proposed.")
+
+
+def cmd_list(args):
+    with locked_store() as data:
+        tickets = list(data["tickets"])
+    if args.status:
+        tickets = [t for t in tickets if t["status"] == args.status]
+    if args.mine:
+        tickets = [t for t in tickets if args.mine in (t["proposed_by"], t["assignee"])]
+    if not tickets:
+        print("(no tickets)")
+        return
+    print(f"{'ID':<8} {'STATUS':<12} {'PRI':<8} {'TYPE':<8} {'BY':<14} TITLE")
+    for t in tickets:
+        print(f"{t['id']:<8} {t['status']:<12} {t['priority']:<8} {t['type']:<8} {t['proposed_by']:<14} {t['title'][:50]}")
+
+
+def cmd_show(args):
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+    if not t:
+        sys.exit(f"no such ticket: {args.id}")
+    print(json.dumps(t, indent=2))
+
+
+def _require_human(handle):
+    role = chamber_role(handle)
+    if role != "human":
+        sys.exit(f"approve/reject requires a human Chamber user. {handle!r} role={role!r}")
+
+
+def cmd_approve(args):
+    _require_human(args.by)
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+        if not t:
+            sys.exit(f"no such ticket: {args.id}")
+        if t["status"] != "proposed":
+            sys.exit(f"can only approve proposed tickets (current: {t['status']})")
+        t["status"] = "approved"
+        t["approved_by"] = args.by
+        t["approved_at"] = now_iso()
+    chamber_post(f"[{args.id}] APPROVED by {args.by}: {t['title']}")
+    print(f"{args.id} approved.")
+
+
+def cmd_reject(args):
+    _require_human(args.by)
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+        if not t:
+            sys.exit(f"no such ticket: {args.id}")
+        if t["status"] != "proposed":
+            sys.exit(f"can only reject proposed tickets (current: {t['status']})")
+        t["status"] = "rejected"
+        t["rejected_by"] = args.by
+        t["rejected_at"] = now_iso()
+        t["reject_reason"] = args.reason
+    chamber_post(f"[{args.id}] REJECTED by {args.by}: {args.reason}")
+    print(f"{args.id} rejected.")
+
+
+def cmd_claim(args):
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+        if not t:
+            sys.exit(f"no such ticket: {args.id}")
+        if t["status"] != "approved":
+            sys.exit(f"can only claim approved tickets (current: {t['status']})")
+        t["status"] = "in_progress"
+        t["assignee"] = args.by
+        t["claimed_at"] = now_iso()
+    chamber_post(f"[{args.id}] CLAIMED by {args.by}: {t['title']}")
+    print(f"{args.id} claimed.")
+
+
+def cmd_update(args):
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+        if not t:
+            sys.exit(f"no such ticket: {args.id}")
+        if t["status"] not in {"approved", "in_progress"}:
+            sys.exit(f"can only update approved/in_progress tickets (current: {t['status']})")
+        t["updates"].append({"by": args.by, "at": now_iso(), "note": args.note})
+    chamber_post(f"[{args.id}] UPDATE by {args.by}: {args.note}")
+    print(f"{args.id} updated.")
+
+
+def cmd_close(args):
+    with locked_store() as data:
+        t = find_ticket(data, args.id)
+        if not t:
+            sys.exit(f"no such ticket: {args.id}")
+        if t["status"] not in {"in_progress", "approved"}:
+            sys.exit(f"can only close in_progress/approved tickets (current: {t['status']})")
+        t["status"] = "done"
+        t["closed_at"] = now_iso()
+    chamber_post(f"[{args.id}] DONE by {args.by}: {t['title']}")
+    print(f"{args.id} closed.")
+
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="gp-tickets", description="AI trouble-ticket CLI")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    pr = sub.add_parser("propose", help="File a new ticket (status=proposed, awaiting human approval)")
+    pr.add_argument("--by", required=True, help="Your Chamber handle")
+    pr.add_argument("--title", required=True)
+    pr.add_argument("--body", default="")
+    pr.add_argument("--type", default="task", help=f"one of {sorted(VALID_TYPES)}")
+    pr.add_argument("--priority", default="normal", help=f"one of {sorted(VALID_PRIORITIES)}")
+    pr.set_defaults(func=cmd_propose)
+
+    ls = sub.add_parser("list", help="List tickets")
+    ls.add_argument("--status", help="filter by status")
+    ls.add_argument("--mine", help="show tickets where I'm proposer or assignee")
+    ls.set_defaults(func=cmd_list)
+
+    sh = sub.add_parser("show", help="Show ticket detail (JSON)")
+    sh.add_argument("id")
+    sh.set_defaults(func=cmd_show)
+
+    ap = sub.add_parser("approve", help="Human-only: approve a proposed ticket")
+    ap.add_argument("id")
+    ap.add_argument("--by", required=True, help="Your Chamber handle (must have role=human)")
+    ap.set_defaults(func=cmd_approve)
+
+    rj = sub.add_parser("reject", help="Human-only: reject a proposed ticket")
+    rj.add_argument("id")
+    rj.add_argument("--by", required=True, help="Your Chamber handle (must have role=human)")
+    rj.add_argument("--reason", required=True)
+    rj.set_defaults(func=cmd_reject)
+
+    cl = sub.add_parser("claim", help="AI: take an approved ticket into in_progress")
+    cl.add_argument("id")
+    cl.add_argument("--by", required=True)
+    cl.set_defaults(func=cmd_claim)
+
+    up = sub.add_parser("update", help="Add a progress note to an in-flight ticket")
+    up.add_argument("id")
+    up.add_argument("--by", required=True)
+    up.add_argument("--note", required=True)
+    up.set_defaults(func=cmd_update)
+
+    cs = sub.add_parser("close", help="Mark a ticket done")
+    cs.add_argument("id")
+    cs.add_argument("--by", required=True)
+    cs.set_defaults(func=cmd_close)
+
+    return p
+
+
+def main():
+    args = build_parser().parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

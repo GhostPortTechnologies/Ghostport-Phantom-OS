@@ -46,6 +46,7 @@ wpa_supplicant*
 # Runtime data / caches
 chamber/
 backups/
+data/
 tmp/
 .vscode/
 .idea/

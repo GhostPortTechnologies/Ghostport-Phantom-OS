@@ -88,48 +88,48 @@ CHOICE=$(echo "$MENU" | fuzzel --dmenu \
 
 case "$CHOICE" in
   # PROTECT
-  *"Arsenal (Security Panel)")  foot -e ~/.local/bin/gp-arsenal ;;
+  *"Arsenal (Security Panel)")  xfce4-terminal -x~/.local/bin/gp-arsenal ;;
   *"Switch Privacy Mode")    ~/.local/bin/gp-mode-menu ;;
-  *"Firewall Builder")       foot -e ~/.local/bin/gp-firewall ;;
-  *"Kill Switch"*)           foot -e bash -c "echo 'Current nftables ruleset:'; echo; sudo nft list ruleset | head -60; echo; echo '---'; bash" ;;
-  *"Encrypted DNS"*)         foot -e bash -c "sudo gp-dns-switch status; echo; read -p 'Toggle? (y/n) ' yn; [[ \$yn == y ]] && sudo gp-dns-switch toggle; echo; sudo gp-dns-switch status; sleep 2" ;;
-  *"VPN Tunnel Status")      foot -e bash -c "sudo gp-mode status; echo; echo '--- Tunnel Interfaces ---'; ip -br addr show wg0 2>/dev/null; ip -br addr show wg1 2>/dev/null; ip -br addr show tailscale0 2>/dev/null; echo; bash" ;;
+  *"Firewall Builder")       xfce4-terminal -x~/.local/bin/gp-firewall ;;
+  *"Kill Switch"*)           xfce4-terminal -xbash -c "echo 'Current nftables ruleset:'; echo; sudo nft list ruleset | head -60; echo; echo '---'; bash" ;;
+  *"Encrypted DNS"*)         xfce4-terminal -xbash -c "sudo gp-dns-switch status; echo; read -p 'Toggle? (y/n) ' yn; [[ \$yn == y ]] && sudo gp-dns-switch toggle; echo; sudo gp-dns-switch status; sleep 2" ;;
+  *"VPN Tunnel Status")      xfce4-terminal -xbash -c "sudo gp-mode status; echo; echo '--- Tunnel Interfaces ---'; ip -br addr show wg0 2>/dev/null; ip -br addr show wg1 2>/dev/null; ip -br addr show tailscale0 2>/dev/null; echo; bash" ;;
 
   # MONITOR
   *"Privacy Dashboard")      chromium --app=http://localhost:4200 ;;
-  *"Connected Clients")      foot -e ~/.local/bin/gp-clients ;;
-  *"Activity Log")           foot -e ~/.local/bin/gp-activity ;;
+  *"Connected Clients")      xfce4-terminal -x~/.local/bin/gp-clients ;;
+  *"Activity Log")           xfce4-terminal -x~/.local/bin/gp-activity ;;
   *"Blocked Domains")        chromium --app=http://localhost/admin/queries ;;
-  *"Threat Report")          foot -e ~/.local/bin/gp-privacy-report ;;
-  *"Security Scan")          foot -e ~/.local/bin/gp-security-scan ;;
-  *"Rogue AP Scanner")       foot -e ~/.local/bin/gp-rogue-scan ;;
-  *"Speed Test")             foot -e ~/.local/bin/gp-speedtest ;;
-  *"DNS Leak Test")          foot -e ~/.local/bin/gp-dns-leak ;;
-  *"Privacy Paycheck")       foot -e bash -c "~/.local/bin/gp-paycheck; echo; read -p 'Press Enter to close...'" ;;
-  *"ISP Throttle Detector")  foot -e bash -c "~/.local/bin/gp-throttle-detect; echo; read -p 'Press Enter to close...'" ;;
-  *"Diagnostics & Repair")   foot -e ~/.local/bin/gp-diagnostics ;;
-  *"Preflight Check")        foot -e bash -c "sudo gp-preflight; echo; read -p 'Press Enter to close...'" ;;
-  *"Flow Inspector"*)        foot -e ~/.local/bin/gp-bilge ;;
-  *"Behavioral Baseline"*)   foot -e ~/.local/bin/gp-lookout ;;
+  *"Threat Report")          xfce4-terminal -x~/.local/bin/gp-privacy-report ;;
+  *"Security Scan")          xfce4-terminal -x~/.local/bin/gp-security-scan ;;
+  *"Rogue AP Scanner")       xfce4-terminal -x~/.local/bin/gp-rogue-scan ;;
+  *"Speed Test")             xfce4-terminal -x~/.local/bin/gp-speedtest ;;
+  *"DNS Leak Test")          xfce4-terminal -x~/.local/bin/gp-dns-leak ;;
+  *"Privacy Paycheck")       xfce4-terminal -xbash -c "~/.local/bin/gp-paycheck; echo; read -p 'Press Enter to close...'" ;;
+  *"ISP Throttle Detector")  xfce4-terminal -xbash -c "~/.local/bin/gp-throttle-detect; echo; read -p 'Press Enter to close...'" ;;
+  *"Diagnostics & Repair")   xfce4-terminal -x~/.local/bin/gp-diagnostics ;;
+  *"Preflight Check")        xfce4-terminal -xbash -c "sudo gp-preflight; echo; read -p 'Press Enter to close...'" ;;
+  *"Flow Inspector"*)        xfce4-terminal -x~/.local/bin/gp-bilge ;;
+  *"Behavioral Baseline"*)   xfce4-terminal -x~/.local/bin/gp-lookout ;;
 
   # CONFIGURE
-  *"WiFi WAN"*)              foot -e bash -c "sudo gp-wan status; echo '---'; echo 'Commands: gp-wan scan, gp-wan connect SSID pass'; bash" ;;
+  *"WiFi WAN"*)              xfce4-terminal -xbash -c "sudo gp-wan status; echo '---'; echo 'Commands: gp-wan scan, gp-wan connect SSID pass'; bash" ;;
   *"Pi-hole Admin")          chromium --app=http://localhost/admin ;;
   *"Family Shield")          chromium --app=http://localhost:4200/#family ;;
-  *"Bedtime Torpedo")        foot -e bash -c "~/.local/bin/gp-bedtime; echo; read -p 'Press Enter to close...'" ;;
+  *"Bedtime Torpedo")        xfce4-terminal -xbash -c "~/.local/bin/gp-bedtime; echo; read -p 'Press Enter to close...'" ;;
   *"Appearance"*)            bash -c "CURSOR=\$(echo -e 'Pirate Cursors\nDefault Cursors' | fuzzel --dmenu -w 20 -l 2 --background=${_BG_FUZZEL} --text-color=${_TEXT_FUZZEL} --selection-color=${_SEL_TEXT_FUZZEL} --selection-text-color=${_BG_HEX:-0a0f0a}ff --border-color=${_BORDER_FUZZEL} --border-width=2); case \"\$CURSOR\" in *Pirate*) ~/.local/bin/gp-cursor pirate && notify-send 'Phantom OS' 'Pirate cursors ON' ;; *Default*) ~/.local/bin/gp-cursor default && notify-send 'Phantom OS' 'Default cursors restored' ;; esac" ;;
 
   # SYSTEM
-  *"Terminal")               foot ;;
+  *"Terminal")               xfce4-terminal ;;
   *"Files")                  thunar ;;
   *"Browser")                chromium ;;
   *"Code Editor")            geany ;;
-  *"System Monitor")         foot -e htop ;;
+  *"System Monitor")         xfce4-terminal -xhtop ;;
   *"Keyboard Shortcuts")     python3 /opt/phantom/desktop/ghostport-shortcuts.py ;;
   *"Screenshot")             bash -c "mkdir -p ~/Screenshots; grim -g \"\$(slurp)\" ~/Screenshots/\$(date +%Y%m%d_%H%M%S).png" ;;
 
   # POWER
   *"Lock Screen")            swaylock ;;
-  *"Reboot")                 foot -e bash -c "echo 'Rebooting in 3 seconds...'; sleep 3; sudo reboot" ;;
-  *"Shutdown")               foot -e bash -c "echo 'Shutting down in 3 seconds...'; sleep 3; sudo poweroff" ;;
+  *"Reboot")                 xfce4-terminal -xbash -c "echo 'Rebooting in 3 seconds...'; sleep 3; sudo reboot" ;;
+  *"Shutdown")               xfce4-terminal -xbash -c "echo 'Shutting down in 3 seconds...'; sleep 3; sudo poweroff" ;;
 esac

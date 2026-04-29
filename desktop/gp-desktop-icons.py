@@ -72,6 +72,7 @@ DESKTOP_APPS = [
     ("Brave",          "gp-brave.png",       "brave-browser",                                      "Web Browser"),
     ("Widget Library", "gp-widget-library.svg", "python3 /opt/phantom/desktop/gp-widget-library.py", "Desktop Widgets"),
     ("Treasure Chest", "gp-treasurebox.svg", "python3 /opt/phantom/desktop/gp-treasurechest.py", "Stowed Apps"),
+    ("Chamber",        "gp-chamber.svg",     "brave-browser --app=http://127.0.0.1:4242",          "AI Coordination"),
 ]
 
 UNSTOWABLE = {"Treasure Chest"}
@@ -620,7 +621,7 @@ class DesktopCanvas:
         # Privacy Tools / Monitoring / Terminal Tools split added 2026-04-20
         # when the old fuzzel-based gp-menu was replaced — TUIs moved into a
         # clearly-labeled Terminal Tools bucket to end the GTK-vs-TUI duplication.
-        FOOT = "foot -e "
+        FOOT = "xfce4-terminal -x "
         HOME = os.path.expanduser("~")
         DESK = "/opt/phantom/desktop"
         tree = [
@@ -653,28 +654,28 @@ class DesktopCanvas:
                 ("Privacy Digest",     FOOT + f"{HOME}/.local/bin/gp-digest --full"),
             ]),
             ("Network", [
-                ("WiFi WAN Settings",   ["bash", "-c", "foot -e bash -c \"sudo gp-wan status; echo; echo 'Commands: gp-wan scan | gp-wan connect SSID pass'; bash\""]),
+                ("WiFi WAN Settings",   ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-wan status; echo; echo 'Commands: gp-wan scan | gp-wan connect SSID pass'; bash\""]),
                 ("Pi-hole Admin",       ["brave-browser", "--app=http://localhost/admin"]),
-                ("Mode Status",         ["bash", "-c", "foot -e bash -c \"sudo gp-mode status; bash\""]),
+                ("Mode Status",         ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-mode status; bash\""]),
             ]),
             ("System", [
                 ("About This System",   FOOT + f"{HOME}/.local/bin/gp-about"),
                 ("System Update",       FOOT + f"{HOME}/.local/bin/gp-updater"),
                 ("Help & Shortcuts",    FOOT + f"{HOME}/.local/bin/gp-help"),
-                ("Preflight Check",     ["bash", "-c", "foot -e bash -c \"sudo gp-preflight; echo; read -p 'Press Enter to close...'\""]),
+                ("Preflight Check",     ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-preflight; echo; read -p 'Press Enter to close...'\""]),
                 ("System Monitor",      FOOT + "htop"),
-                ("Server Logs",         ["bash", "-c", "foot -e bash -c \"sudo journalctl -u ghostport -f\""]),
+                ("Server Logs",         ["bash", "-c", "xfce4-terminal -x bash -c\"sudo journalctl -u ghostport -f\""]),
             ]),
             ("Desktop", [
                 ("Widget Library",      [f"{HOME}/.local/bin/gp-widgets", "library"]),
-                ("Theme Picker",        ["bash", "-c", f"foot -e {HOME}/.local/bin/gp-theme menu"]),
+                ("Theme Picker",        ["bash", "-c", f"xfce4-terminal -x {HOME}/.local/bin/gp-theme menu"]),
                 ("Pirate Cursors",      ["bash", "-c", f"{HOME}/.local/bin/gp-cursor pirate && notify-send 'Phantom OS' 'Pirate cursors ON' && labwc --reconfigure"]),
                 ("Default Cursors",     ["bash", "-c", f"{HOME}/.local/bin/gp-cursor default && notify-send 'Phantom OS' 'Default cursors restored' && labwc --reconfigure"]),
                 ("Chamber Chat",        ["brave-browser", "--app=http://127.0.0.1:4242"]),
                 ("Start Menu",          [f"{HOME}/.local/bin/gp-menu"]),
             ]),
             ("---",            None),
-            ("Terminal",       ["foot"]),
+            ("Terminal",       ["xfce4-terminal"]),
             ("Files",          ["thunar"]),
             ("Browser",        ["brave-browser"]),
             ("Code Editor",    ["geany"]),
@@ -682,13 +683,13 @@ class DesktopCanvas:
             ("---",            None),
             ("Development", [
                 ("Open Server Code",    ["geany", "/opt/phantom/ghostport-server.js"]),
-                ("Git Log",             ["bash", "-c", "foot -e bash -c \"cd /opt/phantom && git log --oneline -20; bash\""]),
-                ("Restart Server",      ["bash", "-c", "foot -e bash -c \"sudo systemctl restart ghostport; echo Server restarted; sleep 2\""]),
+                ("Git Log",             ["bash", "-c", "xfce4-terminal -x bash -c\"cd /opt/phantom && git log --oneline -20; bash\""]),
+                ("Restart Server",      ["bash", "-c", "xfce4-terminal -x bash -c\"sudo systemctl restart ghostport; echo Server restarted; sleep 2\""]),
             ]),
             ("Power", [
                 ("Lock Screen",         ["swaylock"]),
-                ("Reboot",              ["bash", "-c", "foot -e bash -c \"echo 'Rebooting in 3 seconds...'; sleep 3; sudo reboot\""]),
-                ("Shutdown",            ["bash", "-c", "foot -e bash -c \"echo 'Shutting down in 3 seconds...'; sleep 3; sudo poweroff\""]),
+                ("Reboot",              ["bash", "-c", "xfce4-terminal -x bash -c\"echo 'Rebooting in 3 seconds...'; sleep 3; sudo reboot\""]),
+                ("Shutdown",            ["bash", "-c", "xfce4-terminal -x bash -c\"echo 'Shutting down in 3 seconds...'; sleep 3; sudo poweroff\""]),
             ]),
         ]
         return self._build_menu_from_tree(tree)
