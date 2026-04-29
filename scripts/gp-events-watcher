@@ -11,6 +11,7 @@ Run via systemd or labwc autostart. Idle CPU footprint is near-zero
 
 import sys
 import os
+import json
 import time
 import subprocess
 
@@ -22,8 +23,20 @@ POLL_INTERVAL = 15  # seconds — fast enough to catch correlations promptly,
 PRUNE_INTERVAL = 3600  # seconds — drop old events once an hour
 DEDUP_TTL = 600  # seconds — same finding won't re-notify within 10 minutes
 
+# Persistent dedup so watcher restart inside DEDUP_TTL doesn't re-fire an
+# already-notified correlation. Mirrors the convention used by the detect
+# helpers (gp-{sonar,stonefish,crowsnest}-detect-emitted.json).
+EVENT_DIR = os.path.expanduser("~/.local/share/phantom")
+DEDUP_FILE = os.path.join(EVENT_DIR, "correlation-emitted.json")
+
+# Wardriving-pattern instrumentation. The detector (count=3 distinct evil_twin
+# / attack_toolkit BSSIDs in 600s) ships without a field FP-rate baseline.
+# Log every detection (pre-dedup) so customer-1 first week gives us calibration
+# data. List capped at last N entries to keep the file bounded.
+WARDRIVING_LOG_FILE = os.path.join(EVENT_DIR, "wardriving-fires.json")
+WARDRIVING_LOG_CAP = 1000
+
 _last_prune = 0
-_recent_findings = {}  # pattern_id -> last_emit_ts
 
 
 def fire_notification(finding):
@@ -51,17 +64,70 @@ def fire_notification(finding):
         sys.stderr.write(f"[gp-events-watcher] notify-send failed for {finding['pattern_id']}\n")
 
 
-def should_emit(pattern_id):
-    """Dedup: skip if we've fired this pattern within DEDUP_TTL."""
+def load_dedup():
+    """Load persistent dedup state. Empty dict on missing/corrupt file."""
+    try:
+        with open(DEDUP_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_dedup(state):
+    """Persist dedup state. Failures logged, never crash the watcher."""
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        with open(DEDUP_FILE, "w") as f:
+            json.dump(state, f)
+    except Exception as e:
+        sys.stderr.write(f"[gp-events-watcher] dedup save failed: {e}\n")
+
+
+def log_wardriving_detection(finding):
+    """Append a wardriving detection to the calibration log.
+
+    Logged pre-dedup so the file captures actual detection frequency, not
+    just notification frequency — that's what we need to set the
+    requires_count/window threshold once we have field data.
+    """
+    entry = {
+        "timestamp": time.time(),
+        "evidence_count": finding.get("evidence_count", 0),
+        "evidence_summary": finding.get("evidence_summary", []),
+        "first_evidence_ts": finding.get("first_evidence_ts"),
+    }
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        try:
+            with open(WARDRIVING_LOG_FILE) as f:
+                log = json.load(f)
+            if not isinstance(log, list):
+                log = []
+        except (FileNotFoundError, json.JSONDecodeError):
+            log = []
+        log.append(entry)
+        if len(log) > WARDRIVING_LOG_CAP:
+            log = log[-WARDRIVING_LOG_CAP:]
+        with open(WARDRIVING_LOG_FILE, "w") as f:
+            json.dump(log, f)
+    except Exception as e:
+        sys.stderr.write(f"[gp-events-watcher] wardriving log failed: {e}\n")
+
+
+def should_emit(state, pattern_id):
+    """Dedup: skip if we've fired this pattern within DEDUP_TTL.
+
+    Mutates state in place. Caller is responsible for persisting.
+    """
     now = time.time()
-    last = _recent_findings.get(pattern_id, 0)
+    last = state.get(pattern_id, 0)
     if now - last < DEDUP_TTL:
         return False
-    _recent_findings[pattern_id] = now
+    state[pattern_id] = now
     # Garbage-collect old entries
     cutoff = now - DEDUP_TTL * 2
-    for k in [k for k, v in _recent_findings.items() if v < cutoff]:
-        del _recent_findings[k]
+    for k in [k for k, v in state.items() if v < cutoff]:
+        del state[k]
     return True
 
 
@@ -72,16 +138,26 @@ def main():
     # Honor --once flag for testing
     once = "--once" in sys.argv
 
+    state = load_dedup()
+    sys.stderr.write(f"[gp-events-watcher] loaded {len(state)} dedup entries from {DEDUP_FILE}\n")
+
     while True:
         try:
             findings = gp_events.detect_correlations()
+            fired_this_poll = False
             for f in findings:
-                if should_emit(f["pattern_id"]):
+                # Pre-dedup wardriving instrumentation for FP-rate calibration.
+                if f["pattern_id"] == "wardriving_pattern":
+                    log_wardriving_detection(f)
+                if should_emit(state, f["pattern_id"]):
                     sys.stderr.write(
                         f"[gp-events-watcher] firing: {f['pattern_id']} "
                         f"({f['evidence_count']} pieces)\n"
                     )
                     fire_notification(f)
+                    fired_this_poll = True
+            if fired_this_poll:
+                save_dedup(state)
 
             now = time.time()
             if now - _last_prune > PRUNE_INTERVAL:
