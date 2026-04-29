@@ -226,6 +226,17 @@ cmd_validate() {
     check_present "brave master_preferences shipped" \
                   test -f "$T/opt/brave.com/brave/master_preferences"
 
+    # T-0011: existence isn't enough — audit content for dev-only flags
+    # that would defeat the privacy-by-default claim. Looks for any of:
+    #   - verbose_logging set to true
+    #   - distribution.import_* set to true (bookmarks / history / search engine)
+    #   - any localhost URL reference (dev-only artifact)
+    # Doesn't match the same keys set to false — those are intentionally
+    # privacy-preserving. JSON config has no comments so a plain grep is safe.
+    BRAVE_PREFS="$T/opt/brave.com/brave/master_preferences"
+    check "brave master_preferences clean (no dev-only flags)" \
+          bash -c "grep -qE '\"verbose_logging\"[[:space:]]*:[[:space:]]*true|\"import_(bookmarks|history|search_engine)\"[[:space:]]*:[[:space:]]*true|localhost' '$BRAVE_PREFS'"
+
     echo
     if (( fails == 0 )); then
         ok "All checks passed. Image appears strip-clean."
