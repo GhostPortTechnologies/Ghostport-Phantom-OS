@@ -514,6 +514,15 @@ class BulkheadApp(GhostPortApp):
         dns_filter_box.pack_start(self.dns_filter, True, True, 0)
         dns_page.pack_start(dns_filter_box, False, False, 0)
 
+        # T-0014: row count / cap status. Anti-fingerprint blocklists can
+        # grow to 10k+ entries (Path A work in 2acb381 + 66564bd). GTK3
+        # TreeView lags hard above ~1k rows on Pi 5. Cap visible rows at
+        # 500; backing list (dns_store_all) stays full so the filter can
+        # still hit any rule.
+        self.dns_status_label = self.make_label("", "gp-dim")
+        self.dns_status_label.set_halign(Gtk.Align.START)
+        dns_page.pack_start(self.dns_status_label, False, False, 0)
+
         # DNS rule TreeView — columns: blocked(toggle), domain, target, file
         self.dns_store_all = []  # in-memory full rule set; filter pulls from here
         self.dns_store = Gtk.ListStore(bool, str, str, str)  # blocked, domain, target, file
@@ -593,15 +602,39 @@ class BulkheadApp(GhostPortApp):
         self._apply_dns_filter()
         return False  # idle_add should not repeat
 
+    # T-0014: Hard cap on visible rows. 500 is well above any realistic
+    # interactive scroll; for blocklists in the 10k+ range (anti-fingerprint
+    # imports), the user must filter to find specific entries. Backing
+    # dns_store_all keeps the full set so toggle/reload work end-to-end.
+    DNS_VISIBLE_ROW_CAP = 500
+
     def _apply_dns_filter(self):
         """Re-render dns_store from dns_store_all applying the current filter text."""
         needle = (self.dns_filter.get_text() if hasattr(self, "dns_filter") else "").lower().strip()
         self.dns_store.clear()
+        matched = 0
+        shown = 0
         for rule in self.dns_store_all:
             if needle and needle not in rule["domain"].lower():
                 continue
+            matched += 1
+            if shown >= self.DNS_VISIBLE_ROW_CAP:
+                continue
             fname = rule["file"].rsplit("/", 1)[-1]
             self.dns_store.append([rule["blocked"], rule["domain"], rule["target"], fname])
+            shown += 1
+        if hasattr(self, "dns_status_label"):
+            total = len(self.dns_store_all)
+            if matched <= self.DNS_VISIBLE_ROW_CAP:
+                self.dns_status_label.set_text(
+                    f"{matched} rule{'' if matched == 1 else 's'}"
+                    + (f" (of {total} total)" if needle and matched < total else "")
+                )
+            else:
+                self.dns_status_label.set_text(
+                    f"Showing {self.DNS_VISIBLE_ROW_CAP} of {matched} matching"
+                    f"{f' (of {total} total)' if needle else ''} — type to filter"
+                )
 
     def _on_dns_filter_changed(self, _entry):
         self._apply_dns_filter()
