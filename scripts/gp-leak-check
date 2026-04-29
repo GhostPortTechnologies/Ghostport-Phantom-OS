@@ -180,7 +180,22 @@ def check_outbound_ip(mode: str) -> tuple[str, str]:
     if mode in ("doublehop", "zhop"):
         expected = get_expected_relay_ips()
         if not expected:
-            return "WARN", f"outbound IP = {public_ip} (could not determine expected relay IPs — ghost-endpoints.json absent and wg1 has no peer)"
+            # T-0010: tunnel mode with no expected IPs is decisive, not soft.
+            # If wg1 is UP we genuinely cannot verify the tunnel — that's a
+            # leak risk and the customer needs to see FAIL, not WARN. If wg1
+            # is down, the upstream tunnel-up check already FAILs, so we drop
+            # to WARN to avoid double-FAILing on the same root cause.
+            wg1_rc, _, _ = run(["wg", "show", "wg1"])
+            if wg1_rc == 0:
+                return "FAIL", (
+                    f"outbound IP = {public_ip} (cannot verify: "
+                    "ghost-endpoints.json missing AND wg1 has no peer endpoint "
+                    "— possible tunnel leak)"
+                )
+            return "WARN", (
+                f"outbound IP = {public_ip} (wg1 link not up; tunnel-up check "
+                "should already FAIL — not double-counting)"
+            )
         if public_ip in expected:
             return "OK", f"outbound IP = {public_ip} (matches wg1 relay, real home IP hidden)"
         return "FAIL", f"outbound IP = {public_ip} not in expected relay set {sorted(expected)} — possible tunnel leak"
