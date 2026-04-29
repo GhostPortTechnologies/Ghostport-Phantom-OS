@@ -297,15 +297,24 @@ def detect_attack_patterns(drops):
     if not recent:
         return patterns
 
-    # Port scan: >10 distinct dst ports from one source in 60s windows
-    src_ports = {}  # src -> set of (dpt, epoch)
+    # Port scan: >10 distinct dst ports from one source in 60s windows.
+    # T-0008: cap per-source list at 200 — well above the 50-element scan
+    # window used downstream, but bounded so a sustained scanner can't
+    # balloon a single list to thousands of (port, epoch) tuples over
+    # the retention window. Trades old port-time precision for memory
+    # safety; detection accuracy unchanged.
+    PORTS_PER_SRC_CAP = 200
+    src_ports = {}  # src -> list of (dpt, epoch)
     for d in recent:
         if len(src_ports) > 1000:
             break
         src = d.get("src", "")
         dpt = d.get("dpt", "")
         if src and dpt:
-            src_ports.setdefault(src, []).append((dpt, d["_epoch"]))
+            lst = src_ports.setdefault(src, [])
+            lst.append((dpt, d["_epoch"]))
+            if len(lst) > PORTS_PER_SRC_CAP:
+                src_ports[src] = lst[-PORTS_PER_SRC_CAP:]
 
     for src, port_times in src_ports.items():
         if len(port_times) < 10:
