@@ -1071,7 +1071,7 @@ class SonarApp(GhostPortApp):
         blocks = self._read_rogue_blocks()
         n = len(blocks)
         if n == 0:
-            self.rogue_banner.set_revealed(False)
+            self.rogue_banner.set_reveal_child(False)
             return True
         # Show count + reminder of network-wide effect.
         if hasattr(self, "lbl_rogue_banner") and self.lbl_rogue_banner:
@@ -1079,7 +1079,7 @@ class SonarApp(GhostPortApp):
                 f"⚠ rogue-block ARMED for {n} BSSID(s) — captive-portal probes "
                 f"are blocked NETWORK-WIDE. Auto-expires in 24h."
             )
-        self.rogue_banner.set_revealed(True)
+        self.rogue_banner.set_reveal_child(True)
         return True
 
     def _on_arm_rogue_block(self, _btn):
