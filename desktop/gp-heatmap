@@ -1,0 +1,487 @@
+#!/bin/bash
+# gp-heatmap — Bandwidth Heatmap
+# Shows 24-hour bandwidth usage heatmap per interface with live sampling.
+# OS-exclusive — reads /proc/net/dev directly.
+#
+# Usage:
+#   gp-heatmap              — interactive heatmap (live, updates every 5s)
+#   gp-heatmap summary      — one-shot bandwidth summary
+#   gp-heatmap reset        — clear history data
+#   gp-heatmap --help
+
+set -euo pipefail
+# Theme colors
+if [[ -f /usr/local/lib/gp-theme-colors.sh ]]; then
+    source /usr/local/lib/gp-theme-colors.sh
+fi
+
+FIRST_RUN_FILE="$HOME/.config/phantom/heatmap-intro-shown"
+DATA_DIR="$HOME/.config/phantom/heatmap"
+REFRESH=5
+
+# ── Data collection ──────────────────────────────────────
+
+get_bytes() {
+    # Returns: iface rx_bytes tx_bytes
+    awk 'NR > 2 {
+        gsub(/:/, "", $1)
+        if ($1 !~ /^(lo|veth|br-|docker)/) print $1, $2, $10
+    }' /proc/net/dev
+}
+
+sample_and_store() {
+    mkdir -p "$DATA_DIR"
+    local now
+    now=$(date +%s)
+    local hour
+    hour=$(date +%H)
+    local today
+    today=$(date +%Y-%m-%d)
+    local datafile="$DATA_DIR/${today}.dat"
+
+    # Current counters
+    local tmpfile="$DATA_DIR/.current"
+    get_bytes > "$tmpfile"
+
+    # Previous counters
+    local prevfile="$DATA_DIR/.previous"
+    local tsfile="$DATA_DIR/.timestamp"
+
+    if [[ -f "$prevfile" && -f "$tsfile" ]]; then
+        local prev_ts
+        prev_ts=$(cat "$tsfile")
+        local elapsed=$((now - prev_ts))
+        ((elapsed < 1)) && elapsed=1
+
+        # Calculate delta bytes per interface
+        while IFS=' ' read -r iface rx tx; do
+            local prev_rx prev_tx
+            prev_rx=$(awk -v i="$iface" '$1 == i {print $2}' "$prevfile" 2>/dev/null || echo 0)
+            prev_tx=$(awk -v i="$iface" '$1 == i {print $3}' "$prevfile" 2>/dev/null || echo 0)
+            [[ -z "$prev_rx" ]] && prev_rx=0
+            [[ -z "$prev_tx" ]] && prev_tx=0
+
+            local drx=$((rx - prev_rx))
+            local dtx=$((tx - prev_tx))
+            # Handle counter wraparound
+            ((drx < 0)) && drx=0
+            ((dtx < 0)) && dtx=0
+
+            # Append: timestamp hour iface delta_rx delta_tx elapsed
+            echo "$now $hour $iface $drx $dtx $elapsed" >> "$datafile"
+        done < "$tmpfile"
+    fi
+
+    cp "$tmpfile" "$prevfile"
+    echo "$now" > "$tsfile"
+}
+
+# ── Heatmap rendering ───────────────────────────────────
+
+# Block characters for intensity levels (8 levels)
+BLOCKS=(" " "░" "░" "▒" "▒" "▓" "▓" "█")
+
+intensity_block() {
+    # Map bytes/sec to a block character (0-7)
+    local bps=$1
+    if ((bps == 0)); then echo 0
+    elif ((bps < 1024)); then echo 1        # < 1 KB/s
+    elif ((bps < 10240)); then echo 2       # < 10 KB/s
+    elif ((bps < 102400)); then echo 3      # < 100 KB/s
+    elif ((bps < 1048576)); then echo 4     # < 1 MB/s
+    elif ((bps < 5242880)); then echo 5     # < 5 MB/s
+    elif ((bps < 10485760)); then echo 6    # < 10 MB/s
+    else echo 7                             # 10+ MB/s
+    fi
+}
+
+intensity_color() {
+    # Return ANSI color based on intensity level
+    local level=$1
+    case $level in
+        0) echo -ne "$TEXT_FAINT" ;;
+        1) echo -ne "$AC_DIM" ;;
+        2) echo -ne "$AC_DIM" ;;
+        3) echo -ne "$AC" ;;
+        4) echo -ne "$AC" ;;
+        5) echo -ne "$AC_BRIGHT" ;;
+        6) echo -ne "$WARNING" ;;
+        7) echo -ne "$DANGER" ;;
+    esac
+}
+
+human_bytes() {
+    local bytes=$1
+    if ((bytes < 1024)); then echo "${bytes}B"
+    elif ((bytes < 1048576)); then echo "$((bytes / 1024))KB"
+    elif ((bytes < 1073741824)); then printf "%.1fMB" "$(awk "BEGIN{printf \"%.1f\", $bytes/1048576}")"
+    else printf "%.2fGB" "$(awk "BEGIN{printf \"%.2f\", $bytes/1073741824}")"; fi
+}
+
+human_rate() {
+    local bps=$1
+    if ((bps < 1024)); then echo "${bps}B/s"
+    elif ((bps < 1048576)); then printf "%.1fKB/s" "$(awk "BEGIN{printf \"%.1f\", $bps/1024}")"
+    elif ((bps < 1073741824)); then printf "%.1fMB/s" "$(awk "BEGIN{printf \"%.1f\", $bps/1048576}")"
+    else printf "%.2fGB/s" "$(awk "BEGIN{printf \"%.2f\", $bps/1073741824}")"; fi
+}
+
+# Get hourly averages for an interface from today's data
+get_hourly_data() {
+    local iface="$1" direction="$2" # direction: rx or tx
+    local today
+    today=$(date +%Y-%m-%d)
+    local datafile="$DATA_DIR/${today}.dat"
+
+    if [[ ! -f "$datafile" ]]; then
+        # Return 24 zeros
+        for ((h=0; h<24; h++)); do echo "0"; done
+        return
+    fi
+
+    local col=4  # rx = field 4 (delta_rx)
+    [[ "$direction" == "tx" ]] && col=5
+
+    # Use awk for speed — one pass through the file
+    awk -v iface="$iface" -v col="$col" '
+    $3 == iface {
+        h = $2 + 0
+        bytes[h] += $col
+        elapsed[h] += $6
+    }
+    END {
+        for (h=0; h<24; h++) {
+            if (elapsed[h] > 0)
+                printf "%d\n", bytes[h] / elapsed[h]
+            else
+                print 0
+        }
+    }' "$datafile"
+}
+
+# ── Live stats ───────────────────────────────────────────
+
+get_live_rates() {
+    local prevfile="$DATA_DIR/.previous"
+    local tsfile="$DATA_DIR/.timestamp"
+    local now
+    now=$(date +%s)
+
+    if [[ ! -f "$prevfile" || ! -f "$tsfile" ]]; then
+        get_bytes | while IFS=' ' read -r iface rx tx; do
+            echo "$iface 0 0"
+        done
+        return
+    fi
+
+    local prev_ts
+    prev_ts=$(cat "$tsfile")
+    local elapsed=$((now - prev_ts))
+    ((elapsed < 1)) && elapsed=1
+
+    get_bytes | while IFS=' ' read -r iface rx tx; do
+        local prev_rx prev_tx
+        prev_rx=$(awk -v i="$iface" '$1 == i {print $2}' "$prevfile" 2>/dev/null || echo 0)
+        prev_tx=$(awk -v i="$iface" '$1 == i {print $3}' "$prevfile" 2>/dev/null || echo 0)
+        [[ -z "$prev_rx" ]] && prev_rx=0
+        [[ -z "$prev_tx" ]] && prev_tx=0
+
+        local drx=$((rx - prev_rx))
+        local dtx=$((tx - prev_tx))
+        ((drx < 0)) && drx=0
+        ((dtx < 0)) && dtx=0
+
+        local rx_rate=$((drx / elapsed))
+        local tx_rate=$((dtx / elapsed))
+        echo "$iface $rx_rate $tx_rate"
+    done
+}
+
+# ── Display ──────────────────────────────────────────────
+
+draw_heatmap() {
+    sample_and_store
+
+    printf '\033[2J\033[H'
+    echo -e "  ${BOLD}${AC}GHOSTPORT BANDWIDTH HEATMAP${RESET}  ${TEXT_DIM}|  24-hour traffic view${RESET}"
+    gp_separator
+    echo
+
+    # Live rates
+    echo -e "  ${BOLD}${TEXT}Live Traffic${RESET}"
+    printf "  ${AC_DIM}  %-12s %14s %14s${RESET}\n" "Interface" "Download" "Upload"
+    gp_separator
+
+    local rates
+    rates=$(get_live_rates)
+
+    while IFS=' ' read -r iface rx_rate tx_rate; do
+        [[ -z "$iface" ]] && continue
+        local rx_human tx_human
+        rx_human=$(human_rate "$rx_rate")
+        tx_human=$(human_rate "$tx_rate")
+
+        local rx_color="$TEXT" tx_color="$TEXT"
+        ((rx_rate > 1048576)) && rx_color="$AC_BRIGHT"
+        ((tx_rate > 1048576)) && tx_color="$AC_BRIGHT"
+
+        printf "  ${AC}  %-12s ${rx_color}%14s${RESET} ${tx_color}%14s${RESET}\n" \
+            "$iface" "$rx_human" "$tx_human"
+    done <<< "$rates"
+    echo
+
+    # Hour labels
+    local current_hour
+    current_hour=$(date +%H)
+    current_hour=$((10#$current_hour))
+
+    echo -e "  ${BOLD}${TEXT}24-Hour Heatmap${RESET}  ${TEXT_DIM}(today)${RESET}"
+    echo -ne "  ${AC_DIM}  "
+    for ((h=0; h<24; h++)); do
+        if ((h % 3 == 0)); then
+            printf "%02d" "$h"
+            ((h < 23)) && printf " "
+        else
+            printf "   "
+        fi
+    done
+    echo -e "${RESET}"
+
+    # Main interfaces to show (name label pairs)
+    local ifaces="eth0 wlan0 wg0 wg1 tailscale0"
+
+    for iface in $ifaces; do
+        # Check if interface exists
+        ip link show "$iface" &>/dev/null 2>&1 || continue
+
+        # Short label for display
+        local label="$iface"
+        [[ "$iface" == "tailscale0" ]] && label="ts0"
+
+        # RX heatmap
+        local hourly_rx
+        mapfile -t hourly_rx < <(get_hourly_data "$iface" "rx")
+
+        printf "  ${AC}  %-5s ${TEXT_DIM}RX${RESET} " "$label"
+        for ((h=0; h<24; h++)); do
+            local bps="${hourly_rx[$h]:-0}"
+            local level
+            level=$(intensity_block "$bps")
+            intensity_color "$level"
+            echo -ne "${BLOCKS[$level]}${BLOCKS[$level]} "
+        done
+        echo -e "${RESET}"
+
+        # TX heatmap
+        local hourly_tx
+        mapfile -t hourly_tx < <(get_hourly_data "$iface" "tx")
+
+        echo -ne "  ${AC}        ${TEXT_DIM}TX${RESET} "
+        for ((h=0; h<24; h++)); do
+            local bps="${hourly_tx[$h]:-0}"
+            local level
+            level=$(intensity_block "$bps")
+            intensity_color "$level"
+            echo -ne "${BLOCKS[$level]}${BLOCKS[$level]} "
+        done
+        echo -e "${RESET}"
+    done
+
+    # Legend
+    echo
+    echo -ne "  ${TEXT_DIM}  Intensity: "
+    echo -ne "${TEXT_FAINT}${BLOCKS[0]}${BLOCKS[0]}${RESET}${TEXT_DIM}0  "
+    echo -ne "${AC_DIM}${BLOCKS[2]}${BLOCKS[2]}${RESET}${TEXT_DIM}KB  "
+    echo -ne "${AC}${BLOCKS[4]}${BLOCKS[4]}${RESET}${TEXT_DIM}MB  "
+    echo -ne "${WARNING}${BLOCKS[6]}${BLOCKS[6]}${RESET}${TEXT_DIM}5M+  "
+    echo -ne "${DANGER}${BLOCKS[7]}${BLOCKS[7]}${RESET}${TEXT_DIM}10M+"
+    echo -e "${RESET}"
+
+    # Totals for today
+    echo
+    echo -e "  ${BOLD}${TEXT}Today's Totals${RESET}"
+    local today
+    today=$(date +%Y-%m-%d)
+    local datafile="$DATA_DIR/${today}.dat"
+
+    if [[ -f "$datafile" ]]; then
+        printf "  ${AC_DIM}  %-12s %14s %14s${RESET}\n" "Interface" "Downloaded" "Uploaded"
+        gp_separator
+        for iface in $ifaces; do
+            ip link show "$iface" &>/dev/null 2>&1 || continue
+            local total_rx=0 total_tx=0
+            while IFS=' ' read -r _ts _hr _if drx dtx _el; do
+                [[ "$_if" != "$iface" ]] && continue
+                total_rx=$((total_rx + drx))
+                total_tx=$((total_tx + dtx))
+            done < "$datafile"
+
+            if ((total_rx > 0 || total_tx > 0)); then
+                printf "  ${AC}  %-12s ${TEXT}%14s %14s${RESET}\n" \
+                    "$iface" "$(human_bytes $total_rx)" "$(human_bytes $total_tx)"
+            fi
+        done
+    else
+        echo -e "  ${TEXT_DIM}  No data yet — collecting samples...${RESET}"
+    fi
+
+    echo
+    echo -e "  ${TEXT_FAINT}Sampling every ${REFRESH}s  |  [d] Details  [h] Help  [q] Quit${RESET}"
+}
+
+draw_details() {
+    printf '\033[2J\033[H'
+    echo -e "  ${BOLD}${AC}Interface Details${RESET}"
+    echo
+
+    # Per-interface counters from /proc/net/dev
+    get_bytes | while IFS=' ' read -r iface rx tx; do
+        local state
+        state=$(ip link show "$iface" 2>/dev/null | head -1 | grep -oP 'state \K\w+' || echo "?")
+        local mtu
+        mtu=$(ip link show "$iface" 2>/dev/null | head -1 | grep -oP 'mtu \K\d+' || echo "?")
+        local ipaddr
+        ipaddr=$(ip -4 addr show "$iface" 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -1)
+
+        echo -e "  ${BOLD}${AC}$iface${RESET}  ${TEXT_DIM}($state, MTU $mtu)${RESET}"
+        [[ -n "$ipaddr" ]] && echo -e "  ${AC}  IP:         ${TEXT}$ipaddr${RESET}"
+        echo -e "  ${AC}  Total RX:   ${TEXT}$(human_bytes $rx)${RESET}"
+        echo -e "  ${AC}  Total TX:   ${TEXT}$(human_bytes $tx)${RESET}"
+        echo
+    done
+
+    gp_key_prompt "Press any key to go back..."
+}
+
+draw_help() {
+    printf '\033[2J\033[H'
+    echo -e "  ${BOLD}${AC}Bandwidth Heatmap Help${RESET}"
+    echo
+    echo -e "  ${AC}WHAT IS THIS?${RESET}"
+    echo -e "  ${TEXT_DIM}The bandwidth heatmap shows your network traffic patterns${RESET}"
+    echo -e "  ${TEXT_DIM}across all interfaces over the past 24 hours. Each cell${RESET}"
+    echo -e "  ${TEXT_DIM}represents one hour of average throughput.${RESET}"
+    echo
+    echo -e "  ${AC}INTERFACES:${RESET}"
+    echo -e "  ${TEXT}  eth0${RESET}        ${TEXT_DIM}WAN (internet uplink via Ethernet)${RESET}"
+    echo -e "  ${TEXT}  wlan0${RESET}       ${TEXT_DIM}LAN (WiFi access point for your devices)${RESET}"
+    echo -e "  ${TEXT}  wg0${RESET}         ${TEXT_DIM}WireGuard control plane (fleet comms)${RESET}"
+    echo -e "  ${TEXT}  wg1${RESET}         ${TEXT_DIM}WireGuard data plane (VPN tunnel)${RESET}"
+    echo -e "  ${TEXT}  tailscale0${RESET}  ${TEXT_DIM}Tailscale (always-on remote management)${RESET}"
+    echo
+    echo -e "  ${AC}READING THE HEATMAP:${RESET}"
+    echo -e "  ${TEXT_DIM}RX = data received (download)${RESET}"
+    echo -e "  ${TEXT_DIM}TX = data transmitted (upload)${RESET}"
+    echo -e "  ${TEXT_DIM}Brighter/fuller blocks = more traffic${RESET}"
+    echo -e "  ${TEXT_DIM}Each column = one hour (00-23)${RESET}"
+    echo
+    echo -e "  ${AC}WHAT TO LOOK FOR:${RESET}"
+    echo -e "  ${TEXT_DIM}Heavy eth0 RX + wg1 TX = VPN tunnel active, traffic flowing${RESET}"
+    echo -e "  ${TEXT_DIM}Heavy wlan0 only = clients using AP without VPN${RESET}"
+    echo -e "  ${TEXT_DIM}Spikes at odd hours = possible unauthorized activity${RESET}"
+    echo -e "  ${TEXT_DIM}wg0 traffic = fleet heartbeats and management${RESET}"
+    echo
+    echo -e "  ${AC}DATA STORAGE:${RESET}"
+    echo -e "  ${TEXT_DIM}Samples stored in ~/.config/phantom/heatmap/${RESET}"
+    echo -e "  ${TEXT_DIM}One file per day, automatically collected while running.${RESET}"
+    echo -e "  ${TEXT_DIM}Use 'gp-heatmap reset' to clear all history.${RESET}"
+    echo
+    gp_key_prompt "Press any key to go back..."
+}
+
+show_tutorial() {
+    printf '\033[2J\033[H'
+    echo -e "  ${BOLD}${AC}BANDWIDTH HEATMAP${RESET}"
+    echo
+    echo -e "  ${TEXT}This tool visualizes your network traffic over time,${RESET}"
+    echo -e "  ${TEXT}showing you exactly when and where bandwidth is used.${RESET}"
+    echo
+    echo -e "  ${TEXT}It monitors all network interfaces:${RESET}"
+    echo -e "  ${AC}  - eth0 (internet uplink)${RESET}"
+    echo -e "  ${AC}  - wlan0 (your WiFi AP)${RESET}"
+    echo -e "  ${AC}  - wg0/wg1 (VPN tunnels)${RESET}"
+    echo -e "  ${AC}  - tailscale0 (management)${RESET}"
+    echo
+    echo -e "  ${TEXT}The heatmap builds over time as it collects samples.${RESET}"
+    echo -e "  ${TEXT}Leave it running to build a full 24-hour picture.${RESET}"
+    echo
+    gp_key_prompt "Press any key to start..."
+    mkdir -p "$(dirname "$FIRST_RUN_FILE")"
+    touch "$FIRST_RUN_FILE"
+}
+
+do_summary() {
+    gp_header "BANDWIDTH SUMMARY"
+
+    echo -e "  ${BOLD}${TEXT}Current Interface Totals (since boot)${RESET}"
+    printf "  ${AC_DIM}  %-12s %14s %14s${RESET}\n" "Interface" "RX Total" "TX Total"
+    gp_separator
+
+    get_bytes | while IFS=' ' read -r iface rx tx; do
+        printf "  ${AC}  %-12s ${TEXT}%14s %14s${RESET}\n" \
+            "$iface" "$(human_bytes $rx)" "$(human_bytes $tx)"
+    done
+    echo
+
+    local today
+    today=$(date +%Y-%m-%d)
+    local datafile="$DATA_DIR/${today}.dat"
+
+    if [[ -f "$datafile" ]]; then
+        local samples
+        samples=$(wc -l < "$datafile")
+        echo -e "  ${TEXT_DIM}  Today's samples: ${samples}${RESET}"
+        echo -e "  ${TEXT_DIM}  Data file: ${datafile}${RESET}"
+    else
+        echo -e "  ${TEXT_DIM}  No heatmap data collected today.${RESET}"
+        echo -e "  ${TEXT_DIM}  Run 'gp-heatmap' interactively to start collecting.${RESET}"
+    fi
+    echo
+}
+
+# ── CLI ──────────────────────────────────────────────────
+case "${1:-}" in
+    -h|--help|help)
+        echo "gp-heatmap -- Bandwidth + RSSI Heatmaps"
+        echo ""
+        echo "Visualizes network bandwidth usage across all interfaces"
+        echo "as a 24-hour heatmap with live traffic rates, plus per-BSSID"
+        echo "RSSI heatmap from sonar-sniffer captures."
+        echo ""
+        echo "Usage:"
+        echo "  gp-heatmap           Interactive bandwidth heatmap (live, updates every ${REFRESH}s)"
+        echo "  gp-heatmap summary   One-shot bandwidth summary"
+        echo "  gp-heatmap rssi      Per-BSSID RSSI heatmap, last 60 min (T-0056)"
+        echo "  gp-heatmap reset     Clear bandwidth history data"
+        echo ""
+        echo "Keys (interactive): [d] Details  [h] Help  [q] Quit"
+        exit 0
+        ;;
+    summary)
+        do_summary
+        exit 0
+        ;;
+    rssi)
+        exec python3 /opt/ghostport/desktop/gp_rssi_heatmap.py
+        ;;
+    reset)
+        rm -rf "$DATA_DIR"
+        echo "Heatmap data cleared."
+        exit 0
+        ;;
+esac
+
+# Interactive mode
+[[ ! -f "$FIRST_RUN_FILE" ]] && show_tutorial
+
+while true; do
+    draw_heatmap
+
+    if read -r -n1 -t "$REFRESH" key 2>/dev/null; then
+        case "$key" in
+            d|D) draw_details ;;
+            h|H) draw_help ;;
+            q|Q) printf '\033[2J\033[H'; exit 0 ;;
+        esac
+    fi
+done
