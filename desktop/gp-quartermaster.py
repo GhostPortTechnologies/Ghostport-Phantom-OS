@@ -318,14 +318,28 @@ class QuartermasterApp(GhostPortApp):
         name = "Encrypted DNS"
         _, _, rc1 = self.run_cmd(["systemctl", "is-active", "--quiet", "cloudflared"])
         dot_active = False
+        mode = ""
         try:
             with open("/etc/phantom/current-mode") as f:
                 mode = f.read().strip()
-            if mode in ("zerotrust", "zhop"):
+            if mode in ("zerotrust", "zhop", "doublehop"):
                 dot_active = True
         except Exception:
             pass
-        if rc1 == 0 or dot_active:
+        # Defense-in-depth: in tunnel modes, verify the data-plane resolver
+        # path is healthy. 10.66.67.1 is reachable only via wg1, so a successful
+        # dig confirms both encryption (WG transport) and routing.
+        tunnel_resolver_unhealthy = False
+        if mode in ("doublehop", "zhop"):
+            _, _, rc_dig = self.run_cmd(
+                ["dig", "+time=2", "+tries=1", "+short", "google.com", "@10.66.67.1"],
+                timeout=5,
+            )
+            tunnel_resolver_unhealthy = rc_dig != 0
+        if tunnel_resolver_unhealthy:
+            checks.append((name, False, "Tunnel-resolver path unhealthy",
+                           "Check wg1 link and 10.66.67.1 reachability", 10))
+        elif rc1 == 0 or dot_active:
             checks.append((name, True, "Encrypted DNS (DoH/DoT) is active", "", 10))
         else:
             checks.append((name, False, "DNS queries may not be encrypted",
@@ -377,9 +391,17 @@ class QuartermasterApp(GhostPortApp):
                            "Check /etc/phantom/auth.json", 10))
 
         # 8. Disk encryption (5 pts)
+        # Aether Box uses gocryptfs at ~/.local/share/ghostport-vault/cipher/;
+        # marker file is gocryptfs.conf. Legacy /etc/phantom/vault.key kept as
+        # back-compat for any manual-init flow. Full-disk LUKS would require
+        # re-imaging the SD card.
         name = "Disk Encryption"
-        stdout, _, rc = self.run_cmd(["ls", "/etc/phantom/vault.key"])
-        if rc == 0:
+        aether_marker = os.path.expanduser(
+            "~/.local/share/ghostport-vault/cipher/gocryptfs.conf"
+        )
+        if os.path.isfile(aether_marker):
+            checks.append((name, True, "Encryption vault is initialized via Aether Box", "", 5))
+        elif os.path.isfile("/etc/phantom/vault.key"):
             checks.append((name, True, "Encryption vault is initialized", "", 5))
         else:
             stdout2, _, rc2 = self.run_cmd(["ls", "/dev/mapper/"])
@@ -387,7 +409,7 @@ class QuartermasterApp(GhostPortApp):
                 checks.append((name, True, "Disk encryption is active", "", 5))
             else:
                 checks.append((name, False, "No disk encryption detected",
-                               "Disk encryption is recommended for physical security", 5))
+                               "Open Aether Box to initialize an encrypted vault for sensitive files", 5))
 
         # 9. IDS running (10 pts)
         name = "Intrusion Detection"

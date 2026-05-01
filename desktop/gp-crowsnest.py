@@ -22,6 +22,12 @@ MAX_ENTRIES = 200
 TRENDS_MAX_HOURS = 24
 TRENDS_MAX_SIZE = 50 * 1024  # 50KB cap
 
+# T-0047: surface correlated incidents from gp-correlator (T-0026 Phase B).
+# Reads the daemon's atomic-write JSON; never blocks UI on IO errors.
+CORRELATION_FILE = os.path.expanduser("~/.local/share/phantom/correlated-incidents.json")
+CORRELATION_ACKS_FILE = os.path.expanduser("~/.local/share/phantom/crowsnest-acks.json")
+CORRELATION_DISPLAY_WINDOW_S = 3600  # only show findings whose first_evidence_ts is within last hour
+
 GEOIP_DB = "/usr/share/GeoIP/GeoLite2-Country-Blocks-IPv4.csv"
 GEOIP_LOCATIONS = "/usr/share/GeoIP/GeoLite2-Country-Locations-en.csv"
 
@@ -563,9 +569,13 @@ class CrowsNestApp(GhostPortApp):
         self._last_count = 0
         self._trends = {"hourly": {}, "top_ports": {}, "top_sources": {}}
         self._patterns = []
+        # T-0047 banner state
+        self._correlation_acks = self._load_correlation_acks()
+        self._visible_correlations = []
         self.build_ui()
         self.run_async(self._load_data, self._on_data_loaded)
         self.poll_start(5, self._poll_tick)
+        self._refresh_correlation_banner()
 
     def build_ui(self):
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -573,6 +583,9 @@ class CrowsNestApp(GhostPortApp):
 
         # Header
         root.pack_start(self.make_header("CROW'S NEST", "Intrusion Detection System"), False, False, 0)
+
+        # T-0047: correlated-incidents banner (above stats bar, hidden when empty)
+        self._build_correlation_banner(root)
 
         # Stats bar
         stats_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -1178,9 +1191,141 @@ class CrowsNestApp(GhostPortApp):
 
     # ── Polling ───────────────────────────────────────────────────────
 
+    # ── T-0047 Correlation Banner ─────────────────────────────────────
+
+    def _build_correlation_banner(self, root):
+        """Top banner surfacing CRITICAL/DANGEROUS findings from gp-correlator.
+
+        Hidden when there are no unacked findings within the display window.
+        """
+        self._corr_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._corr_banner.get_style_context().add_class("gp-card-danger")
+        self._corr_banner.set_margin_start(8)
+        self._corr_banner.set_margin_end(8)
+        self._corr_banner.set_margin_top(6)
+        # gp-card padding is set in base class; just make the banner read clearly.
+        self._corr_lbl_severity = self.make_label("⚠", "gp-danger")
+        self._corr_lbl_severity.override_font(Pango.FontDescription("monospace bold 18"))
+        self._corr_lbl_severity.set_margin_start(8)
+        self._corr_lbl_severity.set_margin_top(4)
+        self._corr_lbl_severity.set_margin_bottom(4)
+        self._corr_banner.pack_start(self._corr_lbl_severity, False, False, 0)
+
+        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._corr_lbl_title = self.make_label("", "gp-danger")
+        self._corr_lbl_title.set_xalign(0.0)
+        self._corr_lbl_subtitle = self.make_label("", "gp-dim")
+        self._corr_lbl_subtitle.set_xalign(0.0)
+        self._corr_lbl_subtitle.set_line_wrap(True)
+        text_box.pack_start(self._corr_lbl_title, False, False, 0)
+        text_box.pack_start(self._corr_lbl_subtitle, False, False, 0)
+        self._corr_banner.pack_start(text_box, True, True, 0)
+
+        self._corr_btn_dismiss = self.make_button("Dismiss", self._on_correlation_dismiss, "gp-btn")
+        self._corr_btn_dismiss.set_margin_end(8)
+        self._corr_banner.pack_end(self._corr_btn_dismiss, False, False, 0)
+
+        # Hidden by default; show only when findings exist + are unacked.
+        self._corr_banner.set_no_show_all(True)
+        self._corr_banner.hide()
+        root.pack_start(self._corr_banner, False, False, 0)
+
+    def _load_correlation_data(self):
+        """Atomic-read correlator output. Returns list[finding] or [] on any error."""
+        try:
+            with open(CORRELATION_FILE) as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return []
+        findings = payload.get("findings", []) or []
+        return [f for f in findings if isinstance(f, dict)]
+
+    def _load_correlation_acks(self):
+        """Returns {pattern_id: last_ack_ts}. Missing/corrupt file → empty."""
+        try:
+            with open(CORRELATION_ACKS_FILE) as f:
+                d = json.load(f)
+            return {str(k): float(v) for k, v in d.items() if isinstance(v, (int, float))}
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
+            return {}
+
+    def _save_correlation_acks(self):
+        """Atomic write of ack state. Best-effort; never raises into UI thread."""
+        try:
+            os.makedirs(os.path.dirname(CORRELATION_ACKS_FILE), exist_ok=True)
+            tmp = CORRELATION_ACKS_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._correlation_acks, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, CORRELATION_ACKS_FILE)
+        except OSError:
+            pass
+
+    def _filter_visible_correlations(self, findings):
+        """Keep findings within display window AND not acked since their first_evidence_ts."""
+        now = time.time()
+        out = []
+        for f in findings:
+            ts = float(f.get("first_evidence_ts", 0) or 0)
+            if ts <= 0 or now - ts > CORRELATION_DISPLAY_WINDOW_S:
+                continue
+            pid = str(f.get("pattern_id", ""))
+            if not pid:
+                continue
+            ack_ts = self._correlation_acks.get(pid, 0.0)
+            if ack_ts >= ts:
+                continue
+            out.append(f)
+        return out
+
+    def _refresh_correlation_banner(self):
+        """Pull latest findings, filter by ack state + window, update banner."""
+        findings = self._load_correlation_data()
+        visible = self._filter_visible_correlations(findings)
+        self._visible_correlations = visible
+        if not visible:
+            self._corr_banner.hide()
+            return
+        # Severity icon by max severity; CRITICAL trumps DANGEROUS.
+        severities = {(f.get("severity", "") or "").lower() for f in visible}
+        is_critical = "critical" in severities
+        icon = "⛔" if is_critical else "⚠"
+        self._corr_lbl_severity.set_text(icon)
+        # Title: count + most recent name.
+        latest = max(visible, key=lambda f: float(f.get("first_evidence_ts", 0) or 0))
+        title = f"{len(visible)} CORRELATED INCIDENT{'S' if len(visible) > 1 else ''} — {latest.get('name', 'unknown')}"
+        self._corr_lbl_title.set_text(title)
+        ev = latest.get("evidence_summary", []) or []
+        subtitle_parts = ev[:2] if ev else [latest.get("description", "")]
+        self._corr_lbl_subtitle.set_text(" • ".join(p for p in subtitle_parts if p))
+        self._corr_banner.show()
+        self._corr_lbl_severity.show()
+        self._corr_lbl_title.show()
+        self._corr_lbl_subtitle.show()
+        self._corr_btn_dismiss.show()
+
+    def _on_correlation_dismiss(self, _btn):
+        """Ack every currently-visible finding by its pattern_id at first_evidence_ts."""
+        now = time.time()
+        for f in self._visible_correlations:
+            pid = str(f.get("pattern_id", ""))
+            if pid:
+                # Ack with the LATER of (current first_evidence_ts, now) so the same
+                # pattern doesn't re-fire from the same trigger event.
+                ts = float(f.get("first_evidence_ts", 0) or 0)
+                self._correlation_acks[pid] = max(ts, now)
+        self._save_correlation_acks()
+        self._visible_correlations = []
+        self._corr_banner.hide()
+
+    # ── End T-0047 ─────────────────────────────────────────────────────
+
     def _poll_tick(self):
         if not self.paused:
             self.run_async(self._load_data, self._on_data_loaded)
+        # Correlation banner refresh is fast (single JSON read); no async needed.
+        self._refresh_correlation_banner()
         return True
 
     # ── Button Handlers ───────────────────────────────────────────────

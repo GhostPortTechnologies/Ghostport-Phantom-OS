@@ -16,7 +16,7 @@ import fcntl
 import sys
 import json
 
-POSITION_FILE = os.path.expanduser("~/.config/phantom-widget-pos.json")
+POSITION_FILE = os.path.expanduser("~/.config/ghostport-widget-pos.json")
 
 # Beginner-friendly shortcut guide — written for people who may have never used Linux
 SHORTCUTS = [
@@ -54,13 +54,13 @@ SHORTCUTS = [
 
 CSS = b"""
 #shortcuts-widget {
-    background-color: rgba(8, 6, 8, 0.92);
-    border: 1px solid rgba(220, 138, 221, 0.4);
+    background-color: rgba(10, 15, 10, 0.92);
+    border: 1px solid rgba(57, 255, 143, 0.4);
     border-radius: 10px;
     padding: 12px 16px;
 }
 #shortcuts-title {
-    color: #dc8add;
+    color: #39ff8f;
     font-family: "Share Tech Mono", monospace;
     font-size: 12px;
     font-weight: bold;
@@ -78,21 +78,21 @@ CSS = b"""
     min-height: 0;
 }
 #section-header:hover {
-    background-color: rgba(220, 138, 221, 0.08);
+    background-color: rgba(57, 255, 143, 0.08);
 }
 #section-arrow {
-    color: rgba(220, 138, 221, 0.5);
+    color: rgba(57, 255, 143, 0.5);
     font-family: "Share Tech Mono", monospace;
     font-size: 9px;
 }
 #section-label {
-    color: rgba(220, 138, 221, 0.6);
+    color: rgba(57, 255, 143, 0.6);
     font-family: "Share Tech Mono", monospace;
     font-size: 9px;
     letter-spacing: 1px;
 }
 #key-label {
-    color: #dc8add;
+    color: #39ff8f;
     font-family: "Share Tech Mono", monospace;
     font-size: 10px;
     font-weight: bold;
@@ -117,14 +117,14 @@ CSS = b"""
 #collapse-btn {
     background: transparent;
     border: none;
-    color: rgba(220, 138, 221, 0.5);
+    color: rgba(57, 255, 143, 0.5);
     font-size: 10px;
     padding: 0 4px;
     min-height: 0;
     min-width: 0;
 }
 #collapse-btn:hover {
-    color: #dc8add;
+    color: #39ff8f;
 }
 """
 

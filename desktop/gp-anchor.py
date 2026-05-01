@@ -466,21 +466,26 @@ class AnchorApp(GhostPortApp):
             self.run_async(self._arm_killswitch, self._on_toggle_done)
 
     def _arm_killswitch(self):
-        self.run_sudo(["nft", "delete", "chain", "inet", "ghostport", "killswitch"], timeout=5)
+        # Killswitch chain lives in `inet filter` and hooks forward at priority -10,
+        # so it runs before the main forward chain (priority 0). policy=drop with
+        # explicit oif/iif wg1 accepts means LAN→eth0 leaks are dropped at the
+        # earliest hook. Tunnel-mode profiles pre-install this chain; arm/disarm
+        # tears it down and rebuilds idempotently.
+        self.run_sudo(["nft", "delete", "chain", "inet", "filter", "killswitch"], timeout=5)
         out, err, rc = self.run_sudo([
-            "nft", "add", "chain", "inet", "ghostport", "killswitch",
-            "{ type filter hook forward priority 0; policy drop; }"
+            "nft", "add", "chain", "inet", "filter", "killswitch",
+            "{ type filter hook forward priority -10; policy drop; }"
         ], timeout=5)
         if rc != 0:
             return ("error", f"Failed to create chain: {err}")
         out, err, rc = self.run_sudo([
-            "nft", "add", "rule", "inet", "ghostport", "killswitch",
+            "nft", "add", "rule", "inet", "filter", "killswitch",
             "oifname", "wg1", "accept"
         ], timeout=5)
         if rc != 0:
             return ("error", f"Failed to add outbound rule: {err}")
         out, err, rc = self.run_sudo([
-            "nft", "add", "rule", "inet", "ghostport", "killswitch",
+            "nft", "add", "rule", "inet", "filter", "killswitch",
             "iifname", "wg1", "ct", "state", "established,related", "accept"
         ], timeout=5)
         if rc != 0:
@@ -490,7 +495,7 @@ class AnchorApp(GhostPortApp):
 
     def _disarm_killswitch(self):
         out, err, rc = self.run_sudo([
-            "nft", "delete", "chain", "inet", "ghostport", "killswitch"
+            "nft", "delete", "chain", "inet", "filter", "killswitch"
         ], timeout=5)
         if rc != 0 and "No such" not in err:
             return ("error", f"Failed to remove chain: {err}")
@@ -617,7 +622,7 @@ class AnchorApp(GhostPortApp):
     def _fetch_status(self):
         data = {}
 
-        out, err, rc = self.run_sudo(["nft", "list", "chain", "inet", "ghostport", "killswitch"], timeout=5)
+        out, err, rc = self.run_sudo(["nft", "list", "chain", "inet", "filter", "killswitch"], timeout=5)
         data["nft_armed"] = (rc == 0)
 
         data["mode"] = read_current_mode()

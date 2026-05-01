@@ -205,33 +205,21 @@ def get_conntrack_by_ip(ip):
 
 
 def get_pihole_client_queries(ip):
-    """Get DNS query count for a client from Pi-hole API."""
-    import urllib.request
-    import urllib.error
+    """Get DNS query count for a client from Pi-hole v6 API via gp-pihole helper.
+
+    T-0045: replaced the deprecated /admin/api.php?getQuerySources path with
+    a subprocess call to gp-pihole, which owns sid lifecycle and v6 endpoint
+    mapping. Helper exits 0 with the integer on stdout, or non-zero on auth /
+    network failure — caller treats failure as 0 queries.
+    """
     try:
-        url = f"http://127.0.0.1/admin/api.php?getQuerySources&client={ip}"
-        # nosemgrep: insecure-request-object - localhost Pi-hole API, cannot be MITM'd
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})
-        # nosemgrep: dynamic-urllib-use-detected - localhost Pi-hole, ip from trusted dhcp.leases
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read())
-            # Pi-hole returns {"top_sources": {"ip": count}}
-            sources = data.get("top_sources", {})
-            return sources.get(ip, 0)
-    except Exception:
-        pass
-    # Fallback: try querying the FTL database summary
-    try:
-        url = "http://127.0.0.1/admin/api.php?overTimeDataClients"  # nosemgrep
-        req = urllib.request.Request(url, headers={"Accept": "application/json"})  # nosemgrep
-        # nosemgrep: dynamic-urllib-use-detected - hardcoded localhost Pi-hole URL
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            data = json.loads(resp.read())
-            clients = data.get("clients", [])
-            for c in clients:
-                if c.get("ip") == ip or c.get("name") == ip:
-                    return sum(data.get("over_time", {}).values()) if data.get("over_time") else 0
-    except Exception:
+        r = subprocess.run(
+            ["gp-pihole", "client-queries", ip],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode == 0:
+            return int((r.stdout or "0").strip() or 0)
+    except (subprocess.SubprocessError, ValueError):
         pass
     return 0
 
