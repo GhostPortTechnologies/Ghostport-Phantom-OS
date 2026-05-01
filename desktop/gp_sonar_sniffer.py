@@ -67,6 +67,16 @@ EAPOL_DEDUP_INTERVAL_S = 30
 # Per-key dedup map size cap (LRU eviction).
 DEDUP_MAX = 1024
 
+# T-0058 — out-of-throttle change detection for evil-twin / RSSI-anomaly
+# response. Beacons get a faster cadence change-check (every 5s per BSSID);
+# any meaningful delta vs cached state emits a `beacon_change` event with
+# escalated severity, regardless of the 60s `beacon_seen` throttle.
+CHANGE_DETECT_INTERVAL_S = 5
+RSSI_CHANGE_THRESHOLD_DB = 10
+# Require this many consecutive observations of an RSSI delta past threshold
+# before alerting — guards against single-sample noise in monitor-mode RX.
+RSSI_CONFIRM_COUNT = 2
+
 # OUI vendor lookup — top consumer + enterprise vendors seen in residential RF.
 # Universally-administered MACs only; locally-administered (LA-bit set) returns
 # None because they're typically virtual/random privacy MACs without vendor info.
@@ -364,8 +374,78 @@ def _vendor_oui(bssid):
     return OUI_TABLE.get(bssid[:8].lower())
 
 
-def make_handler(rate):
-    """Return the scapy prn callback closure with the shared rate limiter bound."""
+class _BeaconChangeDetector:
+    """Per-BSSID cache of (rssi, sec_hash, vendor, channel) used to detect
+    changes between consecutive observations. Returns a list of change-tuples
+    when something meaningful drifted, or [] if stable."""
+
+    def __init__(self, max_entries=DEDUP_MAX):
+        self._cache = OrderedDict()  # bssid -> {rssi, sec_hash, vendor, channel, pending_rssi_count}
+        self._max = max_entries
+
+    def _security_hash_of(self, sec):
+        if not isinstance(sec, dict):
+            return ""
+        akm = ",".join(sorted(sec.get("akm") or []))
+        return f"{sec.get('mode','')}|{sec.get('cipher','')}|{akm}|{sec.get('mfp','')}"
+
+    def check(self, bssid, details):
+        """Compare new details to cached. Returns a list of change descriptions
+        (each: (kind, prev, new)) — empty list if nothing meaningful drifted."""
+        new_rssi = details.get("rssi_dbm")
+        new_sec = self._security_hash_of(details.get("security") or {})
+        new_vendor = details.get("vendor")
+        new_channel = details.get("channel")
+
+        cached = self._cache.get(bssid)
+        if cached is None:
+            self._cache[bssid] = {
+                "rssi": new_rssi, "sec_hash": new_sec,
+                "vendor": new_vendor, "channel": new_channel,
+                "pending_rssi_count": 0,
+            }
+            self._cache.move_to_end(bssid)
+            while len(self._cache) > self._max:
+                self._cache.popitem(last=False)
+            return []
+
+        changes = []
+        # Categorical changes — single occurrence is enough.
+        if cached["sec_hash"] and new_sec and cached["sec_hash"] != new_sec:
+            changes.append(("security", cached["sec_hash"], new_sec))
+        if cached["vendor"] and new_vendor and cached["vendor"] != new_vendor:
+            changes.append(("vendor", cached["vendor"], new_vendor))
+        if cached["channel"] and new_channel and cached["channel"] != new_channel:
+            changes.append(("channel", cached["channel"], new_channel))
+
+        # RSSI requires 2 consecutive over-threshold samples to fire.
+        # Critical: cached["rssi"] is the BASELINE we compare deltas against —
+        # don't roll it forward on every call or "consecutive" loses meaning.
+        if (isinstance(new_rssi, int) and isinstance(cached["rssi"], int)
+                and abs(new_rssi - cached["rssi"]) >= RSSI_CHANGE_THRESHOLD_DB):
+            cached["pending_rssi_count"] += 1
+            if cached["pending_rssi_count"] >= RSSI_CONFIRM_COUNT:
+                changes.append(("rssi", cached["rssi"], new_rssi))
+                cached["pending_rssi_count"] = 0
+                cached["rssi"] = new_rssi  # promote new baseline AFTER firing
+        else:
+            cached["pending_rssi_count"] = 0
+            if isinstance(new_rssi, int):
+                cached["rssi"] = new_rssi  # stable read → roll baseline forward
+
+        # Categorical fields always reflect latest seen.
+        cached["sec_hash"] = new_sec or cached["sec_hash"]
+        cached["vendor"] = new_vendor or cached["vendor"]
+        cached["channel"] = new_channel or cached["channel"]
+        self._cache.move_to_end(bssid)
+        return changes
+
+
+def make_handler(rate, change_detector=None):
+    """Return the scapy prn callback closure with the shared rate limiter
+    + optional change detector bound."""
+    if change_detector is None:
+        change_detector = _BeaconChangeDetector()
 
     def handle(pkt):
         try:
@@ -404,28 +484,45 @@ def make_handler(rate):
 
             if pkt.haslayer(Dot11Beacon):
                 bssid = _bssid_of(pkt)
+                # Two parallel throttles: change-check (5s) and full emit (60s).
+                # We enrich at most once per CHANGE_DETECT_INTERVAL_S per BSSID.
+                can_check = rate.should_emit(("beacon-check", bssid), CHANGE_DETECT_INTERVAL_S)
+                can_emit = rate.should_emit(("beacon", bssid), BEACON_EMIT_INTERVAL_S)
+                if not (can_check or can_emit):
+                    return
                 ssid = _ssid_from_beacon(pkt)
-                if rate.should_emit(("beacon", bssid), BEACON_EMIT_INTERVAL_S):
-                    # Enrichment — RadioTap signal, PHY, security, vendor, WPS.
-                    # Each helper is best-effort; missing fields drop out of the
-                    # details dict rather than carrying None placeholders.
-                    rt = _radiotap_signal(pkt)
-                    freq = rt.get("freq_mhz", 0)
-                    cap = int(getattr(pkt.getlayer(Dot11Beacon), "cap", 0) or 0)
-                    cap_privacy = bool(cap & 0x10)
-                    beacon = pkt.getlayer(Dot11Beacon)
-                    interval = getattr(beacon, "beacon_interval", 0) or 0
-                    details = {
-                        "ssid": ssid,
-                        "bssid": bssid,
-                        "hidden": _is_hidden(ssid, ssid != ""),
-                        "phy": _phy_type(pkt, freq),
-                        "security": _security_suite(pkt, cap_privacy),
-                        "vendor": _vendor_oui(bssid),
-                        "wps": _wps_state(pkt),
-                        "interval_ms": round(interval * 1.024, 1),
-                    }
-                    details.update(rt)  # rssi_dbm, freq_mhz, channel
+                rt = _radiotap_signal(pkt)
+                freq = rt.get("freq_mhz", 0)
+                cap = int(getattr(pkt.getlayer(Dot11Beacon), "cap", 0) or 0)
+                cap_privacy = bool(cap & 0x10)
+                beacon = pkt.getlayer(Dot11Beacon)
+                interval = getattr(beacon, "beacon_interval", 0) or 0
+                details = {
+                    "ssid": ssid,
+                    "bssid": bssid,
+                    "hidden": _is_hidden(ssid, ssid != ""),
+                    "phy": _phy_type(pkt, freq),
+                    "security": _security_suite(pkt, cap_privacy),
+                    "vendor": _vendor_oui(bssid),
+                    "wps": _wps_state(pkt),
+                    "interval_ms": round(interval * 1.024, 1),
+                }
+                details.update(rt)  # rssi_dbm, freq_mhz, channel
+                # T-0058 change-detect — fires at 5s cadence, bypasses 60s emit
+                # throttle when significant drift is detected.
+                if can_check:
+                    changes = change_detector.check(bssid, details)
+                    if changes:
+                        kinds = [c[0] for c in changes]
+                        gp_events.emit(
+                            source="sonar-sniffer",
+                            category="beacon_change",
+                            severity=gp_events.SEVERITY_DANGEROUS if "security" in kinds or "vendor" in kinds
+                                else gp_events.SEVERITY_INFO,
+                            summary=f"beacon drift: {ssid or '(hidden)'} ({bssid}) {','.join(kinds)}",
+                            details={**details, "changes": [{"kind": k, "prev": p, "new": n} for k, p, n in changes]},
+                        )
+                if can_emit:
                     gp_events.emit(
                         source="sonar-sniffer",
                         category="beacon_seen",
