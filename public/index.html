@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="theme-color" content="#060A06">
-  <title>Phantom OS — Command Deck</title>
+  <title>GhostPort — Command Deck</title>
   <!-- Google Fonts removed to prevent privacy leak -->
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -303,7 +303,7 @@
       display: inline-block;
       margin-right: 8px;
     }
-    .status-dot.warn { background: #ffaa00; box-shadow: 0 0 10px #ffaa00; }
+    .status-dot.warn { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
     .status-dot.error { background: var(--red); box-shadow: 0 0 10px var(--red); }
 
     .header-right { text-align: right; }
@@ -879,7 +879,7 @@
       font-family: 'Courier New', 'Consolas', monospace;
       font-size: 10px; padding: 4px 10px; border-radius: 3px;
       cursor: pointer; letter-spacing: 1px; transition: all 0.2s;
-      background: transparent; border: 1px solid #ff444466; color: #ff8888;
+      background: transparent; border: 1px solid rgba(255,68,68,0.4); color: var(--red);
       margin-left: 10px;
     }
     .btn-exit:hover { background: #1a0a0a; border-color: var(--red); color: var(--red); box-shadow: 0 0 8px #ff444444; }
@@ -1277,14 +1277,26 @@
       .onboard-btn:active { background: var(--green-20); }
       .onboard-skip { margin-top: 16px; font-size: 11px; color: var(--text-faint); cursor: pointer; background: none; border: none; font-family: inherit; }
     }
-    /* Simple Mode Toggle */
-    .view-toggle { display:flex;align-items:center;gap:6px;margin-right:10px;cursor:pointer; }
-    .view-toggle-label { font-size:9px;letter-spacing:1px;color:var(--text-dim);text-transform:uppercase;white-space:nowrap; }
-    .view-toggle-label.active { color:var(--green); }
-    .view-toggle-track { width:32px;height:16px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;position:relative;transition:background 0.2s; }
-    .view-toggle-track .vt-thumb { width:12px;height:12px;background:var(--green);border-radius:50%;position:absolute;top:1px;left:1px;transition:left 0.2s; }
+    /* Simple/Advanced View Toggle — visible affordance for tech-only sections */
+    .view-toggle {
+      display:flex;align-items:center;gap:8px;margin-right:12px;cursor:pointer;
+      padding:5px 10px;border:1px solid var(--border);border-radius:18px;
+      background:var(--bg2);transition:border-color 0.2s, background 0.2s;
+    }
+    .view-toggle:hover { border-color:var(--green-33);background:var(--bg3); }
+    .view-toggle-label { font-size:10px;letter-spacing:1px;color:var(--text-dim);text-transform:uppercase;white-space:nowrap;font-weight:bold; }
+    .view-toggle-label.active { color:var(--green);text-shadow:0 0 6px var(--green-glow); }
+    .view-toggle-track { width:36px;height:18px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;position:relative;transition:background 0.2s; }
+    .view-toggle-track .vt-thumb { width:14px;height:14px;background:var(--green);border-radius:50%;position:absolute;top:1px;left:1px;transition:left 0.2s;box-shadow:0 0 6px var(--green-glow); }
     body.simple-mode .view-toggle-track { background:var(--green-13); }
-    body.simple-mode .view-toggle-track .vt-thumb { left:17px; }
+    body.simple-mode .view-toggle-track .vt-thumb { left:19px; }
+    @media(max-width:768px) {
+      .view-toggle { padding:4px 8px;gap:6px; }
+      .view-toggle-label { font-size:9px; }
+      .view-toggle-track { width:30px;height:16px; }
+      .view-toggle-track .vt-thumb { width:12px;height:12px; }
+      body.simple-mode .view-toggle-track .vt-thumb { left:15px; }
+    }
     body.simple-mode .tech-only { display:none !important; }
     body.simple-mode .brand-sub { visibility:hidden; }
     body.simple-mode .brand-sub::after { content:"PRIVACY MADE SIMPLE";visibility:visible;position:absolute; }
@@ -1308,21 +1320,21 @@
     .dreadnought-row.on .dn-check { background:var(--green); }
     .dreadnought-row.on .dn-check::after { content:"✓";color:var(--bg);font-size:10px;font-weight:bold; }
     .dreadnought-row .dn-label { font-size:10px;letter-spacing:1px;color:var(--text);font-weight:bold; }
-    .dreadnought-row .dn-warn { font-size:9px;color:#ffaa33;letter-spacing:0.5px;margin-left:auto;flex-shrink:0; }
+    .dreadnought-row .dn-warn { font-size:9px;color:var(--amber);letter-spacing:0.5px;margin-left:auto;flex-shrink:0; }
     .dreadnought-row .dn-install { font-size:9px;color:var(--green);letter-spacing:1px;background:none;border:1px solid var(--green);padding:3px 8px;border-radius:3px;cursor:pointer;font-family:inherit;margin-left:auto; }
     .dreadnought-row .dn-install:hover { background:var(--green-13); }
     body.simple-mode .dreadnought-row { display:none; }
     /* Dreadnought warning modal */
     .dn-modal { position:fixed;inset:0;z-index:1100;background:rgba(6,10,6,0.92);display:none;align-items:center;justify-content:center;padding:24px; }
     .dn-modal.visible { display:flex; }
-    .dn-modal-box { max-width:380px;background:var(--bg1);border:1px solid #ffaa33;border-radius:6px;padding:24px;text-align:left; }
-    .dn-modal-title { font-size:14px;color:#ffaa33;letter-spacing:2px;font-weight:bold;margin-bottom:12px; }
+    .dn-modal-box { max-width:380px;background:var(--bg2);border:1px solid var(--amber);border-radius:6px;padding:24px;text-align:left; }
+    .dn-modal-title { font-size:14px;color:var(--amber);letter-spacing:2px;font-weight:bold;margin-bottom:12px; }
     .dn-modal-body { font-size:11px;color:var(--text);line-height:1.6;margin-bottom:18px; }
-    .dn-modal-body strong { color:#ffaa33; }
+    .dn-modal-body strong { color:var(--amber); }
     .dn-modal-actions { display:flex;gap:10px;justify-content:flex-end; }
     .dn-modal-btn { padding:8px 18px;font-family:inherit;font-size:11px;letter-spacing:1px;border-radius:3px;cursor:pointer;background:none;min-height:36px; }
-    .dn-modal-btn.confirm { border:1px solid #ffaa33;color:#ffaa33; }
-    .dn-modal-btn.confirm:hover { background:rgba(255,170,51,0.1); }
+    .dn-modal-btn.confirm { border:1px solid var(--amber);color:var(--amber); }
+    .dn-modal-btn.confirm:hover { background:rgba(255,170,0,0.1); }
     .dn-modal-btn.cancel { border:1px solid var(--border);color:var(--text-dim); }
     .dn-modal-btn.cancel:hover { background:var(--bg3); }
     /* Use-case-first mode picker (sits above the 4 mode cards) */
@@ -1566,6 +1578,18 @@
         <span class="dn-warn" id="gm-warn" style="display:none">⚠ needs ≥2 endpoints</span>
       </div>
 
+      <!-- T-0064: prominent labeled view toggle. Existing 9px header-right
+           toggle stays as well; this one is the discoverable surface. -->
+      <div class="view-toggle-prominent" onclick="toggleViewMode()" title="Switch between Simple and Advanced view"
+           style="display:flex;align-items:center;justify-content:center;gap:10px;margin:0 0 12px 0;padding:8px 14px;
+                  background:var(--bg2);border:1px solid var(--border);border-radius:6px;cursor:pointer;
+                  font-size:11px;letter-spacing:1px;text-transform:uppercase">
+        <span class="vtp-label" id="vtp-simple" style="color:var(--green)">◐ Simple view</span>
+        <span style="color:var(--text-dim)">|</span>
+        <span class="vtp-label" id="vtp-advanced" style="color:var(--text-dim)">⚙ Advanced view</span>
+        <span style="margin-left:6px;color:var(--text-faint);font-size:9px;letter-spacing:0.5px">click to toggle</span>
+      </div>
+
       <div class="modes" id="modes-grid">
 
         <!-- ISP -->
@@ -1713,8 +1737,8 @@
         <button class="btn-support" id="btn-ts" onclick="repairAction('tailscale')">RESTART TAILSCALE</button>
         <button class="btn-support" id="btn-fw" onclick="repairAction('firewall')">REAPPLY FIREWALL</button>
         <button class="btn-support" id="btn-flush" onclick="repairAction('flushdns')">FLUSH DNS CACHE</button>
-        <button class="btn-support" id="btn-reboot" onclick="confirmReboot()" style="border-color:#ff444466;color:#ff8888">REBOOT DEVICE</button>
-        <button class="btn-support" id="btn-factory" onclick="confirmFactory()" style="border-color:#ff444466;color:#ff8888">FACTORY RESET</button>
+        <button class="btn-support" id="btn-reboot" onclick="confirmReboot()" style="border-color:rgba(255,68,68,0.4);color:var(--red)">REBOOT DEVICE</button>
+        <button class="btn-support" id="btn-factory" onclick="confirmFactory()" style="border-color:rgba(255,68,68,0.4);color:var(--red)">FACTORY RESET</button>
       </div>
       <div id="diag-results" class="tech-only" style="display:none"></div>
       <div id="ticket-form-wrap" class="tech-only" style="display:none">
@@ -1733,28 +1757,28 @@
       </div>
 
       <!-- WiFi Sensing Alert -->
-      <div id="wifi-sensing-alert" style="display:none;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:14px 16px;margin-top:16px;font-size:12px;color:#ff8888">
+      <div id="wifi-sensing-alert" style="display:none;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:14px 16px;margin-top:16px;font-size:12px;color:var(--red)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
           <span style="font-size:18px">📡</span>
           <strong style="letter-spacing:1px">ISP WIFI SENSING RISK DETECTED</strong>
         </div>
         <div id="wifi-sensing-details" style="color:var(--text-dim);font-size:11px;margin-bottom:10px"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <a href="/modem-guide.html" class="arsenal-btn" style="text-decoration:none;font-size:10px;padding:6px 14px;border-color:rgba(255,68,68,0.4);color:#ff8888">HOW TO FIX THIS</a>
+          <a href="/modem-guide.html" class="arsenal-btn" style="text-decoration:none;font-size:10px;padding:6px 14px;border-color:rgba(255,68,68,0.4);color:var(--red)">HOW TO FIX THIS</a>
           <button class="arsenal-btn" onclick="runWifiSensingCheck()" style="font-size:10px;padding:6px 14px" id="btn-wifi-rescan">RESCAN</button>
           <button class="arsenal-btn" onclick="dismissWifiSensing()" style="font-size:10px;padding:6px 14px;opacity:0.5">DISMISS</button>
         </div>
       </div>
 
       <!-- Pi-hole Setup Banner -->
-      <div class="arsenal-card arsenal-card-wide tech-only" id="pihole-setup" style="display:none; margin-top:20px; border-color:#ff9f43;">
+      <div class="arsenal-card arsenal-card-wide tech-only" id="pihole-setup" style="display:none; margin-top:20px; border-color:var(--amber);">
         <div class="arsenal-header">
           <span class="arsenal-icon">⚙</span>
-          <span class="arsenal-name" style="color:#ff9f43">Pi-hole Setup Required</span>
+          <span class="arsenal-name" style="color:var(--amber)">Pi-hole Setup Required</span>
         </div>
         <div class="arsenal-desc">Connect the Command Deck to Pi-hole to manage blocklists, domain filtering, and ad blocking stats. Enter your Pi-hole admin password below.</div>
         <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-          <input type="password" id="pihole-pw" placeholder="Pi-hole password" style="background:#0a0a0a;border:1px solid #333;color:var(--green);padding:6px 10px;font-family:'Courier New','Consolas',monospace;font-size:12px;flex:1;border-radius:3px">
+          <input type="password" id="pihole-pw" placeholder="Pi-hole password" style="background:var(--bg2);border:1px solid var(--border);color:var(--green);padding:6px 10px;font-family:'Courier New','Consolas',monospace;font-size:12px;flex:1;border-radius:3px">
           <button class="arsenal-btn" onclick="setupPihole()" id="btn-pihole-setup">CONNECT</button>
         </div>
         <div id="pihole-setup-status" style="font-size:11px;margin-top:6px"></div>
@@ -1958,6 +1982,17 @@
             <span class="arsenal-cat-chevron">▾</span>
           </div>
           <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-management">
+            <div class="arsenal-card" id="ac-help">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📖</span>
+                <span class="arsenal-name">Help &amp; Guides</span>
+              </div>
+              <div class="arsenal-desc">User guide and ISP-router replacement walkthrough.</div>
+              <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+                <a href="/guide.html" target="_blank" rel="noopener" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">USER GUIDE ↗</a>
+                <a href="/modem-guide.html" target="_blank" rel="noopener" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">MODEM GUIDE ↗</a>
+              </div>
+            </div>
             <div class="arsenal-card" id="ac-blocklist">
               <div class="arsenal-header">
                 <span class="arsenal-icon">📋</span>
@@ -2068,6 +2103,37 @@
               </div>
               <div class="arsenal-desc">System packages and Pi-hole updates</div>
               <div id="update-result" style="margin-top:8px"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Help & Guides -->
+        <div class="arsenal-category" data-cat="guides">
+          <div class="arsenal-cat-header" onclick="toggleArsenalCat('guides')">
+            <span class="arsenal-cat-icon">📖</span>
+            <span class="arsenal-cat-name">Help &amp; Guides</span>
+            <span class="arsenal-cat-chevron">▸</span>
+          </div>
+          <div class="arsenal-cat-grid arsenal-grid" id="arsenal-grid-guides" style="display:none">
+            <div class="arsenal-card">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📘</span>
+                <span class="arsenal-name">User Guide</span>
+              </div>
+              <div class="arsenal-desc">Setup walkthrough, mode reference, troubleshooting, and FAQ.</div>
+              <div style="margin-top:8px">
+                <a href="/guide.html" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">OPEN GUIDE</a>
+              </div>
+            </div>
+            <div class="arsenal-card">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">📡</span>
+                <span class="arsenal-name">Kill WiFi Sensing</span>
+              </div>
+              <div class="arsenal-desc">Step-by-step ISP-router replacement guide. Stops physical-presence surveillance via WiFi sensing.</div>
+              <div style="margin-top:8px">
+                <a href="/modem-guide.html" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">OPEN GUIDE</a>
+              </div>
             </div>
           </div>
         </div>
@@ -2412,7 +2478,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
             <div>
               <div class="ship-stat-label" style="display:flex;align-items:center;gap:6px">
                 Ads Plundered
-                <select id="ads-range" onchange="fetchAdsRange()" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
+                <select id="ads-range" onchange="fetchAdsRange()" style="background:var(--bg2);border:1px solid var(--border);color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
                   <option value="session">Session</option>
                   <option value="allTime">All Time</option>
                 </select>
@@ -2444,7 +2510,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       <div class="tech-only">
         <div class="section-label" style="display:flex;align-items:center;justify-content:space-between">
           <span>▸ DEVICE LOG</span>
-          <select id="activity-filter" style="background:#0a0a0a;border:1px solid #333;color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
+          <select id="activity-filter" style="background:var(--bg2);border:1px solid var(--border);color:var(--green);font-family:'Courier New','Consolas',monospace;font-size:9px;padding:1px 4px;border-radius:3px;cursor:pointer">
             <option value="">All</option>
             <option value="mode">Mode</option>
             <option value="auth">Auth</option>
@@ -2452,7 +2518,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
             <option value="system">System</option>
           </select>
         </div>
-        <div id="activity-log" style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:6px;padding:8px;max-height:240px;overflow-y:auto;font-family:'Courier New','Consolas',monospace;font-size:11px"></div>
+        <div id="activity-log" style="background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px;max-height:240px;overflow-y:auto;font-family:'Courier New','Consolas',monospace;font-size:11px"></div>
       </div>
 
       <div class="tech-only" id="bandwidth-section">
@@ -2557,6 +2623,12 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     localStorage.setItem("gp-view-mode", isSimple ? "simple" : "tech");
     document.getElementById("vt-label-simple").classList.toggle("active", isSimple);
     document.getElementById("vt-label-tech").classList.toggle("active", !isSimple);
+    // T-0064: refresh the prominent toggle's label colors.
+    var s = document.getElementById("vtp-simple"), a = document.getElementById("vtp-advanced");
+    if (s && a) {
+      s.style.color = isSimple ? "var(--green)" : "var(--text-dim)";
+      a.style.color = isSimple ? "var(--text-dim)" : "var(--green)";
+    }
     updateSimpleIndicator();
   }
 
@@ -2574,15 +2646,17 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   // Restore view mode preference on load (default: simple)
   (function() {
     var saved = localStorage.getItem("gp-view-mode");
-    if (saved === "tech") {
-      var lblT2 = document.getElementById("vt-label-tech");
-      if (lblT2) lblT2.classList.add("active");
-    } else {
-      document.body.classList.add("simple-mode");
-      var lblS = document.getElementById("vt-label-simple");
-      var lblT = document.getElementById("vt-label-tech");
-      if (lblS) lblS.classList.add("active");
-      if (lblT) lblT.classList.remove("active");
+    var isSimple = saved !== "tech";
+    if (isSimple) document.body.classList.add("simple-mode");
+    var lblS = document.getElementById("vt-label-simple");
+    var lblT = document.getElementById("vt-label-tech");
+    if (lblS) lblS.classList.toggle("active", isSimple);
+    if (lblT) lblT.classList.toggle("active", !isSimple);
+    // T-0064: prominent toggle label state on load.
+    var s = document.getElementById("vtp-simple"), a = document.getElementById("vtp-advanced");
+    if (s && a) {
+      s.style.color = isSimple ? "var(--green)" : "var(--text-dim)";
+      a.style.color = isSimple ? "var(--text-dim)" : "var(--green)";
     }
   })();
 
@@ -2780,9 +2854,9 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     var mhBlocked = document.getElementById("mh-blocked");
     if (mhBlocked) mhBlocked.textContent = (data.adsBlocked || 0).toLocaleString();
     var mhWg = document.getElementById("mh-wg-dot");
-    if (mhWg) { mhWg.textContent = "●"; mhWg.style.color = data.tunnels.wg0 ? "var(--green)" : "#ff4444"; }
+    if (mhWg) { mhWg.textContent = "●"; mhWg.style.color = data.tunnels.wg0 ? "var(--green)" : "var(--red)"; }
     var mhTs = document.getElementById("mh-ts-dot");
-    if (mhTs) { mhTs.textContent = "●"; mhTs.style.color = data.tunnels.tailscale ? "var(--green)" : "#ff4444"; }
+    if (mhTs) { mhTs.textContent = "●"; mhTs.style.color = data.tunnels.tailscale ? "var(--green)" : "var(--red)"; }
 
     currentMode = mode;
     updateSimpleIndicator();
@@ -2836,7 +2910,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       if (!data.ok) return;
       const box = document.getElementById("activity-log");
       if (!data.events.length) {
-        box.innerHTML = '<div style="color:#555;text-align:center;padding:12px">No activity yet</div>';
+        box.innerHTML = '<div style="color:var(--text-dim);text-align:center;padding:12px">No activity yet</div>';
         return;
       }
       box.innerHTML = data.events.map(function(e) {
@@ -2844,10 +2918,10 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         var color = ACTIVITY_COLORS[e.type] || "#888";
         var d = new Date(e.ts);
         var time = d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
-        var detail = e.detail ? ' <span style="color:#555">(' + escHtml(e.detail) + ')</span>' : "";
-        return '<div style="padding:4px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:6px;align-items:baseline">'
+        var detail = e.detail ? ' <span style="color:var(--text-dim)">(' + escHtml(e.detail) + ')</span>' : "";
+        return '<div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;gap:6px;align-items:baseline">'
           + '<span>' + icon + '</span>'
-          + '<span style="color:#555;min-width:100px;flex-shrink:0">' + time + '</span>'
+          + '<span style="color:var(--text-dim);min-width:100px;flex-shrink:0">' + time + '</span>'
           + '<span style="color:' + color + '">' + escHtml(e.message) + detail + '</span>'
           + '</div>';
       }).join("");
@@ -2977,7 +3051,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       var details = document.getElementById("wifi-sensing-details");
       if (data.ispWifiDetected && data.detectedNetworks && data.detectedNetworks.length > 0) {
         var names = data.detectedNetworks.map(function(n) { return n.ispName + " (" + esc(n.ssid) + ")"; }).join(", ");
-        details.innerHTML = "Detected ISP WiFi networks nearby: <strong style='color:#ff8888'>" + names + "</strong>. Your ISP router's WiFi radio may be performing physical surveillance (WiFi sensing) inside your home. Disable it or replace your router with a standalone modem.";
+        details.innerHTML = "Detected ISP WiFi networks nearby: <strong style='color:var(--red)'>" + names + "</strong>. Your ISP router's WiFi radio may be performing physical surveillance (WiFi sensing) inside your home. Disable it or replace your router with a standalone modem.";
         alert.style.display = "block";
         localStorage.removeItem("gp-wifi-sensing-dismissed");
       } else {
@@ -3095,8 +3169,8 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     setTimeout(() => {
       btn.dataset.armed = "false";
       btn.textContent = "REBOOT DEVICE";
-      btn.style.borderColor = "#ff444466";
-      btn.style.color = "#ff8888";
+      btn.style.borderColor = "rgba(255,68,68,0.4)";
+      btn.style.color = "var(--red)";
     }, 5000);
   }
 
@@ -3117,8 +3191,8 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     setTimeout(() => {
       btn.dataset.armed = "false";
       btn.textContent = "FACTORY RESET";
-      btn.style.borderColor = "#ff444466";
-      btn.style.color = "#ff8888";
+      btn.style.borderColor = "rgba(255,68,68,0.4)";
+      btn.style.color = "var(--red)";
     }, 5000);
   }
 
@@ -3170,6 +3244,41 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   // Register service worker for PWA installability (network-only, no caching)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('message', function(ev) {
+      if (ev.data && ev.data.type === 'SW_UPDATED') showSwUpdateBanner(ev.data.version);
+    });
+  }
+
+  function showSwUpdateBanner(version) {
+    if (document.getElementById('sw-update-banner')) return;
+    var banner = document.createElement('div');
+    banner.id = 'sw-update-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:1200;'
+      + 'background:linear-gradient(90deg,var(--bg3),var(--bg2));'
+      + 'border-bottom:1px solid var(--green);'
+      + 'color:var(--text);padding:10px 16px;font-size:12px;'
+      + 'display:flex;align-items:center;gap:12px;justify-content:center;'
+      + 'box-shadow:0 2px 12px var(--green-glow);'
+      + "font-family:'Courier New','Consolas',monospace;letter-spacing:1px;";
+    var label = document.createElement('span');
+    label.innerHTML = '✨ <strong style="color:var(--green)">NEW VERSION READY</strong>'
+      + ' <span style="color:var(--text-dim)">(v' + escHtml(version || '') + ')</span> — reload to apply';
+    var reloadBtn = document.createElement('button');
+    reloadBtn.textContent = 'RELOAD';
+    reloadBtn.style.cssText = 'background:var(--green);color:var(--bg);border:none;'
+      + 'padding:6px 14px;border-radius:3px;cursor:pointer;font-weight:bold;'
+      + "font-family:inherit;font-size:11px;letter-spacing:1px;min-height:32px;";
+    reloadBtn.addEventListener('click', function() { window.location.reload(); });
+    var dismissBtn = document.createElement('button');
+    dismissBtn.textContent = '✕';
+    dismissBtn.title = 'Dismiss (until next refresh)';
+    dismissBtn.style.cssText = 'background:transparent;color:var(--text-dim);border:none;'
+      + 'padding:4px 8px;cursor:pointer;font-size:14px;min-height:28px;';
+    dismissBtn.addEventListener('click', function() { banner.remove(); });
+    banner.appendChild(label);
+    banner.appendChild(reloadBtn);
+    banner.appendChild(dismissBtn);
+    document.body.appendChild(banner);
   }
 
   window.addEventListener('beforeinstallprompt', (e) => {
@@ -3506,7 +3615,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   // ── Software Status ──────────────────────────────────────
   async function fetchSoftwareStatus() {
     try {
-      var r = await fetch("/api/system/updates", { headers: { "X-CSRF-Token": csrfToken } });
+      var r = await fetch("/api/system/updates");
       var d = await r.json();
       if (!d.ok) return;
       var list = document.getElementById("software-status-list");
@@ -3552,7 +3661,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     btn.textContent = "UPDATING...";
     btn.disabled = true;
     try {
-      var r = await fetch("/api/system/updates/run", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken } });
+      var r = await fetch("/api/system/updates/run", { method: "POST", headers: { "Content-Type": "application/json" } });
       var d = await r.json();
       var el = document.getElementById("update-result");
       if (d.ok) {
@@ -3893,9 +4002,9 @@ AllowedIPs = 0.0.0.0/0"></textarea>
         var ip = esc(d.ip);
         var shielded = !!d.shielded;
         var dis = fs.on ? '' : ' disabled';
-        h += '<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--bg3,#1a1a1a);font-size:10px">';
+        h += '<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:10px">';
         h += '<div style="flex:1"><div style="color:var(--text)">' + name + '</div><div style="color:var(--text-faint)">' + ip + '</div></div>';
-        h += '<span style="font-size:8px;padding:2px 6px;border-radius:8px;background:' + (shielded ? 'rgba(0,200,83,0.15);color:#0c3' : 'rgba(255,68,68,0.15);color:#f44') + '">' + (shielded ? 'SHIELDED' : 'EXPOSED') + '</span>';
+        h += '<span style="font-size:8px;padding:2px 6px;border-radius:8px;background:' + (shielded ? 'var(--green-13);color:var(--green)' : 'rgba(255,68,68,0.15);color:var(--red)') + '">' + (shielded ? 'SHIELDED' : 'EXPOSED') + '</span>';
         h += '<button class="arsenal-btn" style="font-size:9px;padding:3px 8px"' + dis + ' onclick="window._fsToggleDev(\'' + esc(d.ip) + '\', ' + (!shielded) + ')">' + (shielded ? 'UNSHIELD' : 'SHIELD') + '</button>';
         h += '</div>';
       }
