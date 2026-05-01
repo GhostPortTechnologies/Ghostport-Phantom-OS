@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect RF-environment baseline every 5 minutes (T-0055)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=ghostport-neighbor-baseline.service
+
+[Install]
+WantedBy=timers.target

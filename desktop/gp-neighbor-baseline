@@ -1,0 +1,30 @@
+#!/bin/bash
+# gp-neighbor-baseline — wrapper around gp_neighbor_baseline.py (T-0055).
+# Run via systemd timer ghostport-neighbor-baseline.timer (5-min cadence) or
+# interactively for status/reset.
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+gp-neighbor-baseline — RF-environment baseline + drift alerts
+
+Reads beacon_seen events from the gp_events DB, maintains a 24h rolling
+baseline per BSSID (presence, security, vendor, RSSI, channel). After a
+6h warm-up, alerts via gp_events on:
+  - expected neighbor disappeared
+  - new strong-signal AP appeared
+  - security suite changed on a known BSSID
+  - vendor flipped on a known BSSID
+
+USAGE:
+  gp-neighbor-baseline collect    one tick — used by systemd timer
+  gp-neighbor-baseline status     baseline summary (top 12 BSSIDs)
+  gp-neighbor-baseline reset      wipe baseline state
+  gp-neighbor-baseline --help
+
+State at: ~/.local/share/phantom/neighbor-baseline.json
+EOF
+    exit 0
+fi
+
+exec python3 /opt/ghostport/desktop/gp_neighbor_baseline.py "$@"
