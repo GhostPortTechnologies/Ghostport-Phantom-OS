@@ -491,7 +491,73 @@ class QuartermasterApp(GhostPortApp):
             checks.append((name, False, "Could not read interface statistics",
                            "Check /proc/net/dev", 5))
 
+        # AP airside security — read hostapd.conf, parse only the directives
+        # we care about. NEVER read or log wpa_passphrase / wpa_psk lines per
+        # SECRET-SAFETY-SOP and feedback_redact_secrets_in_audit_reads.
+        ap_directives = self._read_hostapd_directives()
+
+        # 13. AP encryption: WPA3 transition (5 pts)
+        name = "AP Encryption: WPA3"
+        akm = (ap_directives.get("wpa_key_mgmt") or "").upper()
+        if "SAE" in akm:
+            checks.append((name, True, f"hostapd uses WPA3-SAE ({akm})", "", 5))
+        elif "WPA-PSK" in akm:
+            checks.append((name, False, f"hostapd uses WPA2-PSK only ({akm or 'unset'})",
+                           "Set 'wpa_key_mgmt=WPA-PSK SAE' in /etc/hostapd/hostapd.conf for WPA2/WPA3 transition mode, then sudo systemctl restart hostapd", 5))
+        else:
+            checks.append((name, False, "hostapd encryption posture unknown",
+                           "Verify wpa_key_mgmt directive in /etc/hostapd/hostapd.conf", 5))
+
+        # 14. AP Management Frame Protection (3 pts)
+        name = "AP MFP (802.11w)"
+        try:
+            mfp = int(ap_directives.get("ieee80211w") or 0)
+        except (TypeError, ValueError):
+            mfp = 0
+        if mfp == 2:
+            checks.append((name, True, "MFP required (ieee80211w=2) — deauth spoofing blocked", "", 3))
+        elif mfp == 1:
+            checks.append((name, True, "MFP optional (ieee80211w=1)", "", 3))
+        else:
+            checks.append((name, False, "MFP disabled (ieee80211w=0) — deauth spoofing possible",
+                           "Set 'ieee80211w=1' or '2' in /etc/hostapd/hostapd.conf, then sudo systemctl restart hostapd", 3))
+
+        # 15. AP WPS disabled (5 pts)
+        name = "AP WPS Disabled"
+        wps_state = ap_directives.get("wps_state")
+        if wps_state in (None, "", "0"):
+            checks.append((name, True, "WPS not enabled in hostapd config", "", 5))
+        else:
+            checks.append((name, False, f"WPS enabled (wps_state={wps_state}) — PIN-attack surface",
+                           "Remove or comment out 'wps_state=' line in /etc/hostapd/hostapd.conf, then sudo systemctl restart hostapd", 5))
+
         return checks
+
+    def _read_hostapd_directives(self):
+        """Read /etc/hostapd/hostapd.conf and return a {key: value} dict of
+        non-secret directives only. PSK / passphrase lines are explicitly
+        dropped before any return path so callers can't accidentally log them.
+        """
+        SECRET_KEYS = {"wpa_passphrase", "wpa_psk", "wep_key0", "wep_key1",
+                       "wep_key2", "wep_key3", "sae_password",
+                       "auth_server_shared_secret"}
+        out = {}
+        try:
+            stdout, _, rc = self.run_sudo(["cat", "/etc/hostapd/hostapd.conf"])
+            if rc != 0:
+                return out
+        except Exception:
+            return out
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip().lower()
+            if key in SECRET_KEYS:
+                continue  # never enter the dict — defense in depth
+            out[key] = value.strip()
+        return out
 
     def _on_scan(self, btn):
         """Run security scan."""
