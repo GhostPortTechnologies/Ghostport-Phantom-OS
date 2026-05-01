@@ -1,5 +1,5 @@
 // GhostPort PWA Service Worker — cache static assets, offline fallback
-const SW_VERSION = "2.0";
+const SW_VERSION = "2.1";
 const CACHE_NAME = "gp-v" + SW_VERSION;
 const STATIC_ASSETS = [
   "/",
@@ -25,8 +25,20 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
-      .then(() => self.clients.claim())
+      .then(keys => {
+        const oldKeys = keys.filter(k => k !== CACHE_NAME);
+        return Promise.all(oldKeys.map(k => caches.delete(k))).then(() => oldKeys.length);
+      })
+      .then(deletedCount => self.clients.claim().then(() => deletedCount))
+      .then(deletedCount => {
+        // Only notify if this is an upgrade (old caches were deleted), not first install
+        if (deletedCount > 0) {
+          return self.clients.matchAll({ includeUncontrolled: false, type: "window" })
+            .then(clients => {
+              clients.forEach(c => c.postMessage({ type: "SW_UPDATED", version: SW_VERSION }));
+            });
+        }
+      })
   );
 });
 

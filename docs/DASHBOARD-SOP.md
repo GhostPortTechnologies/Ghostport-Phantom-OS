@@ -11,13 +11,14 @@ The lessons here were paid for in debugging time — each section is here becaus
 | File | Role | Size |
 |---|---|---|
 | `/opt/phantom/ghostport-server.js` | Express 5 server, API routes, auth middleware | ~bigger, modular |
-| `/opt/phantom/public/index.html` | Main SPA — **4,164 lines** of mixed HTML/CSS/inline JS | fragile, see §4 |
-| `/opt/phantom/public/app.js` | Dashboard bootstrap + theme engine + polling | ~1,200 lines |
+| `/opt/phantom/public/index.html` | Main SPA — **4,164 lines** of mixed HTML/CSS/inline JS, includes the theme engine, status polling, and SPA bootstrap | fragile, see §4 |
 | `/opt/phantom/public/topology.js` | Network topology SVG visualization | ~800 lines |
 | `/opt/phantom/public/arsenal.js` | Security tools module | n/a |
 | `/opt/phantom/public/bg-effects.js` | Background animation | n/a |
 | `/opt/phantom/public/login.html` + `login.js` | Passcode login page | n/a |
 | `/opt/phantom/public/sw.js` | Service worker (PWA) | n/a |
+
+**Note (2026-05-01, T-0073):** A previous extraction effort (`v1.4 NIST sprint`) split inline JS out into `app.js` but the matching `<script src>` tag was never added to index.html. The file existed as dead code for months. It has been deleted. The theme engine + status polling + SPA bootstrap all live in the **inline `<script>` block in `index.html`** (starting around line 2530). Don't go looking for them in app.js — it's gone.
 
 Ports:
 - **4200** — plain HTTP
@@ -28,7 +29,7 @@ Ports:
 
 ## 2. Auth-Gates Static Files (Major Debugging Gotcha)
 
-**Every static asset is session-gated.** `GET /topology.js`, `/app.js`, even `/index.html` return **302 → `/login.html`** without a valid `gp_session` cookie.
+**Every static asset is session-gated.** `GET /topology.js`, `/arsenal.js`, even `/index.html` return **302 → `/login.html`** without a valid `gp_session` cookie.
 
 This means **you cannot `curl` a static file to verify your edit is live** until you log in first. If you skip the login step you'll chase a seadevil bug — thinking the server isn't serving the new file when really you're just fetching a 33-byte redirect stub.
 
@@ -69,7 +70,7 @@ The dashboard has a live theme picker (color picker + RGB breathing mode). It wo
 --red, --amber
 ```
 
-Theme engine lives in `app.js` — `applyThemeVars()` around line 562, `setColorTheme()` around line 572, `hueToTheme()` around line 542. RGB breathing mode updates these at ~30 fps.
+Theme engine lives in `index.html`'s inline `<script>` block — `applyThemeVars()`, `setColorTheme()`, `hueToTheme()` are defined inline (search by name). RGB breathing mode updates these at ~30 fps via `requestAnimationFrame`. The `THEME_COLORS` palette object and the `packColors` theme-pack swatches are also inline.
 
 ### Rules for any new visual component
 
@@ -109,7 +110,7 @@ Any match is a bug unless it's inside a semantic-color constant.
 
 ### Rules
 
-- **Prefer editing `app.js` or a new/existing `.js` file**, not inline `<script>` in index.html. The big inline `<script>` block starting around line 2345 is the SPA core — edits there need extra care.
+- **Prefer creating a new external `.js` file** over editing the big inline `<script>` block in index.html (the SPA core, ~lines 2530-4036). New external files load alongside `arsenal.js` / `topology.js` — pattern is in §4 below. Edits to the inline block need extra care.
 - **Never delegate CSP or inline-handler changes to a sub-agent.** Do them yourself, verify every change by hand. (From `feedback_csp_failure.md`.)
 - **Never touch index.html unless explicitly asked.** From `feedback_no_ui_changes.md` and the user's standing rule. If adding a visual component, put the JS in its own file and add a single `<script src="yourfile.js">` tag — don't bloat the inline block.
 - **The `.bak-*` files alongside index.html are intentional rollback points** — leave them alone.

@@ -365,8 +365,9 @@ async function arsenalToggle(feature) {
   if (!cfg) return;
 
   const toggle = document.getElementById(cfg.togId);
-  // Mode-locked toggles refuse interaction (Kill Switch in non-tunnel modes; QUIC in tunnel/ZT)
-  if (toggle.classList.contains("locked")) {
+  // T-0066: setToggleEnabled disables pointer-events for mode-locked toggles, but keep
+  // a defensive check (programmatic calls or future synthetic events should also bail).
+  if (toggle.classList.contains("disabled")) {
     log(`Arsenal: ${feature} is locked by the current mode — change mode to control it`, "warn");
     return;
   }
@@ -1016,9 +1017,6 @@ function formatBytes(bytes) {
   return bytes + " B";
 }
 
-var bwPrev = null;
-var bwPrevTime = null;
-
 function formatRate(bytesPerSec) {
   if (bytesPerSec >= 1e6) return (bytesPerSec / 1e6).toFixed(1) + " MB/s";
   if (bytesPerSec >= 1e3) return (bytesPerSec / 1e3).toFixed(1) + " KB/s";
@@ -1029,39 +1027,34 @@ async function fetchBandwidth() {
   const result = document.getElementById("bandwidth-result");
   if (!result) return;
   try {
-    const res = await fetch(ARSENAL_API + "/api/tools/bandwidth");
+    // T-0070: migrated from /api/tools/bandwidth (raw counters, deltas computed client-side)
+    // to /api/tools/bandwidth/rate (server returns precomputed rx_rate_bps/tx_rate_bps).
+    // Endpoint is shared with the TRAFFIC MONITOR poll in index.html's inline block.
+    const res = await fetch(ARSENAL_API + "/api/tools/bandwidth/rate");
     const data = await res.json();
     if (data.ok) {
-      var now = Date.now();
       var labels = { eth0: "WAN", wlan0: "WiFi AP", wg0: "WireGuard", tailscale0: "Tailscale" };
       var colors = { eth0: "#00e5ff", wlan0: "#00c853", wg0: "#ff9f43", tailscale0: "#888" };
-      var elapsed = bwPrev && bwPrevTime ? (now - bwPrevTime) / 1000 : 0;
 
       result.innerHTML = Object.entries(data.interfaces).map(function(entry) {
         var iface = entry[0], s = entry[1];
-        var rxRate = 0, txRate = 0;
-        if (elapsed > 0 && bwPrev && bwPrev[iface]) {
-          rxRate = Math.max(0, (s.rx - bwPrev[iface].rx) / elapsed);
-          txRate = Math.max(0, (s.tx - bwPrev[iface].tx) / elapsed);
-        }
+        var rxRate = s.rx_rate_bps || 0;
+        var txRate = s.tx_rate_bps || 0;
         var c = colors[iface] || "#888";
         return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'
           + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">'
           + '<span style="color:' + c + ';font-size:12px;font-weight:600">' + (labels[iface] || iface) + '</span>'
-          + '<span style="color:var(--text-dim);font-size:10px">Total: ' + formatBytes(s.rx + s.tx) + '</span>'
+          + '<span style="color:var(--text-dim);font-size:10px">Total: ' + formatBytes(s.rx_bytes + s.tx_bytes) + '</span>'
           + '</div>'
           + '<div style="display:flex;gap:16px;font-size:11px">'
           + '<span style="color:var(--green)">↓ ' + formatRate(rxRate) + '</span>'
           + '<span style="color:var(--amber)">↑ ' + formatRate(txRate) + '</span>'
-          + '<span style="color:var(--text-dim);margin-left:auto">↓ ' + formatBytes(s.rx) + ' / ↑ ' + formatBytes(s.tx) + '</span>'
+          + '<span style="color:var(--text-dim);margin-left:auto">↓ ' + formatBytes(s.rx_bytes) + ' / ↑ ' + formatBytes(s.tx_bytes) + '</span>'
           + '</div>'
           + '</div>';
       }).join("");
-
-      bwPrev = data.interfaces;
-      bwPrevTime = now;
     }
-  } catch (e) { /* silent */ }
+  } catch (e) { /* silent — endpoint may return 429 if a parallel /rate poll overlaps */ }
 }
 
 // ── Recent Blocked Domains ───────────────────────────────────
@@ -1639,9 +1632,32 @@ fetchBlocked();
   setEnemiesExpanded(expanded);
 })();
 fetchWgStatus();
-setInterval(fetchArsenalStatus, 10000);
-setInterval(fetchClients, 15000);
-setInterval(fetchBandwidth, 5000);
+// T-0071: track interval IDs so visibilitychange can pause polling when the tab
+// is hidden — saves Pi CPU + bandwidth when dashboard is in a background tab.
+// Pattern mirrors topology.js (line 768-778). Bound once across module lifetime.
+var _arsenalTimers = [];
+function _startArsenalPollers() {
+  if (_arsenalTimers.length) return; // already polling
+  _arsenalTimers.push(setInterval(fetchArsenalStatus, 10000));
+  _arsenalTimers.push(setInterval(fetchClients, 15000));
+  _arsenalTimers.push(setInterval(fetchBandwidth, 5000));
+}
+function _stopArsenalPollers() {
+  _arsenalTimers.forEach(clearInterval);
+  _arsenalTimers = [];
+}
+_startArsenalPollers();
+document.addEventListener("visibilitychange", function() {
+  if (document.hidden) {
+    _stopArsenalPollers();
+  } else {
+    // Refetch once immediately so user sees fresh data when they return
+    fetchArsenalStatus();
+    fetchClients();
+    fetchBandwidth();
+    _startArsenalPollers();
+  }
+});
 
 // A11y: custom toggle divs (.toggle-switch, .dn-check) are not real <input>s,
 // so browsers never give them focus or keyboard activation for free. One-time
