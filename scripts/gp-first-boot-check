@@ -134,8 +134,8 @@ else
     record "dns.resolves" FAIL "no answer from 127.0.0.1:53"
 fi
 
-# Pi-hole FTL responds to its summary endpoint
-if curl -s --max-time 3 "http://localhost/admin/api.php?summary" 2>&1 | grep -q "dns_queries_today"; then
+# Pi-hole FTL responds to its summary endpoint (v6 via gp-pihole helper)
+if timeout 5 gp-pihole summary 2>/dev/null | grep -q '"queries"'; then
     record "dns.pihole" OK "Pi-hole API responding"
 else
     record "dns.pihole" WARN "Pi-hole API not responsive (may still work for clients)"
