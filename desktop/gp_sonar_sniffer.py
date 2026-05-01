@@ -46,7 +46,7 @@ except Exception as _e:  # pragma: no cover
     sys.exit(0)
 
 try:
-    from scapy.all import sniff, Dot11, Dot11Deauth, Dot11Beacon, EAPOL
+    from scapy.all import sniff, Dot11, Dot11Deauth, Dot11Beacon, Dot11Elt, EAPOL, RadioTap
 except Exception as _e:  # pragma: no cover
     print(f"[gp-sonar-sniffer] scapy unavailable ({_e}); exiting 0", file=sys.stderr)
     sys.exit(0)
@@ -66,6 +66,55 @@ DEAUTH_DEDUP_INTERVAL_S = 5
 EAPOL_DEDUP_INTERVAL_S = 30
 # Per-key dedup map size cap (LRU eviction).
 DEDUP_MAX = 1024
+
+# OUI vendor lookup — top consumer + enterprise vendors seen in residential RF.
+# Universally-administered MACs only; locally-administered (LA-bit set) returns
+# None because they're typically virtual/random privacy MACs without vendor info.
+# Format: lowercase "xx:xx:xx" → vendor short name.
+OUI_TABLE = {
+    # Major US ISP / gateway vendors
+    "1c:93:7c": "Sercomm/Cox",
+    "40:e1:e4": "T-Mobile",
+    "00:24:d4": "Comcast",
+    "00:1f:e2": "Verizon",
+    "94:9b:2c": "Sagemcom",
+    "44:fb:5a": "Sagemcom",
+    "00:1d:c1": "Cisco",
+    # Apple
+    "f0:18:98": "Apple", "a4:5e:60": "Apple", "8c:85:90": "Apple",
+    "f4:0f:24": "Apple", "3c:22:fb": "Apple", "ac:bc:32": "Apple",
+    # Google / Nest / Pixel
+    "1c:f2:9a": "Google", "44:07:0b": "Google", "94:eb:cd": "Google",
+    "f4:f5:d8": "Google", "f4:f5:e8": "Google",
+    # Amazon / Eero / Lab126
+    "f8:bb:bf": "Eero", "70:8a:09": "Eero", "fc:65:de": "Amazon", "44:65:0d": "Amazon",
+    # Common consumer router brands
+    "a4:2b:b0": "TP-Link", "50:c7:bf": "TP-Link", "98:da:c4": "ASUS",
+    "10:0d:7f": "Netgear", "20:0c:c8": "Netgear",
+    "00:0d:b9": "PC Engines", "c0:c9:e3": "Linksys", "60:38:e0": "Belkin",
+    "04:42:1a": "Belkin", "00:90:4c": "Epigram/Broadcom",
+    # IoT / printers / mesh
+    "fa:b4:6a": "HP", "98:e7:f4": "HP", "70:5a:0f": "HP",
+    # ISP gateway OEMs seen in residential RF (TMOBILE-/SETUP- family devices)
+    "ac:df:9f": "Sagemcom/T-Mobile", "12:a7:93": "ISP-gateway",
+    "00:80:77": "Brother", "30:cd:a7": "Samsung",
+    "b0:7f:b9": "Roku", "ac:3a:7a": "Roku",
+    # Wi-Fi chip vendors (often appear in vendor IEs, sometimes as primary)
+    "00:03:7f": "Atheros", "8c:fd:f0": "Qualcomm",
+    "00:50:f2": "Microsoft",  # WPS / WMM IE OUI
+    # Espressif (ESP8266/ESP32 — DIY IoT)
+    "84:0d:8e": "Espressif", "fc:f5:c4": "Espressif", "a4:cf:12": "Espressif",
+    # Raspberry Pi Foundation
+    "b8:27:eb": "Raspberry Pi", "dc:a6:32": "Raspberry Pi",
+    "e4:5f:01": "Raspberry Pi", "2c:cf:67": "Raspberry Pi",
+    # Intel / Broadcom (Wi-Fi adapters in laptops/phones)
+    "ac:de:48": "Intel", "00:13:46": "Intel", "94:65:9c": "Intel",
+    # Ubiquiti / MikroTik (prosumer / SMB)
+    "44:d9:e7": "Ubiquiti", "fc:ec:da": "Ubiquiti",
+    "4c:5e:0c": "MikroTik", "b8:69:f4": "MikroTik",
+    # Aruba / HPE
+    "20:4c:03": "Aruba", "94:b4:0f": "Aruba",
+}
 
 
 # ── Per-frame handlers ────────────────────────────────────────────────
@@ -98,24 +147,221 @@ def _bssid_of(pkt):
         return "??"
 
 
-def _ssid_from_beacon(pkt):
-    """Extract SSID from a beacon's elements list. Returns '' on failure."""
+def _walk_ies(pkt):
+    """Yield (id, bytes) for every Dot11Elt in the frame, including IE-extension
+    (id=255) which carries the ext-id as the first byte of payload."""
     try:
-        # scapy exposes the SSID via the info field on the Dot11Elt with ID=0
-        elt = pkt.getlayer("Dot11Elt")
-        while elt is not None:
-            if getattr(elt, "ID", None) == 0:
-                info = getattr(elt, "info", b"") or b""
-                if isinstance(info, bytes):
-                    try:
-                        return info.decode("utf-8", errors="replace")
-                    except Exception:
-                        return info.hex()
-                return str(info)
-            elt = elt.payload.getlayer("Dot11Elt") if elt.payload else None
+        elt = pkt.getlayer(Dot11Elt)
     except Exception:
-        pass
+        return
+    while elt is not None:
+        eid = getattr(elt, "ID", None)
+        info = getattr(elt, "info", b"") or b""
+        if eid is not None:
+            yield int(eid), bytes(info) if not isinstance(info, bytes) else info
+        try:
+            elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
+        except Exception:
+            break
+
+
+def _ssid_from_beacon(pkt):
+    """Extract SSID from IE 0. Returns '' on failure."""
+    for eid, info in _walk_ies(pkt):
+        if eid == 0:
+            try:
+                return info.decode("utf-8", errors="replace")
+            except Exception:
+                return info.hex()
     return ""
+
+
+def _is_hidden(ssid_str, ssid_bytes_present):
+    """Hidden SSID: empty string, or all-NUL bytes, or no IE 0 at all."""
+    if not ssid_bytes_present:
+        return True
+    return ssid_str == "" or all(c == "\x00" for c in ssid_str)
+
+
+def _radiotap_signal(pkt):
+    """Extract RSSI / freq / channel from RadioTap. Returns dict of available
+    fields; missing fields omitted rather than None-filled."""
+    out = {}
+    try:
+        rt = pkt.getlayer(RadioTap)
+    except Exception:
+        return out
+    if rt is None:
+        return out
+    rssi = getattr(rt, "dBm_AntSignal", None)
+    if rssi is not None:
+        out["rssi_dbm"] = int(rssi)
+    freq = getattr(rt, "ChannelFrequency", None) or getattr(rt, "Channel", None)
+    if freq is not None:
+        out["freq_mhz"] = int(freq)
+        out["channel"] = _freq_to_channel(int(freq))
+    return out
+
+
+def _freq_to_channel(freq_mhz):
+    """Map a freq in MHz to a channel number. Returns 0 on unrecognized band."""
+    if 2412 <= freq_mhz <= 2472:
+        return (freq_mhz - 2407) // 5
+    if freq_mhz == 2484:
+        return 14
+    if 5170 <= freq_mhz <= 5895:
+        return (freq_mhz - 5000) // 5
+    if 5955 <= freq_mhz <= 7115:  # 6 GHz / Wi-Fi 6E
+        return (freq_mhz - 5950) // 5
+    return 0
+
+
+_RSN_AKM = {
+    1: "1x", 2: "psk", 3: "ft-1x", 4: "ft-psk",
+    5: "1x-sha256", 6: "psk-sha256", 7: "tdls",
+    8: "sae", 9: "ft-sae", 11: "1x-suite-b",
+    12: "1x-suite-b-192", 18: "owe",
+}
+_RSN_CIPHER = {
+    1: "wep40", 2: "tkip", 4: "ccmp", 5: "wep104",
+    6: "bip-cmac-128", 8: "gcmp-128", 9: "gcmp-256",
+    10: "ccmp-256", 11: "bip-gmac-128", 12: "bip-gmac-256",
+}
+
+
+def _security_suite(pkt, cap_privacy):
+    """Parse RSN IE 48 (and Microsoft WPA1 IE 221/00:50:F2 type 1) into a
+    security descriptor: {present, akm:[...], cipher, mfp}.
+
+    cap_privacy: bool from beacon capability flags. Privacy=1 + no RSN+no WPA1
+    IE = WEP. Privacy=0 = open."""
+    out = {"present": False, "akm": [], "cipher": None, "mfp": "absent"}
+    rsn_seen = False
+    wpa1_seen = False
+
+    for eid, info in _walk_ies(pkt):
+        if eid == 48:  # RSN (WPA2/WPA3)
+            rsn_seen = True
+            try:
+                # RSN IE format: version(2) + group_cipher(4) + pcs_count(2)
+                # + pcs_list(4*N) + akm_count(2) + akm_list(4*M) + caps(2)
+                if len(info) < 8:
+                    continue
+                # group cipher (skip OUI 3 bytes, take type byte)
+                out["cipher"] = _RSN_CIPHER.get(info[5], f"unk({info[5]})")
+                # pcs count
+                pcs_n = int.from_bytes(info[6:8], "little")
+                pos = 8 + 4 * pcs_n
+                if len(info) < pos + 2:
+                    continue
+                # akm count
+                akm_n = int.from_bytes(info[pos:pos + 2], "little")
+                pos += 2
+                akms = []
+                for i in range(akm_n):
+                    if len(info) < pos + 4 * (i + 1):
+                        break
+                    akm_type = info[pos + 4 * i + 3]
+                    akms.append(_RSN_AKM.get(akm_type, f"unk({akm_type})"))
+                if akms:
+                    out["akm"] = akms
+                # RSN capabilities (2 bytes after akm list)
+                cap_pos = pos + 4 * akm_n
+                if len(info) >= cap_pos + 2:
+                    rsn_caps = int.from_bytes(info[cap_pos:cap_pos + 2], "little")
+                    mfp_required = bool(rsn_caps & 0x40)
+                    mfp_capable = bool(rsn_caps & 0x80)
+                    if mfp_required:
+                        out["mfp"] = "required"
+                    elif mfp_capable:
+                        out["mfp"] = "capable"
+                    else:
+                        out["mfp"] = "absent"
+            except Exception:
+                pass
+        elif eid == 221:  # vendor-specific
+            # Microsoft WPA1: OUI 00:50:F2, type 1
+            if len(info) >= 4 and info[:3] == b"\x00\x50\xf2" and info[3] == 1:
+                wpa1_seen = True
+
+    if rsn_seen:
+        out["present"] = True
+        # RSN + AKM containing SAE = WPA3; PSK only = WPA2; mixed = WPA2/3 transition
+        if any(a in ("sae", "ft-sae", "owe") for a in out["akm"]):
+            out["mode"] = "wpa3" if not any(a in ("psk", "psk-sha256") for a in out["akm"]) else "wpa2/3"
+        elif any(a in ("psk", "psk-sha256") for a in out["akm"]):
+            out["mode"] = "wpa2"
+        elif any(a.startswith("1x") for a in out["akm"]):
+            out["mode"] = "wpa2-enterprise"
+        else:
+            out["mode"] = "wpa2-other"
+    elif wpa1_seen:
+        out["present"] = True
+        out["mode"] = "wpa1"
+    elif cap_privacy:
+        out["present"] = True
+        out["mode"] = "wep"
+    else:
+        out["mode"] = "open"
+    return out
+
+
+def _phy_type(pkt, freq_mhz=0):
+    """Detect highest-supported PHY: ax > ac > n > a/g/b. Walks IEs once."""
+    has_ht = has_vht = has_he = False
+    for eid, info in _walk_ies(pkt):
+        if eid == 45:
+            has_ht = True
+        elif eid == 191:
+            has_vht = True
+        elif eid == 255 and len(info) >= 1:
+            ext_id = info[0]
+            if ext_id in (35, 36):  # HE Capabilities / HE Operation
+                has_he = True
+    if has_he:
+        return "ax"
+    if has_vht:
+        return "ac"
+    if has_ht:
+        return "n"
+    if freq_mhz >= 5000:
+        return "a"
+    return "g"
+
+
+def _wps_state(pkt):
+    """Detect WPS via vendor IE 221 with OUI 00:50:F2 type 4. Returns
+    'configured', 'unconfigured', or 'absent'."""
+    for eid, info in _walk_ies(pkt):
+        if eid != 221 or len(info) < 5:
+            continue
+        if info[:3] != b"\x00\x50\xf2" or info[3] != 4:
+            continue
+        # WPS attributes are TLV: 2-byte BE attr-id, 2-byte BE length, value.
+        # Walk for attr 0x1044 (WPS State): 1-byte value.
+        pos = 4
+        body = info[4:]
+        i = 0
+        while i + 4 <= len(body):
+            attr_id = int.from_bytes(body[i:i + 2], "big")
+            attr_len = int.from_bytes(body[i + 2:i + 4], "big")
+            if i + 4 + attr_len > len(body):
+                break
+            if attr_id == 0x1044 and attr_len >= 1:
+                state = body[i + 4]
+                return "configured" if state == 0x02 else "unconfigured"
+            i += 4 + attr_len
+        return "configured"  # WPS IE present but no explicit state attr
+    return "absent"
+
+
+def _vendor_oui(bssid):
+    """Lookup vendor by BSSID OUI. Returns short name or None on miss.
+    Some real devices (HP printers, etc.) ship with LA-flagged OUIs, so we
+    don't pre-filter LA — we just try the table. Privacy MACs miss naturally."""
+    if not bssid or len(bssid) < 8:
+        return None
+    return OUI_TABLE.get(bssid[:8].lower())
 
 
 def make_handler(rate):
@@ -160,12 +406,32 @@ def make_handler(rate):
                 bssid = _bssid_of(pkt)
                 ssid = _ssid_from_beacon(pkt)
                 if rate.should_emit(("beacon", bssid), BEACON_EMIT_INTERVAL_S):
+                    # Enrichment — RadioTap signal, PHY, security, vendor, WPS.
+                    # Each helper is best-effort; missing fields drop out of the
+                    # details dict rather than carrying None placeholders.
+                    rt = _radiotap_signal(pkt)
+                    freq = rt.get("freq_mhz", 0)
+                    cap = int(getattr(pkt.getlayer(Dot11Beacon), "cap", 0) or 0)
+                    cap_privacy = bool(cap & 0x10)
+                    beacon = pkt.getlayer(Dot11Beacon)
+                    interval = getattr(beacon, "beacon_interval", 0) or 0
+                    details = {
+                        "ssid": ssid,
+                        "bssid": bssid,
+                        "hidden": _is_hidden(ssid, ssid != ""),
+                        "phy": _phy_type(pkt, freq),
+                        "security": _security_suite(pkt, cap_privacy),
+                        "vendor": _vendor_oui(bssid),
+                        "wps": _wps_state(pkt),
+                        "interval_ms": round(interval * 1.024, 1),
+                    }
+                    details.update(rt)  # rssi_dbm, freq_mhz, channel
                     gp_events.emit(
                         source="sonar-sniffer",
                         category="beacon_seen",
                         severity=gp_events.SEVERITY_INFO,
                         summary=f"beacon observed: {ssid or '(hidden)'} ({bssid})",
-                        details={"ssid": ssid, "bssid": bssid},
+                        details=details,
                     )
                 return
         except Exception as e:
