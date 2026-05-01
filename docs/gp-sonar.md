@@ -28,3 +28,18 @@ Launch: desktop icon, or `python3 /opt/phantom/desktop/gp-sonar.py`
 - **"hostapd.conf unreadable"** → file permissions changed; `sudo chmod 644 /etc/hostapd/hostapd.conf` (safe — it contains the AP passphrase only visible to root already).
 - **Slow scans** → 2.4+5 GHz passive scan takes 30–45s. Don't close the app mid-scan; let it finish.
 - **Neighbor AP with same SSID but different BSSID** → usually a repeater or the neighbor genuinely chose the same SSID. Sonar flags it regardless; review MAC OUI to decide.
+
+## Future Work (deferred research)
+
+Tracked under AI-TICKET-SOP. Not on the active queue; split into individual tickets if/when prioritized.
+
+**T-0022 — Behavior gaps** (low): encounter log persistence, scan history viewer, deferred wishlist items already expected by users.
+
+**T-0033 — Research-grade capabilities** (low):
+- **Signal triangulation** — wlan0 + monitor-radio RSSI delta as a coarse "in this room? down the street?" hint. Depends on T-0028 (USB monitor radio).
+- **PMKID extraction + offline crack** — capture PMKID from neighboring AP beacons and dictionary-test. *Ethically gated:* own-AP allow-list only; hard toggle. Depends on T-0028.
+- **Threat-report PDF** — formal incident report (BSSIDs, signal-over-time, IE diffs, signature hits, timestamps) for hand-off to law enforcement / researchers. weasyprint or reportlab.
+- **Wardriving overlay** — laptop-only timestamp + GPS log of AP sightings, cross-referenced against WiGLE (T-0030). Niche.
+- **STIX/TAXII federation** — auto-publish detected evil-twin / attack-tool sightings as IOCs to a community feed. *Privacy-gated:* opt-in, anonymized BSSID hashing, aggregate-only.
+
+See `gp-tickets show T-0022` / `gp-tickets show T-0033` for full design notes.

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """gp-sonar — SONAR: Rogue AP / Evil Twin WiFi Scanner for Phantom OS"""
-import sys, os, re, json, time, subprocess, hashlib, secrets
+import sys, os, re, json, time, copy, subprocess, hashlib, secrets
+from collections import OrderedDict
 sys.path.insert(0, "/opt/phantom/desktop")
 from gp_app_base import GhostPortApp
 import gp_events
+import gp_sonar_wigle
+import gp_sonar_encounters
+import gp_sonar_history
+import gp_sonar_anomaly  # T-0040: behavioral anomaly scoring
+import gp_sonar_report  # T-0037: full session report builder
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -17,6 +23,41 @@ HOSTAPD_CONF = "/etc/hostapd/hostapd.conf"
 # Attack-toolkit signature database. User override > bundled default.
 SIGNATURES_FILE_USER = "/etc/phantom/sonar-signatures.json"
 SIGNATURES_FILE_BUNDLED = "/opt/phantom/desktop/sonar-signatures.json"
+
+# T-0036: background-detect state. gp-sonar-detect helper writes; GUI reads.
+# Same path it uses to dedup; the state JSON has last_run + findings list.
+BG_STATE_FILE = os.path.expanduser("~/.local/share/phantom/sonar-detect-state.json")
+BG_POLL_INTERVAL_SEC = 30
+
+# T-0046: rogue-block CLI from T-0031 Phase A. The button only appears when
+# the wrapper is installed (operator action: sudo install gp-rogue-block to
+# /usr/local/bin/). State file is what the wrapper writes to track armed
+# blocks; the GUI reads it to decide Arm vs Release rendering and to drive
+# the armed-state banner.
+ROGUE_BLOCK_CMD = "/usr/local/bin/gp-rogue-block"
+ROGUE_BLOCKS_FILE = os.path.expanduser("~/.local/share/phantom/rogue-blocks.json")
+ROGUE_POLL_INTERVAL_SEC = 30
+
+# Bounded session memory (T-0017). Long-running Sonar GUI on busy/hostile
+# RF environments can otherwise grow these without limit. Oldest entries
+# evict first via OrderedDict.popitem(last=False).
+MAX_KARMA_RIGS = 5000
+MAX_EMITTED_EVENTS = 5000
+
+# T-0027: dual-band scan. wlan0 in AP mode (5GHz channel 149) historically
+# only saw 5GHz beacons — a 2.4GHz Pineapple within range was invisible.
+# We pass an explicit `freq <list>` to iw so the driver scans both bands.
+# Some chipsets refuse to leave the AP channel and will return only the
+# operating band's results; the caller falls back gracefully (run_scan).
+SCAN_FREQS_24 = [2407 + ch * 5 for ch in range(1, 14)]   # ch 1..13
+SCAN_FREQS_5 = [
+    5180, 5200, 5220, 5240,                              # UNII-1 (36-48)
+    5260, 5280, 5300, 5320,                              # UNII-2A DFS
+    5500, 5520, 5540, 5560, 5580, 5600, 5620, 5640,      # UNII-2C DFS
+    5660, 5680, 5700, 5720,
+    5745, 5765, 5785, 5805, 5825,                        # UNII-3 (149-165)
+]
+SCAN_FREQS_ALL = SCAN_FREQS_24 + SCAN_FREQS_5
 
 # Karma hunt: SSIDs commonly auto-saved on phones/laptops that wordlist-Karma
 # rigs target. We probe for these AND a set of random decoys; any rig that
@@ -38,8 +79,63 @@ KARMA_RANDOM_COUNT = 5
 KARMA_RANDOM_PREFIX = "gp-decoy-"
 
 
+def _decode_iw_ssid(s):
+    """Inverse of iw's print_ssid_escaped: decodes \\xNN and \\\\ back to bytes,
+    then UTF-8 decodes. Without this, SSIDs with non-printable / multi-byte
+    chars retain literal \\xNN sequences and fail equality checks against our
+    own SSID, breaking evil-twin / spoofed-IE detection.
+    """
+    if "\\" not in s:
+        return s
+    buf = bytearray()
+    i = 0
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if c == '\\' and i + 1 < n:
+            nxt = s[i+1]
+            if nxt == '\\':
+                buf.append(0x5C)
+                i += 2
+                continue
+            if nxt == 'x' and i + 3 < n:
+                try:
+                    buf.append(int(s[i+2:i+4], 16))
+                    i += 4
+                    continue
+                except ValueError:
+                    pass
+        buf.extend(c.encode('utf-8'))
+        i += 1
+    return buf.decode('utf-8', errors='replace')
+
+
+def _resolve_encryption(signals):
+    """Resolve encryption from a set of iw-output signals using fixed
+    precedence (WPA3 > WPA2 > WPA > WEP > Open). Order-independent so
+    driver/version variance in iw output ordering doesn't flip results.
+    """
+    has_rsn = "rsn" in signals
+    has_wpa = "wpa" in signals
+    has_sae = "sae" in signals
+    has_mfp = "group_mgmt" in signals
+    if (has_sae or has_mfp) and (has_rsn or has_wpa):
+        return "WPA3"
+    if has_rsn:
+        return "WPA2"
+    if has_wpa:
+        return "WPA"
+    if "wep" in signals or "privacy" in signals:
+        return "WEP"
+    return "Open"
+
+
 def get_our_ap():
-    """Read our own AP SSID and BSSID from hostapd config and interface."""
+    """Read our own AP SSID and BSSID. Tries hostapd.conf first; falls back to
+    `iw dev wlan0 info` if hostapd.conf is unreadable (a future hardening pass
+    tightening to 0640 root:hostapd would otherwise silently break evil-twin
+    detection).
+    """
     ssid = ""
     bssid = ""
     try:
@@ -47,12 +143,13 @@ def get_our_ap():
             for line in f:
                 if line.startswith("ssid="):
                     ssid = line.strip().split("=", 1)[1]
-                elif line.startswith("interface="):
-                    iface = line.strip().split("=", 1)[1]
-        # Get BSSID from interface
+                    break
+    except Exception:
+        pass
+    try:
         result = subprocess.run(
             ["ip", "link", "show", "wlan0"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
         )
         for line in result.stdout.splitlines():
             line = line.strip()
@@ -61,6 +158,19 @@ def get_our_ap():
                 break
     except Exception:
         pass
+    if not ssid:
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", "iw", "dev", "wlan0", "info"],
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("ssid "):
+                    ssid = _decode_iw_ssid(stripped[5:].strip())
+                    break
+        except Exception:
+            pass
     return ssid, bssid
 
 
@@ -95,13 +205,16 @@ def load_trusted_aps():
 
 
 def save_trusted_aps(trusted):
-    """Save trusted AP list to JSON file (always in the dict schema)."""
-    try:
-        os.makedirs(os.path.dirname(TRUSTED_APS_FILE), exist_ok=True)
-        with open(TRUSTED_APS_FILE, "w") as f:
-            json.dump(trusted, f, indent=2)
-    except Exception:
-        pass
+    """Save trusted AP list to JSON file atomically. Raises OSError on failure
+    so callers can surface the error instead of pretending the write succeeded.
+    """
+    os.makedirs(os.path.dirname(TRUSTED_APS_FILE), exist_ok=True)
+    tmp = TRUSTED_APS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(trusted, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, TRUSTED_APS_FILE)
 
 
 # ── Attack-toolkit signature DB ───────────────────────────────────────
@@ -120,7 +233,14 @@ def save_trusted_aps(trusted):
 # Severity must be one of: warning, suspicious, dangerous
 
 def load_signatures():
-    """Load the attack-toolkit signatures, preferring the user override."""
+    """Load the attack-toolkit signatures, preferring the user override.
+
+    Returns (signatures, error_msg). error_msg is non-None when the USER
+    override exists but fails to load — the caller should surface it so the
+    user knows their custom DB isn't active and we silently fell back to the
+    bundled defaults.
+    """
+    user_error = None
     for path in (SIGNATURES_FILE_USER, SIGNATURES_FILE_BUNDLED):
         try:
             with open(path) as f:
@@ -134,12 +254,18 @@ def load_signatures():
                             s["_ssid_re"] = re.compile(m["ssid_regex"])
                         except re.error:
                             s["_ssid_re"] = None
-                return [s for s in sigs if s.get("id") and s.get("name")]
-        except (FileNotFoundError, json.JSONDecodeError):
+                return [s for s in sigs if s.get("id") and s.get("name")], user_error
+        except FileNotFoundError:
             continue
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            if path == SIGNATURES_FILE_USER:
+                user_error = (
+                    f"Sonar: custom signature DB at {path} failed to load ({e}); "
+                    f"falling back to bundled defaults — your overrides are NOT active."
+                )
+                sys.stderr.write(f"[gp-sonar] {user_error}\n")
             continue
-    return []
+    return [], user_error
 
 
 def match_signatures(ap, signatures, ie_lines=None):
@@ -300,6 +426,7 @@ def parse_iw_scan(output, our_ssid, our_bssid, trusted_aps, signatures=None):
                 "ie_lines": [],
                 "ie_fingerprint": "",
                 "signature_match": None,
+                "_enc_signals": set(),
             }
             continue
 
@@ -310,7 +437,7 @@ def parse_iw_scan(output, our_ssid, our_bssid, trusted_aps, signatures=None):
         current["ie_lines"].append(line)
 
         if line_stripped.startswith("SSID:"):
-            current["ssid"] = line_stripped[5:].strip()
+            current["ssid"] = _decode_iw_ssid(line_stripped[5:].strip())
         elif line_stripped.startswith("freq:"):
             try:
                 current["freq"] = int(line_stripped.split(":")[1].strip())
@@ -324,30 +451,30 @@ def parse_iw_scan(output, our_ssid, our_bssid, trusted_aps, signatures=None):
             ch_match = re.search(r'channel\s+(\d+)', line_stripped)
             if ch_match:
                 current["channel"] = int(ch_match.group(1))
-        elif "RSN:" in line_stripped or "WPA:" in line_stripped:
-            if "RSN:" in line_stripped:
-                current["encryption"] = "WPA2"
-                current["wpa_version"] = "RSN"
-            elif "WPA:" in line_stripped:
-                if current["encryption"] == "Open":
-                    current["encryption"] = "WPA"
-        elif "SAE" in line_stripped or "Group management" in line_stripped:
-            if current["encryption"] in ("WPA2", "WPA"):
-                current["encryption"] = "WPA3"
+        elif "RSN:" in line_stripped:
+            current["_enc_signals"].add("rsn")
+            current["wpa_version"] = "RSN"
+        elif "WPA:" in line_stripped:
+            current["_enc_signals"].add("wpa")
+        elif "SAE" in line_stripped:
+            current["_enc_signals"].add("sae")
+        elif "Group management" in line_stripped:
+            current["_enc_signals"].add("group_mgmt")
         elif "WEP" in line_stripped and "Privacy" in line_stripped:
-            if current["encryption"] == "Open":
-                current["encryption"] = "WEP"
+            current["_enc_signals"].add("wep")
         elif line_stripped.startswith("capability:"):
-            if "Privacy" in line_stripped and current["encryption"] == "Open":
-                current["encryption"] = "WEP"
+            if "Privacy" in line_stripped:
+                current["_enc_signals"].add("privacy")
 
     if current:
         aps.append(current)
 
-    # Derive channel from freq if not set
+    # Derive channel from freq if not set, resolve encryption with fixed
+    # precedence so iw output ordering can't flip WPA3 → WPA2/WPA.
     for ap in aps:
         if ap["channel"] == 0 and ap["freq"] > 0:
             ap["channel"] = freq_to_channel(ap["freq"])
+        ap["encryption"] = _resolve_encryption(ap.pop("_enc_signals", set()))
 
     # Compute IE fingerprint AND attack-toolkit signature match per AP from
     # the collected lines, then strip the lines so they don't bloat downstream
@@ -447,8 +574,14 @@ def classify_ap(ap, our_ssid, our_bssid, trusted_aps):
     if ap["encryption"] == "WEP":
         return "warning", "WEAK (WEP)"
 
-    # Very strong signal from unknown AP (possible rogue)
-    if ap["signal"] >= -40:
+    # Very strong signal from unknown AP (possible rogue).
+    # T-0021 item 1: tightened from -40 → -25 dBm. -40 fired on every cafe
+    # AP at typical seating distance and trained users to ignore the alert.
+    # -25 dBm corresponds to ~1m line-of-sight — atypical for a legitimate
+    # neighbor AP, plausible for a hostile rig sitting at the next table.
+    # Open + WEP networks are already flagged above (warning tier) so this
+    # branch only fires for encrypted-but-suspiciously-close unknown APs.
+    if ap["signal"] >= -25:
         return "suspicious", "STRONG SIGNAL"
 
     return "safe", "SAFE"
@@ -509,12 +642,19 @@ class SonarApp(GhostPortApp):
          "A high-signal unknown AP in a spot where you know nobody's broadcasting? "
          "Worth a second look."),
 
-        ("Trust Selected / Untrust Selected / Snapshot My AP / Export Results",
+        ("Trust / Untrust / Ignore / Snapshot / Export buttons",
          "Trust Selected — mark a neighbor's AP as known-good (also captures its "
          "current IE fingerprint as the baseline). Future scans won't flag it "
          "unless its IE blocks drift.\n\n"
          "Untrust Selected — remove the trusted flag and stored fingerprint. "
          "Next scan re-evaluates against all suspicion rules.\n\n"
+         "Ignore (this session) — silence the threat label on a known-noisy AP "
+         "for the rest of this Sonar session WITHOUT recording its IE "
+         "fingerprint. The card renders dimmed with [IGNORED]. Use this for "
+         "the cafe AP you're sitting next to that keeps firing STRONG SIGNAL "
+         "— Trust would baseline its beacon as authoritative, which is "
+         "overkill and exposes you to a cafe-twin spoof later. Ignore "
+         "clears on app restart by design.\n\n"
          "Snapshot My AP — capture YOUR OWN AP's IE fingerprint as the trust "
          "baseline. See the dedicated Snapshot section below for when and how.\n\n"
          "Export Results — write the current scan to a timestamped file. Useful "
@@ -570,9 +710,16 @@ class SonarApp(GhostPortApp):
 
         ("Attack-toolkit signature library (ATTACK TOOLKIT alert)",
          "Sonar ships with a small database of signatures for known offensive "
-         "WiFi tools (Hak5 WiFi Pineapple / Mango / Tetra / Coconut, hostapd-"
-         "mana, bettercap, etc.). When a scanned AP's beacon matches a "
-         "signature, Sonar flags it with an ATTACK TOOLKIT: <name> label.\n\n"
+         "WiFi tools: Hak5 WiFi Pineapple (and PineAP module / named instances), "
+         "Hak5 Mango / Tetra / Coconut, hostapd-mana, bettercap, plus the historic "
+         "'Free Public WiFi' worm / Mana honeypot template. When a scanned AP's "
+         "beacon matches a signature, Sonar flags it with an ATTACK TOOLKIT: "
+         "<name> label.\n\n"
+         "Tools that copy a target SSID (Wifiphisher, Fluxion) or take a fully "
+         "user-chosen SSID (airbase-ng, Eaphammer) cannot be SSID-fingerprinted "
+         "and are NOT in this DB by design. Sonar catches those via Hunt Karma "
+         "(probe-list mismatch) and IE fingerprinting (SPOOFED IE alert) — see "
+         "those sections.\n\n"
          "The DB is at /opt/phantom/desktop/sonar-signatures.json (default) "
          "with an override at /etc/phantom/sonar-signatures.json. It's plain "
          "JSON — patterns can be added or tuned without a code change.\n\n"
@@ -610,11 +757,76 @@ class SonarApp(GhostPortApp):
          "version. (3) Unknown open network with unusually strong signal.\n\n"
          "Best defense beyond Sonar: don't let your devices auto-join open networks, "
          "and always use a VPN on public WiFi."),
+
+        ("Arm rogue-block — defensive Pi-hole poison",
+         "When Sonar confirms an EVIL TWIN or matches an ATTACK TOOLKIT signature, "
+         "the detail panel shows an Arm rogue-block button. Clicking it (after a "
+         "confirmation dialog) tells Pi-hole to return NXDOMAIN for the captive-"
+         "portal probe domains that Windows / iOS / Android use to detect "
+         "internet connectivity.\n\n"
+         "EFFECT: a device that autoconnects to the rogue gets a visible 'no "
+         "internet' warning instead of silently routing through it. The user "
+         "notices and disconnects.\n\n"
+         "NETWORK-WIDE TRADEOFF: the block is a Pi-hole regex entry, so it "
+         "applies to ALL clients on your LAN — not just clients on the rogue. "
+         "While armed, Windows / iOS / Android devices on your real AP will "
+         "ALSO see captive-portal probes fail. That's intentional: a fleet-"
+         "wide failure is a loud signal that an evil twin is currently flagged.\n\n"
+         "AUTO-EXPIRE: 24 hours. A timer (ghostport-rogue-expire) clears stale "
+         "entries automatically. You can also Release manually from the same "
+         "panel — the button flips to Release while armed.\n\n"
+         "STRICT GATE: Arm only appears for EVIL TWIN or ATTACK TOOLKIT labels — "
+         "deliberately NOT for SPOOFED IE alone. SPOOFED IE can fire from a "
+         "legitimate beacon drift (firmware update, regulatory tweak); poisoning "
+         "the network on a soft signal would be reckless. EVIL TWIN (same SSID, "
+         "different BSSID) is a structural confirmation; an ATTACK TOOLKIT match "
+         "is a known offensive-tool fingerprint. Either is enough.\n\n"
+         "When at least one block is armed, the top of the Sonar window shows "
+         "an amber banner reminding you which BSSIDs are currently poisoned."),
     ]
 
     def _on_help(self, _btn):
         self.show_help_dialog(self.HELP_SECTIONS)
 
+    # T-0021 item 2: 4-tier severity color scheme. Base class only ships
+    # gp-card-danger / gp-card-warning, so suspicious + warning rendered
+    # identically. Add a distinct amber tier for suspicious and a dimmer
+    # neutral tier for ignored APs (item 3).
+    def _extra_css(self):
+        return """
+.gp-card-suspicious {
+    background-color: rgba(255, 140, 50, 0.08);
+    border: 1px solid rgba(255, 140, 50, 0.40);
+    border-radius: 8px;
+    padding: 10px;
+    margin: 4px 0;
+}
+.gp-card-ignored {
+    background-color: rgba(140, 140, 140, 0.05);
+    border: 1px solid rgba(140, 140, 140, 0.20);
+    border-radius: 8px;
+    padding: 10px;
+    margin: 4px 0;
+    opacity: 0.65;
+}
+.gp-warning-amber {
+    color: rgb(255, 165, 70);
+    font-family: monospace;
+    font-size: 12px;
+    font-weight: bold;
+}
+.gp-ignored {
+    color: rgb(160, 160, 160);
+    font-family: monospace;
+    font-size: 11px;
+    font-style: italic;
+}
+"""
+
+    def on_theme_changed(self):
+        # Re-apply Sonar-specific CSS after a theme swap; base class poll
+        # otherwise wipes our extra rules on every theme.json change.
+        self._apply_css(extra_css=self._extra_css())
 
     def __init__(self):
         super().__init__("SONAR", "sonar", (900, 650))
@@ -627,21 +839,355 @@ class SonarApp(GhostPortApp):
         self.signatures = []
         # Karma rigs detected by Hunt Karma — bssid -> {reason, real_ssid, decoy_ssid, signal}
         # In-memory only; Karma is a temporal/location threat, no disk persistence.
-        self.karma_rigs = {}
+        self.karma_rigs = OrderedDict()
         self.scanning_karma = False
         # Event-emit dedup: tracks (category, bssid) tuples we've already
         # written to the cross-app event bus this session, so a sustained
         # threat condition doesn't spam the bus on every passive scan.
-        self._emitted_events = set()
+        self._emitted_events = OrderedDict()
+        # T-0021 item 3: per-session "Ignore" set. User can silence a known
+        # legitimate-but-noisy AP (coffee-shop STRONG SIGNAL etc.) without
+        # going through Trust (which baselines its IE fingerprint). Cleared
+        # on app restart by design — Trust is for permanence, Ignore for now.
+        self.ignored_bssids = set()
         self.selected_ap = None
         self.last_scan_time = None
+        # T-0040: anomaly score map populated after every scan; consumed by
+        # _show_detail to surface the score to the user.
+        self.anomaly_scores = {}
 
         # Load our AP info, trusted list, attack-toolkit signatures
         self.our_ssid, self.our_bssid = get_our_ap()
         self._reload_trusted()
-        self.signatures = load_signatures()
+        self.signatures, self._sig_load_error = load_signatures()
 
         self.build_ui()
+
+        # T-0021 item 2: load Sonar-specific CSS (4-tier severity tiers).
+        # Must come after build_ui so the provider attaches to the screen
+        # before the listbox first paints.
+        self._apply_css(extra_css=self._extra_css())
+
+        # Surface any signature-load problem after the status bar exists so
+        # the user notices their custom DB isn't active (T-0018).
+        if self._sig_load_error:
+            self.set_status(self._sig_load_error)
+            self._notify_error("Sonar signature DB", self._sig_load_error)
+
+        # T-0036: prime the background-status label and start the poll. Base
+        # class _on_destroy clears all timers so no manual cleanup needed.
+        self._refresh_bg_status()
+        self.poll_start(BG_POLL_INTERVAL_SEC, self._refresh_bg_status)
+
+        # T-0046: prime the rogue-block banner + start its poll. Banner
+        # stays hidden when no blocks are armed; reveals when 1+ exist.
+        self._refresh_rogue_banner()
+        self.poll_start(ROGUE_POLL_INTERVAL_SEC, self._refresh_rogue_banner)
+
+        # T-0040: prune stale entries from the anomaly baseline once at startup.
+        # 30 days matches the module's default and bounds disk growth without
+        # losing the slow-moving AP fingerprints (home/cafe regulars).
+        try:
+            gp_sonar_anomaly.prune_stale(30)
+        except Exception as e:
+            sys.stderr.write(f"[sonar] anomaly prune failed: {e}\n")
+
+    def _notify_error(self, title, body):
+        """Best-effort desktop notification for failures the user must know about."""
+        try:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical", "-i", "dialog-error", title, body],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
+
+    # T-0021 item 5: critical-threat notification. Bus emit reaches the
+    # correlation engine but doesn't pop a notification — user must be
+    # focused on Sonar's window to see SPOOFED IE / EVIL TWIN / KARMA RIG /
+    # ATTACK TOOLKIT. notify-send fires regardless of focus, dedup happens
+    # at the emit-call site (same set as the bus-event dedup).
+    def _notify_threat(self, label, body):
+        try:
+            subprocess.Popen(
+                ["notify-send", "-u", "critical", "-i", "dialog-warning",
+                 f"Sonar: {label}", body],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            pass
+
+    # T-0036: surface gp-sonar-detect background helper findings.
+    # Helper writes BG_STATE_FILE (atomic os.replace, single writer); GUI
+    # polls every BG_POLL_INTERVAL_SEC. Stale or missing file degrades
+    # silently to "Background scan: never".
+    def _read_bg_state(self):
+        try:
+            with open(BG_STATE_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return None
+
+    def _refresh_bg_status(self):
+        if not getattr(self, "lbl_bg_status", None):
+            return True  # widget not built yet — keep polling
+        state = self._read_bg_state()
+        if not state or not state.get("last_run"):
+            self.lbl_bg_status.set_text("Background scan: never")
+            return True
+        last = state["last_run"]
+        try:
+            ts_str = time.strftime("%H:%M", time.localtime(last))
+        except (TypeError, OSError):
+            ts_str = "?"
+        n_findings = len(state.get("findings", []))
+        emitted = state.get("emitted_this_run", 0)
+        # Recent unread findings → bold accent; old/empty → dim.
+        if emitted:
+            self.lbl_bg_status.set_text(
+                f"Background scan: {ts_str} ({emitted} new, {n_findings} total)"
+            )
+            self.lbl_bg_status.get_style_context().remove_class("gp-dim")
+            self.lbl_bg_status.get_style_context().add_class("gp-warning-amber")
+        elif n_findings:
+            self.lbl_bg_status.set_text(
+                f"Background scan: {ts_str} ({n_findings} historical)"
+            )
+            self.lbl_bg_status.get_style_context().remove_class("gp-warning-amber")
+            self.lbl_bg_status.get_style_context().add_class("gp-dim")
+        else:
+            self.lbl_bg_status.set_text(f"Background scan: {ts_str} (clean)")
+            self.lbl_bg_status.get_style_context().remove_class("gp-warning-amber")
+            self.lbl_bg_status.get_style_context().add_class("gp-dim")
+        return True
+
+    def _on_bg_status_clicked(self, _widget, _event):
+        state = self._read_bg_state() or {}
+        findings = state.get("findings", [])
+
+        dialog = Gtk.Dialog(
+            title="Background Sonar Findings",
+            transient_for=self,
+            modal=True,
+        )
+        dialog.add_button("Close", Gtk.ResponseType.CLOSE)
+        dialog.set_default_size(640, 420)
+
+        content = dialog.get_content_area()
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(8)
+        content.set_margin_bottom(8)
+
+        if state.get("last_run"):
+            ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(state["last_run"]))
+            ap_count = state.get("ap_count", "?")
+            header = self.make_label(
+                f"Last background run: {ts_str}  •  {ap_count} APs seen",
+                "gp-accent",
+            )
+        else:
+            header = self.make_label(
+                "Background helper has not run yet. The systemd timer fires "
+                "every ~5 minutes once enabled.",
+                "gp-dim",
+            )
+        content.pack_start(header, False, False, 4)
+
+        if findings:
+            sw = Gtk.ScrolledWindow()
+            sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+            listbox = Gtk.ListBox()
+            # Newest first
+            for f in reversed(findings):
+                row = Gtk.ListBoxRow()
+                vb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+                vb.set_margin_start(8)
+                vb.set_margin_end(8)
+                vb.set_margin_top(6)
+                vb.set_margin_bottom(6)
+                ts = f.get("ts", 0)
+                try:
+                    ts_str = time.strftime("%m-%d %H:%M", time.localtime(ts))
+                except (TypeError, OSError):
+                    ts_str = "?"
+                top = self.make_label(
+                    f"{ts_str}  •  {f.get('label', 'UNKNOWN')}  •  "
+                    f"{f.get('ssid') or '(Hidden)'}",
+                    "gp-warning-amber",
+                )
+                bot = self.make_label(
+                    f"BSSID {f.get('bssid', '?')}  •  "
+                    f"{f.get('signal', '?')} dBm  •  "
+                    f"{f.get('encryption', '?')}",
+                    "gp-dim",
+                )
+                vb.pack_start(top, False, False, 0)
+                vb.pack_start(bot, False, False, 0)
+                row.add(vb)
+                listbox.add(row)
+            sw.add(listbox)
+            content.pack_start(sw, True, True, 4)
+        else:
+            empty = self.make_label(
+                "No findings recorded. Either the helper hasn't run, or "
+                "no SPOOFED IE / EVIL TWIN / ATTACK TOOLKIT detections "
+                "have happened in the background.",
+                "gp-dim",
+            )
+            content.pack_start(empty, True, True, 4)
+
+        dialog.show_all()
+        try:
+            dialog.run()
+        finally:
+            dialog.destroy()
+
+    # T-0046: rogue-block (T-0031 Phase B). Read-only helpers + subprocess
+    # wrappers for the gp-rogue-block CLI. All paths degrade silently when
+    # the wrapper isn't installed yet — Arm/Release buttons stay hidden.
+    def _rogue_block_available(self):
+        return os.access(ROGUE_BLOCK_CMD, os.X_OK)
+
+    def _read_rogue_blocks(self):
+        """Returns dict {bssid_lower: entry} or {} on missing/corrupt."""
+        try:
+            with open(ROGUE_BLOCKS_FILE) as f:
+                data = json.load(f)
+            blocks = data.get("blocks") or data
+            if isinstance(blocks, list):
+                return {b.get("bssid", "").lower(): b for b in blocks if b.get("bssid")}
+            if isinstance(blocks, dict):
+                return {k.lower(): v for k, v in blocks.items()}
+            return {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
+    def _refresh_rogue_banner(self):
+        """Update the top-of-window armed-state banner. Polled every
+        ROGUE_POLL_INTERVAL_SEC; returns True so the timer keeps firing."""
+        if not getattr(self, "rogue_banner", None):
+            return True
+        blocks = self._read_rogue_blocks()
+        n = len(blocks)
+        if n == 0:
+            self.rogue_banner.set_revealed(False)
+            return True
+        # Show count + reminder of network-wide effect.
+        if hasattr(self, "lbl_rogue_banner") and self.lbl_rogue_banner:
+            self.lbl_rogue_banner.set_text(
+                f"⚠ rogue-block ARMED for {n} BSSID(s) — captive-portal probes "
+                f"are blocked NETWORK-WIDE. Auto-expires in 24h."
+            )
+        self.rogue_banner.set_revealed(True)
+        return True
+
+    def _on_arm_rogue_block(self, _btn):
+        """Confirmation dialog → subprocess gp-rogue-block arm → result dialog."""
+        ap = self.selected_ap
+        if not ap:
+            return
+        bssid = ap.get("bssid", "")
+        ssid = ap.get("ssid", "") or "(Hidden)"
+        if not bssid:
+            self.set_status("Arm rogue-block: AP has no BSSID")
+            return
+
+        # Confirmation dialog — explicit network-wide warning.
+        confirm = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=f"Arm rogue-block on {ssid} ({bssid[:8]}...)?",
+        )
+        confirm.format_secondary_text(
+            "This will inject NXDOMAIN entries into Pi-hole for the captive-"
+            "portal probe domains (msftconnecttest.com, captive.apple.com, "
+            "connectivitycheck.gstatic.com).\n\n"
+            "EFFECT: ALL Pi-hole clients on the LAN — not just clients on the "
+            "rogue AP — will see captive-portal probes fail. A device that "
+            "autoconnected to the rogue will surface a visible 'no internet' "
+            "warning instead of silently routing through it.\n\n"
+            "AUTO-EXPIRES: 24h. Click OK to arm; click the Release button "
+            "later to clear early."
+        )
+        try:
+            response = confirm.run()
+        finally:
+            confirm.destroy()
+        if response != Gtk.ResponseType.OK:
+            return
+
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", ROGUE_BLOCK_CMD, "arm", bssid, "--ssid", ssid],
+                capture_output=True, text=True, timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self._rogue_result_dialog("Arm failed", f"Could not run wrapper: {e}")
+            return
+
+        if result.returncode == 0:
+            self.set_status(f"rogue-block ARMED for {ssid} ({bssid[:8]}...)")
+            self._rogue_result_dialog(
+                "Rogue-block armed",
+                result.stdout or "Armed successfully. Auto-expires in 24h."
+            )
+        else:
+            self._rogue_result_dialog(
+                f"Arm failed (rc={result.returncode})",
+                (result.stderr or result.stdout or "no output").strip()
+            )
+        # Force banner refresh + re-render the detail panel so the button
+        # flips to Release immediately.
+        self._refresh_rogue_banner()
+        if self.selected_ap:
+            self._show_detail(self.selected_ap)
+
+    def _on_release_rogue_block(self, _btn):
+        ap = self.selected_ap
+        if not ap:
+            return
+        bssid = ap.get("bssid", "")
+        if not bssid:
+            return
+        try:
+            result = subprocess.run(
+                ["sudo", "-n", ROGUE_BLOCK_CMD, "release", bssid],
+                capture_output=True, text=True, timeout=15,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            self._rogue_result_dialog("Release failed", f"Could not run wrapper: {e}")
+            return
+        if result.returncode == 0:
+            self.set_status(f"rogue-block RELEASED for {bssid[:8]}...")
+            self._rogue_result_dialog(
+                "Rogue-block released",
+                result.stdout or "Released. Pi-hole entries removed."
+            )
+        else:
+            self._rogue_result_dialog(
+                f"Release failed (rc={result.returncode})",
+                (result.stderr or result.stdout or "no output").strip()
+            )
+        self._refresh_rogue_banner()
+        if self.selected_ap:
+            self._show_detail(self.selected_ap)
+
+    def _rogue_result_dialog(self, title, body):
+        dlg = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+        )
+        dlg.format_secondary_text(body[:1200] if body else "")
+        try:
+            dlg.run()
+        finally:
+            dlg.destroy()
 
     def _reload_trusted(self):
         self.trusted = load_trusted_aps()
@@ -685,6 +1231,23 @@ class SonarApp(GhostPortApp):
         header_box.pack_end(scan_box, False, False, 8)
         root.pack_start(header_box, False, False, 0)
 
+        # T-0046: armed-rogue-block banner — Gtk.Revealer hidden until at
+        # least one BSSID is in rogue-blocks.json. Reminds the user that
+        # captive-portal probes are blocked network-wide while armed.
+        self.rogue_banner = Gtk.Revealer()
+        self.rogue_banner.set_reveal_child(False)
+        self.rogue_banner.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        banner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        banner_box.get_style_context().add_class("gp-card-warning")
+        banner_box.set_margin_start(8)
+        banner_box.set_margin_end(8)
+        banner_box.set_margin_top(2)
+        banner_box.set_margin_bottom(2)
+        self.lbl_rogue_banner = self.make_label("", "gp-warning-amber")
+        banner_box.pack_start(self.lbl_rogue_banner, True, True, 8)
+        self.rogue_banner.add(banner_box)
+        root.pack_start(self.rogue_banner, False, False, 0)
+
         # Info bar: our AP + last scan time
         info_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         info_bar.set_margin_start(12)
@@ -699,6 +1262,21 @@ class SonarApp(GhostPortApp):
 
         self.lbl_scan_time = self.make_label("Last scan: never", "gp-dim")
         info_bar.pack_end(self.lbl_scan_time, False, False, 0)
+
+        # T-0036: clickable label that surfaces what the headless gp-sonar-detect
+        # helper has been finding while Sonar's window was closed. The Label
+        # itself doesn't take clicks — wrap in EventBox.
+        self.lbl_bg_status = self.make_label(
+            "Background scan: never", "gp-dim"
+        )
+        bg_evbox = Gtk.EventBox()
+        bg_evbox.add(self.lbl_bg_status)
+        bg_evbox.connect("button-press-event", self._on_bg_status_clicked)
+        bg_evbox.set_tooltip_text(
+            "Click to view findings from the background helper "
+            "(runs every ~5 min while Sonar is closed)."
+        )
+        info_bar.pack_end(bg_evbox, False, False, 0)
 
         root.pack_start(info_bar, False, False, 0)
 
@@ -743,11 +1321,24 @@ class SonarApp(GhostPortApp):
         btn_export = self.make_button("Export Results", self._on_export, "gp-btn")
         btn_bar.pack_end(btn_export, False, False, 0)
 
+        # T-0037: full session evidence report (AP list + Karma rigs + IE
+        # baseline + signature DB hash + cross-session history). HTML default.
+        btn_report = self.make_button("Full Session Report", self._on_export_full_session, "gp-btn")
+        btn_bar.pack_end(btn_report, False, False, 0)
+
         btn_trust = self.make_button("Trust Selected", self._on_trust, "gp-btn")
         btn_bar.pack_end(btn_trust, False, False, 0)
 
         btn_untrust = self.make_button("Untrust Selected", self._on_untrust, "gp-btn-danger")
         btn_bar.pack_end(btn_untrust, False, False, 0)
+
+        # T-0021 item 3: per-session ignore. User can silence a known-but-
+        # noisy AP (the cafe's STRONG SIGNAL beacon when they're sitting near
+        # it) without going through Trust — Trust would baseline a foreign
+        # AP's IE fingerprint, which is overkill and exposes them to a
+        # cafe-twin attack later. Ignore expires on app restart by design.
+        btn_ignore = self.make_button("Ignore (this session)", self._on_ignore_session, "gp-btn")
+        btn_bar.pack_end(btn_ignore, False, False, 0)
 
         # IE-fingerprint baseline — explicit click, never auto-snapped, so a
         # spoofed beacon at first launch can't silently become the trust anchor.
@@ -771,7 +1362,43 @@ class SonarApp(GhostPortApp):
         self.btn_scan.set_label("SCANNING...")
         self.spinner.start()
         self.set_status("Scanning nearby access points...")
-        self.run_async(self._do_scan, self._on_scan_done)
+        try:
+            self.run_async(self._do_scan, self._on_scan_done)
+        except Exception:
+            # run_async raised synchronously; restore UI so the button isn't
+            # permanently dead and the user can retry.
+            self.scanning = False
+            self.btn_scan.set_sensitive(True)
+            self.btn_scan.set_label("SCAN")
+            self.spinner.stop()
+            raise
+
+    def _scan_with_retry(self, cmd):
+        """Run an iw scan command with one busy-retry. Shared by passive and
+        active scan paths; keeps the timeout/retry policy in one place."""
+        stdout, stderr, rc = self.run_sudo(cmd, timeout=45)
+        if rc != 0 and "busy" in stderr.lower():
+            time.sleep(2)
+            stdout, stderr, rc = self.run_sudo(cmd, timeout=45)
+        return stdout, stderr, rc
+
+    def _run_passive_scan_dual_band(self):
+        """T-0027: passive scan covering 2.4GHz + 5GHz with graceful fallback.
+
+        Some chipsets refuse to leave the AP channel for a freq-list scan and
+        return rc!=0 immediately. In that case we drop the freq list and let
+        iw scan whatever the driver feels like — same behavior as pre-T-0027,
+        so dual-band is a strict upgrade where the driver supports it.
+        """
+        dual = (
+            ["iw", "dev", "wlan0", "scan", "passive", "freq"]
+            + [str(f) for f in SCAN_FREQS_ALL]
+        )
+        stdout, stderr, rc = self._scan_with_retry(dual)
+        if rc == 0:
+            return stdout, stderr, rc
+        # Fallback: driver refused explicit freq list — single-band scan.
+        return self._scan_with_retry(["iw", "dev", "wlan0", "scan", "passive"])
 
     def _do_scan(self):
         """Background: run a passive iw scan.
@@ -781,12 +1408,7 @@ class SonarApp(GhostPortApp):
         keeps Sonar invisible to other networks during the scan — matches the
         privacy claim in HELP_SECTIONS.
         """
-        stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan", "passive"], timeout=45)
-        if rc != 0 and "busy" in stderr.lower():
-            # Interface busy, retry once
-            time.sleep(2)
-            stdout, stderr, rc = self.run_sudo(["iw", "dev", "wlan0", "scan", "passive"], timeout=45)
-        return stdout, stderr, rc
+        return self._run_passive_scan_dual_band()
 
     def _on_scan_done(self, result):
         """Main thread: process scan results."""
@@ -817,6 +1439,10 @@ class SonarApp(GhostPortApp):
         self._apply_karma_overrides()
         # Push detections into the cross-app event bus for correlation.
         self._emit_events_for_aps()
+        # T-0040: feed observations to the behavioral-anomaly module and
+        # emit anomaly events for any AP scoring above threshold. Stash the
+        # score map so _show_detail can display it for the selected AP.
+        self._update_anomaly_scores()
         self._rebuild_list()
 
         dangers = sum(1 for a in self.aps if a["threat"] == "dangerous")
@@ -828,6 +1454,7 @@ class SonarApp(GhostPortApp):
             f"{dangers} dangerous | {suspicious} suspicious | "
             f"{warnings} warnings | {safe} safe"
         )
+        gp_sonar_history.record(self.aps, self.our_ssid, self.our_bssid)
 
     # ── Karma Hunt ───────────────────────────────────────────────────
 
@@ -850,6 +1477,12 @@ class SonarApp(GhostPortApp):
             bssid = ap.get("bssid", "")
             if not bssid:
                 continue
+            # T-0021 item 3: ignored APs skip the bus emit — chronically
+            # ignored cafe APs would otherwise hammer the correlation
+            # engine each scan with the same SPOOFED-IE-but-actually-fine
+            # signal.
+            if bssid.lower() in self.ignored_bssids:
+                continue
             cat = None
             sev = gp_events.SEVERITY_DANGEROUS
             summary = ""
@@ -868,7 +1501,9 @@ class SonarApp(GhostPortApp):
             key = (cat, bssid)
             if key in self._emitted_events:
                 continue
-            self._emitted_events.add(key)
+            self._emitted_events[key] = True
+            while len(self._emitted_events) > MAX_EMITTED_EVENTS:
+                self._emitted_events.popitem(last=False)
             gp_events.emit(
                 "sonar", cat, sev, summary,
                 details={
@@ -878,6 +1513,46 @@ class SonarApp(GhostPortApp):
                     "encryption": ap.get("encryption"),
                 },
             )
+            # T-0021 item 5: pop a critical desktop notification regardless
+            # of Sonar window focus. Dedup is shared with the bus emit above
+            # — _emitted_events guards both.
+            self._notify_threat(label, summary)
+
+    # T-0040: behavioral anomaly scoring. The anomaly module wants observations
+    # in {bssid, ssid, rssi, channel, ie_hash, beacon_interval} shape — Sonar's
+    # parse_iw_scan dict uses signal/ie_fingerprint, so map field names. We
+    # don't have beacon_interval in the parser yet — left as None; the score
+    # function ignores it.
+    def _aps_to_anomaly_obs(self):
+        out = []
+        for ap in self.aps:
+            bssid = (ap.get("bssid") or "").lower().strip()
+            if not bssid:
+                continue
+            out.append({
+                "bssid": bssid,
+                "ssid": ap.get("ssid", ""),
+                "rssi": ap.get("signal"),
+                "channel": ap.get("channel"),
+                "ie_hash": ap.get("ie_fingerprint") or None,
+            })
+        return out
+
+    def _update_anomaly_scores(self):
+        """Feed scan into baseline + emit anomaly events. Stash score map for
+        the detail panel. Failures are non-fatal — anomaly is a soft signal."""
+        try:
+            obs = self._aps_to_anomaly_obs()
+            if not obs:
+                self.anomaly_scores = {}
+                return
+            gp_sonar_anomaly.update_baseline(obs)
+            # score_scan returns {bssid: (score, learning, evidence)}
+            self.anomaly_scores = gp_sonar_anomaly.score_scan(obs)
+            gp_sonar_anomaly.emit_anomalies(obs)
+        except Exception as e:
+            sys.stderr.write(f"[sonar] anomaly scoring failed: {e}\n")
+            self.anomaly_scores = {}
 
     def _on_hunt_karma(self, _btn):
         if self.scanning or self.scanning_karma:
@@ -891,21 +1566,27 @@ class SonarApp(GhostPortApp):
             "Hunting Karma rigs — sending random decoy + wordlist probes "
             "(passive baseline + active probe, ~10s)..."
         )
-        self.run_async(self._do_hunt_karma, self._on_hunt_karma_done)
+        try:
+            self.run_async(self._do_hunt_karma, self._on_hunt_karma_done)
+        except Exception:
+            self.scanning_karma = False
+            self.btn_hunt.set_sensitive(True)
+            self.btn_hunt.set_label("HUNT KARMA")
+            self.btn_scan.set_sensitive(True)
+            self.spinner.stop()
+            raise
 
     def _do_hunt_karma(self):
         """Run a passive baseline scan + a directed probe scan with random decoys
         and a wordlist of commonly-targeted SSIDs. Returns parsed BSSID->SSID
-        maps for both, plus the decoys we used."""
+        maps for both, plus the decoys we used.
+
+        Both scans go dual-band (T-0027) — a Karma rig on 2.4GHz when wlan0
+        is AP'ing on 5GHz was previously invisible. Falls back to single-band
+        if the driver refuses an explicit freq list (same behavior as before).
+        """
         # Pass 1: passive baseline — what each BSSID actually beacons
-        pb_out, pb_err, pb_rc = self.run_sudo(
-            ["iw", "dev", "wlan0", "scan", "passive"], timeout=45
-        )
-        if pb_rc != 0 and "busy" in pb_err.lower():
-            time.sleep(2)
-            pb_out, pb_err, pb_rc = self.run_sudo(
-                ["iw", "dev", "wlan0", "scan", "passive"], timeout=45
-            )
+        pb_out, pb_err, pb_rc = self._run_passive_scan_dual_band()
 
         # Pass 2: directed scan — broadcast probes for randoms + wordlist in
         # a single iw call so all responses land in one scan window.
@@ -913,15 +1594,23 @@ class SonarApp(GhostPortApp):
             f"{KARMA_RANDOM_PREFIX}{secrets.token_hex(4)}"
             for _ in range(KARMA_RANDOM_COUNT)
         ]
-        cmd = ["iw", "dev", "wlan0", "scan"]
+        # T-0027: build the active probe across both bands. iw syntax allows
+        # `freq <list>` and `ssid <list>` in any order; the kernel sends each
+        # probe on each listed frequency.
+        dual_cmd = ["iw", "dev", "wlan0", "scan", "freq"] + [str(f) for f in SCAN_FREQS_ALL]
         for s in decoys:
-            cmd.extend(["ssid", s])
+            dual_cmd.extend(["ssid", s])
         for s in KARMA_WORDLIST:
-            cmd.extend(["ssid", s])
-        dp_out, dp_err, dp_rc = self.run_sudo(cmd, timeout=45)
-        if dp_rc != 0 and "busy" in dp_err.lower():
-            time.sleep(2)
-            dp_out, dp_err, dp_rc = self.run_sudo(cmd, timeout=45)
+            dual_cmd.extend(["ssid", s])
+        dp_out, dp_err, dp_rc = self._scan_with_retry(dual_cmd)
+        if dp_rc != 0:
+            # Fallback: drop the freq list, let iw scan whatever band it can.
+            single_cmd = ["iw", "dev", "wlan0", "scan"]
+            for s in decoys:
+                single_cmd.extend(["ssid", s])
+            for s in KARMA_WORDLIST:
+                single_cmd.extend(["ssid", s])
+            dp_out, dp_err, dp_rc = self._scan_with_retry(single_cmd)
 
         return (pb_out, pb_rc, dp_out, dp_rc, decoys)
 
@@ -990,13 +1679,18 @@ class SonarApp(GhostPortApp):
                     "signal": dp_signal,
                     "first_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
                 }
+                while len(self.karma_rigs) > MAX_KARMA_RIGS:
+                    self.karma_rigs.popitem(last=False)
                 new_findings += 1
                 # Push to event bus — Karma is a high-priority signal that
                 # the correlation engine will combine with firewall pressure
                 # or ARP changes to detect coordinated attacks.
+                karma_summary = (
+                    f"Sonar: Karma rig at {bssid[:8]}... (real ssid: {real_ssid})"
+                )
                 gp_events.emit(
                     "sonar", "karma_rig", gp_events.SEVERITY_DANGEROUS,
-                    f"Sonar: Karma rig at {bssid[:8]}... (real ssid: {real_ssid})",
+                    karma_summary,
                     details={
                         "bssid": bssid,
                         "real_ssid": real_ssid,
@@ -1004,6 +1698,22 @@ class SonarApp(GhostPortApp):
                         "signal": dp_signal,
                         "reason": reason,
                     },
+                )
+                # T-0021 item 5: notify-send for Karma rig. new_findings is
+                # already the per-hunt dedup gate; if we're here, this is
+                # the first time this BSSID was flagged as a Karma rig.
+                self._notify_threat("KARMA RIG", karma_summary)
+                # T-0034: persist this encounter to disk so the customer has
+                # forensic memory across sessions. Failures are swallowed by
+                # the helper — never block the GUI on disk I/O.
+                gp_sonar_encounters.append_encounter(
+                    bssid=bssid,
+                    decoy_ssid=dp_ssid,
+                    real_ssid=real_ssid,
+                    reason=reason,
+                    signal_dbm=dp_signal,
+                    our_ssid=self.our_ssid,
+                    our_bssid=self.our_bssid,
                 )
 
         # Rebuild the visible list using whichever scan baseline we now have.
@@ -1018,6 +1728,9 @@ class SonarApp(GhostPortApp):
             self.lbl_scan_time.set_text(f"Last scan: {self.last_scan_time}")
 
         self._apply_karma_overrides()
+        # T-0040: feed the karma-baseline scan into the anomaly module too.
+        # No-op when self.aps came from a prior _on_scan_done (already scored).
+        self._update_anomaly_scores()
         self._rebuild_list()
 
         total = len(self.karma_rigs)
@@ -1054,9 +1767,18 @@ class SonarApp(GhostPortApp):
     def _make_ap_card(self, ap):
         """Create a card widget for a single AP."""
         threat = ap["threat"]
-        if threat == "dangerous":
+        # T-0021 item 3: ignored AP overrides every other tier — render
+        # neutral and skip the threat badge below.
+        is_ignored = ap.get("bssid", "").lower() in self.ignored_bssids
+        # T-0021 item 2: 4-tier severity tier (dangerous / suspicious / warning / safe).
+        # suspicious now distinct from warning (was: both → gp-card-warning).
+        if is_ignored:
+            css_class = "gp-card-ignored"
+        elif threat == "dangerous":
             css_class = "gp-card-danger"
-        elif threat in ("suspicious", "warning"):
+        elif threat == "suspicious":
+            css_class = "gp-card-suspicious"
+        elif threat == "warning":
             css_class = "gp-card-warning"
         elif ap["is_ours"]:
             css_class = "gp-card-info"
@@ -1075,14 +1797,17 @@ class SonarApp(GhostPortApp):
         lbl_ssid = self.make_label(ssid_display, "gp-accent")
         row1.pack_start(lbl_ssid, True, True, 0)
 
-        # Threat badge
-        threat_css = {
-            "dangerous": "gp-danger",
-            "suspicious": "gp-warning",
-            "warning": "gp-warning",
-            "safe": "gp-success",
-        }.get(threat, "gp-dim")
-        lbl_threat = self.make_label(ap["threat_label"], threat_css)
+        # Threat badge — ignored APs show "[IGNORED]" instead of severity tier.
+        if is_ignored:
+            lbl_threat = self.make_label("IGNORED (this session)", "gp-ignored")
+        else:
+            threat_css = {
+                "dangerous": "gp-danger",
+                "suspicious": "gp-warning-amber",
+                "warning": "gp-warning",
+                "safe": "gp-success",
+            }.get(threat, "gp-dim")
+            lbl_threat = self.make_label(ap["threat_label"], threat_css)
         row1.pack_end(lbl_threat, False, False, 0)
 
         card.pack_start(row1, False, False, 0)
@@ -1151,6 +1876,19 @@ class SonarApp(GhostPortApp):
         sep = Gtk.Separator()
         self.detail_box.pack_start(sep, False, False, 4)
 
+        # T-0040: anomaly score for this AP (0.0 if unscored / learning).
+        # Module returns (score, is_learning, evidence) tuples.
+        bssid_lc = (ap.get("bssid") or "").lower().strip()
+        score_tuple = self.anomaly_scores.get(bssid_lc)
+        if score_tuple is None:
+            anomaly_text = "—"
+        else:
+            score_val, is_learning, _ = score_tuple
+            if is_learning:
+                anomaly_text = "learning"
+            else:
+                anomaly_text = f"{score_val:.2f}"
+
         # Detail fields
         fields = [
             ("BSSID", ap["bssid"]),
@@ -1158,6 +1896,7 @@ class SonarApp(GhostPortApp):
             ("Frequency", f"{ap['freq']} MHz"),
             ("Signal", f"{ap['signal']:.0f} dBm"),
             ("Encryption", ap["encryption"]),
+            ("Anomaly", anomaly_text),
             ("Threat", ap["threat_label"]),
         ]
 
@@ -1193,6 +1932,21 @@ class SonarApp(GhostPortApp):
                 val_css = "gp-success" if value_text in ("WPA3", "WPA2") else (
                     "gp-danger" if value_text in ("Open", "WEP") else "gp-text"
                 )
+            elif label_text == "Anomaly":
+                # T-0040: above DEFAULT_THRESHOLD = drift, dim while learning.
+                if value_text == "learning" or value_text == "—":
+                    val_css = "gp-dim"
+                else:
+                    try:
+                        sval = float(value_text)
+                    except ValueError:
+                        sval = 0.0
+                    if sval >= gp_sonar_anomaly.DEFAULT_THRESHOLD:
+                        val_css = "gp-warning-amber"
+                    elif sval > 0:
+                        val_css = "gp-text"
+                    else:
+                        val_css = "gp-success"
 
             lbl_val = self.make_label(value_text, val_css)
             row.pack_start(lbl_val, False, False, 0)
@@ -1231,7 +1985,123 @@ class SonarApp(GhostPortApp):
         lbl_trust = self.make_label(f"Status: {trust_text}", trust_css)
         self.detail_box.pack_start(lbl_trust, False, False, 2)
 
+        # T-0046: rogue-block buttons. Strict gate: only confirmed-attack
+        # labels (EVIL TWIN or ATTACK TOOLKIT). NOT shown for SPOOFED IE
+        # (could be a legitimate beacon drift) or KARMA RIG (different
+        # response path). Hidden entirely if Phase A wrapper isn't installed.
+        threat_label = ap.get("threat_label", "")
+        is_confirmed_attack = (
+            threat_label == "EVIL TWIN"
+            or threat_label.startswith("ATTACK TOOLKIT")
+        )
+        if is_confirmed_attack and self._rogue_block_available():
+            sep5 = Gtk.Separator()
+            self.detail_box.pack_start(sep5, False, False, 4)
+            lbl_rb = self.make_label("ROGUE-BLOCK (Pi-hole)", "gp-dim")
+            self.detail_box.pack_start(lbl_rb, False, False, 2)
+
+            blocks = self._read_rogue_blocks()
+            is_armed = ap.get("bssid", "").lower() in blocks
+            if is_armed:
+                btn = self.make_button(
+                    "Release rogue-block",
+                    self._on_release_rogue_block,
+                    "gp-btn",
+                )
+                hint = self.make_label(
+                    "Captive-portal probes blocked network-wide for this AP. "
+                    "Auto-expires in 24h.",
+                    "gp-warning-amber",
+                )
+            else:
+                btn = self.make_button(
+                    "Arm rogue-block",
+                    self._on_arm_rogue_block,
+                    "gp-btn-warning",
+                )
+                hint = self.make_label(
+                    "Inject NXDOMAIN entries for captive-portal domains so a "
+                    "device that connects to this rogue surfaces a visible "
+                    "'no internet' warning. Network-wide effect — read the "
+                    "confirmation dialog.",
+                    "gp-dim",
+                )
+            hint.set_line_wrap(True)
+            hint.set_max_width_chars(34)
+            self.detail_box.pack_start(btn, False, False, 2)
+            self.detail_box.pack_start(hint, False, False, 2)
+
+        # WiGLE history (T-0030). Manual lookup; gated on auth file presence.
+        self._build_wigle_section(ap)
+
         self.detail_box.show_all()
+
+    def _build_wigle_section(self, ap):
+        """Add WiGLE lookup widgets to the detail panel.
+
+        If the WiGLE auth file isn't configured, render a quiet hint and stop.
+        Otherwise render a 'Look up on WiGLE' button that fires an async
+        lookup and appends the result lines on completion.
+        """
+        sep = Gtk.Separator()
+        self.detail_box.pack_start(sep, False, False, 4)
+
+        title = self.make_label("WiGLE HISTORY", "gp-dim")
+        self.detail_box.pack_start(title, False, False, 2)
+
+        if not gp_sonar_wigle.wigle_available():
+            hint = self.make_label(
+                "Not configured (drop API key in /etc/phantom/wigle-auth.json)",
+                "gp-dim",
+            )
+            hint.set_line_wrap(True)
+            hint.set_max_width_chars(36)
+            self.detail_box.pack_start(hint, False, False, 2)
+            return
+
+        result_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.detail_box.pack_start(result_box, False, False, 2)
+
+        bssid = ap.get("bssid", "")
+
+        def _render(result):
+            for child in result_box.get_children():
+                result_box.remove(child)
+            for label_text, value_text, css in gp_sonar_wigle.render_lines(result):
+                row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                lbl_key = self.make_label(f"{label_text}:", "gp-dim")
+                lbl_key.set_size_request(90, -1)
+                row.pack_start(lbl_key, False, False, 0)
+                lbl_val = self.make_label(value_text, css)
+                lbl_val.set_line_wrap(True)
+                lbl_val.set_max_width_chars(28)
+                row.pack_start(lbl_val, False, False, 0)
+                result_box.pack_start(row, False, False, 0)
+            result_box.show_all()
+
+        def _on_click(btn):
+            target_bssid = bssid
+            btn.set_sensitive(False)
+            btn.set_label("Looking up...")
+
+            def _job():
+                return gp_sonar_wigle.wigle_lookup(target_bssid)
+
+            def _cb(result):
+                # Stale-callback guard: ignore if user navigated to another AP.
+                still_selected = (
+                    self.selected_ap is not None
+                    and self.selected_ap.get("bssid", "") == target_bssid
+                )
+                if still_selected:
+                    _render(result)
+                btn.set_sensitive(True)
+                btn.set_label("Look up on WiGLE")
+
+            self.run_async(_job, _cb)
+
+        btn = self.make_button("Look up on WiGLE", _on_click, "gp-btn")
+        self.detail_box.pack_start(btn, False, False, 4)
 
     def _make_signal_bar(self, signal):
         """Create a text-based signal strength indicator."""
@@ -1333,7 +2203,38 @@ class SonarApp(GhostPortApp):
             return "You have marked this AP as trusted."
         return "No known threats detected from this access point."
 
-    # ── Trust / Untrust / Snapshot ───────────────────────────────────
+    # ── Trust / Untrust / Ignore / Snapshot ──────────────────────────
+
+    # T-0021 item 3: per-session Ignore action. Trust baselines an IE
+    # fingerprint and persists across launches; Ignore is in-memory only
+    # and clears on restart. The right tool for "yes the cafe AP is
+    # legit, hush for now" — wrong tool would be Trust, which would
+    # accept the cafe's IE as authoritative and let a cafe-twin spoof it
+    # later. Also suppresses the cross-app event-bus emit so a chronically
+    # ignored AP doesn't hammer the correlation engine each scan.
+    def _on_ignore_session(self, _btn):
+        if not self.selected_ap:
+            self.set_status("No AP selected — click an AP first")
+            return
+        bssid = (self.selected_ap.get("bssid") or "").lower()
+        if not bssid:
+            self.set_status("Selected AP has no BSSID — cannot ignore")
+            return
+        if self.selected_ap.get("is_ours"):
+            self.set_status("Cannot Ignore your own AP — it's classified specially")
+            return
+        ssid = self.selected_ap.get("ssid", "") or "(Hidden)"
+        if bssid in self.ignored_bssids:
+            self.ignored_bssids.discard(bssid)
+            self.set_status(f"Un-ignored {ssid} ({bssid[:8]}...)")
+        else:
+            self.ignored_bssids.add(bssid)
+            self.set_status(
+                f"Ignored {ssid} ({bssid[:8]}...) for this session — "
+                f"clears on restart"
+            )
+        self._rebuild_list()
+        self._show_detail(self.selected_ap)
 
     def _on_snapshot_my_ap(self, _btn):
         """Capture the current IE fingerprint of our own AP as the trust baseline.
@@ -1358,15 +2259,23 @@ class SonarApp(GhostPortApp):
         is_overwrite = existing is not None and existing.get("fingerprint") and existing["fingerprint"] != ap["ie_fingerprint"]
 
         body = (
+            # T-0021 item 4: lead with the explicit safety check. Earlier
+            # text said "trusted environment" — too abstract. Reword so the
+            # user is forced to consciously verify they're seeing their
+            # OWN AP's beacon, not an active spoofer's, before snapshotting.
+            "BEFORE clicking OK, confirm you are connected RIGHT NOW to your "
+            "real GhostPort access point — not to anything else, and not in a "
+            "place where a spoofer might be broadcasting your SSID/BSSID.\n\n"
             "Snapshot YOUR AP's current beacon as the IE fingerprint baseline?\n\n"
             "From this moment on, any drift in the beacon's stable Information "
             "Elements (capability flags, RSN block, country/regulatory data, "
             "supported rates, HT/VHT/HE capabilities) will trigger a SPOOFED IE "
             "alert.\n\n"
-            "ONLY snapshot in a trusted environment — typically at home, with no "
-            "active spoofing. If you snapshot in a contested space (coffee shop, "
-            "hotel, airport) and an attacker is broadcasting your SSID/BSSID right "
-            "now, you'll baseline THEM as legitimate.\n\n"
+            "Snapshot at HOME, with no other devices in range claiming to be "
+            "your network. If you snapshot in a contested space (coffee shop, "
+            "hotel, airport) and an attacker is broadcasting your SSID/BSSID "
+            "stronger than your real router, you'll baseline THEM as legitimate "
+            "and your real AP will start firing SPOOFED IE alerts forever.\n\n"
             f"Current beacon hash: {ap['ie_fingerprint'][:32]}...\n"
         )
         if is_overwrite:
@@ -1396,6 +2305,9 @@ class SonarApp(GhostPortApp):
             self.set_status("Snapshot cancelled")
             return
 
+        prev_trusted = copy.deepcopy(self.trusted)
+        prev_bssids = set(self.trusted_bssids)
+
         if existing is None:
             self.trusted.append({
                 "bssid": self.our_bssid,
@@ -1409,7 +2321,14 @@ class SonarApp(GhostPortApp):
             existing["ssid"] = ap.get("ssid", existing.get("ssid", ""))
             existing["added"] = time.strftime("%Y-%m-%d %H:%M:%S")
 
-        save_trusted_aps(self.trusted)
+        try:
+            save_trusted_aps(self.trusted)
+        except OSError as e:
+            self.trusted = prev_trusted
+            self.trusted_bssids = prev_bssids
+            self.set_status(f"Snapshot save FAILED (not persisted): {e}")
+            self._notify_error("Sonar snapshot save failed", str(e))
+            return
 
         # Re-classify and rebuild so any prior SPOOFED IE label clears
         for a in self.aps:
@@ -1428,6 +2347,8 @@ class SonarApp(GhostPortApp):
         if ap["bssid"] in self.trusted_bssids:
             self.set_status(f"Already trusted: {ap['bssid']}")
             return
+        prev_trusted = copy.deepcopy(self.trusted)
+        prev_bssids = set(self.trusted_bssids)
         self.trusted.append({
             "bssid": ap["bssid"],
             "ssid": ap["ssid"],
@@ -1435,7 +2356,14 @@ class SonarApp(GhostPortApp):
             "added": time.strftime("%Y-%m-%d %H:%M:%S"),
         })
         self.trusted_bssids.add(ap["bssid"])
-        save_trusted_aps(self.trusted)
+        try:
+            save_trusted_aps(self.trusted)
+        except OSError as e:
+            self.trusted = prev_trusted
+            self.trusted_bssids = prev_bssids
+            self.set_status(f"Trust save FAILED (not persisted): {e}")
+            self._notify_error("Sonar trust save failed", str(e))
+            return
         # Re-classify and rebuild (pass full trusted list so fingerprint check fires)
         for a in self.aps:
             a["threat"], a["threat_label"] = classify_ap(
@@ -1453,9 +2381,18 @@ class SonarApp(GhostPortApp):
         if ap["bssid"] not in self.trusted_bssids:
             self.set_status(f"Not in trusted list: {ap['bssid']}")
             return
+        prev_trusted = copy.deepcopy(self.trusted)
+        prev_bssids = set(self.trusted_bssids)
         self.trusted = [t for t in self.trusted if t.get("bssid", "").lower() != ap["bssid"]]
         self.trusted_bssids.discard(ap["bssid"])
-        save_trusted_aps(self.trusted)
+        try:
+            save_trusted_aps(self.trusted)
+        except OSError as e:
+            self.trusted = prev_trusted
+            self.trusted_bssids = prev_bssids
+            self.set_status(f"Untrust save FAILED (not persisted): {e}")
+            self._notify_error("Sonar untrust save failed", str(e))
+            return
         for a in self.aps:
             a["threat"], a["threat_label"] = classify_ap(
                 a, self.our_ssid, self.our_bssid, self.trusted
@@ -1503,6 +2440,79 @@ class SonarApp(GhostPortApp):
             except Exception as e:
                 self.set_status(f"Export failed: {e}")
         dialog.destroy()
+
+    def _on_export_full_session(self, btn):
+        """T-0037: bundle AP list + Karma rigs + IE baseline + signature DB into
+        a self-contained evidence report. Format follows the chosen filename
+        extension (.html → HTML, .json → JSON). HTML default for human readers.
+        """
+        documents_dir = os.path.expanduser("~/Documents")
+        try:
+            os.makedirs(documents_dir, exist_ok=True)
+        except OSError:
+            documents_dir = os.path.expanduser("~")
+
+        dialog = Gtk.FileChooserDialog(
+            title="Export Full Session Report",
+            parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_SAVE, Gtk.ResponseType.OK,
+        )
+        dialog.set_current_folder(documents_dir)
+        dialog.set_current_name(f"sonar-session-{time.strftime('%Y%m%d-%H%M%S')}.html")
+        for label, pat in (("HTML report", "*.html"), ("JSON report", "*.json")):
+            filt = Gtk.FileFilter()
+            filt.set_name(label)
+            filt.add_pattern(pat)
+            dialog.add_filter(filt)
+
+        if dialog.run() != Gtk.ResponseType.OK:
+            dialog.destroy()
+            return
+        filepath = dialog.get_filename()
+        dialog.destroy()
+        if not filepath:
+            return
+
+        try:
+            history = gp_sonar_encounters.read_encounters(limit=500)
+        except OSError:
+            history = []
+
+        kwargs = dict(
+            aps=self.aps,
+            karma_rigs=self.karma_rigs,
+            our_ssid=self.our_ssid,
+            our_bssid=self.our_bssid,
+            trusted=self.trusted,
+            signatures=self.signatures,
+            last_scan_time=self.last_scan_time,
+            sonar_version="phantom-sonar",
+            encounter_history=history,
+        )
+
+        try:
+            if filepath.lower().endswith(".json"):
+                payload = json.dumps(gp_sonar_report.build_json_report(**kwargs), indent=2)
+            else:
+                payload = gp_sonar_report.build_html_report(**kwargs)
+            tmp = filepath + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, filepath)
+            self.set_status(
+                f"Session report saved: {len(self.aps)} APs, "
+                f"{len(self.karma_rigs)} Karma rig(s), {len(history)} historical → "
+                f"{os.path.basename(filepath)}"
+            )
+        except OSError as e:
+            self.set_status(f"Report export failed: {e}")
+            self._notify_error("Sonar report export failed", str(e))
 
 
 # ── Main ──────────────────────────────────────────────────────────────

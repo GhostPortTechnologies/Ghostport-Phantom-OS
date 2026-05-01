@@ -25,6 +25,11 @@ import importlib.util
 
 EVENT_DIR = os.path.expanduser("~/.local/share/phantom")
 DEDUP_FILE = os.path.join(EVENT_DIR, "sonar-detect-emitted.json")
+# T-0036: state file the Sonar GUI reads to surface bg findings ("Background
+# scan: 12:42 (2 events)"). Single-writer (this helper), many-reader
+# (Sonar GUI poll). Atomic write via tempfile + os.replace.
+STATE_FILE = os.path.join(EVENT_DIR, "sonar-detect-state.json")
+MAX_BG_FINDINGS = 50  # ring-buffer cap; oldest evicted on overflow
 RE_EMIT_TTL_SEC = 1800  # 30 min — re-emit sustained conditions to keep bus current
 
 sys.path.insert(0, "/opt/phantom/desktop")
@@ -48,6 +53,29 @@ def save_dedup(state):
         sys.stderr.write(f"[gp-sonar-detect] dedup save failed: {e}\n")
 
 
+# T-0036: shared state file for the Sonar GUI. Persists across helper runs
+# so a customer who opens Sonar after lunch sees what the bg helper found
+# at 11:45 even if the most recent run had 0 new findings.
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"last_run": None, "ap_count": 0, "findings": []}
+
+
+def save_state(state):
+    try:
+        os.makedirs(EVENT_DIR, exist_ok=True)
+        # Atomic write — Sonar GUI is reading concurrently every 30s.
+        tmp = STATE_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        sys.stderr.write(f"[gp-sonar-detect] state save failed: {e}\n")
+
+
 def should_emit(state, key):
     now = time.time()
     last = state.get(key, 0)
@@ -69,14 +97,31 @@ def main():
         sys.stderr.write(f"[gp-sonar-detect] import failed: {e}\n")
         return 2
 
-    # 2. Run passive scan
-    try:
-        result = subprocess.run(
-            ["sudo", "-n", "iw", "dev", "wlan0", "scan", "passive"],
-            capture_output=True, text=True, timeout=45,
-        )
-    except subprocess.TimeoutExpired:
-        sys.stderr.write("[gp-sonar-detect] scan timed out\n")
+    # 2. Run passive scan — T-0027: dual-band when the driver allows it.
+    # Pulls SCAN_FREQS_ALL from the imported sonar module so the channel
+    # plan stays in one place. Falls back to single-band if the freq-list
+    # variant fails (driver may refuse to leave the AP channel).
+    freqs = getattr(sonar, "SCAN_FREQS_ALL", None)
+    base = ["sudo", "-n", "iw", "dev", "wlan0", "scan", "passive"]
+
+    def _try_scan(cmd):
+        try:
+            return subprocess.run(
+                cmd, capture_output=True, text=True, timeout=45,
+            )
+        except subprocess.TimeoutExpired:
+            sys.stderr.write("[gp-sonar-detect] scan timed out\n")
+            return None
+
+    if freqs:
+        result = _try_scan(base + ["freq"] + [str(f) for f in freqs])
+        if result is None or result.returncode != 0:
+            # Fallback to single-band scan
+            result = _try_scan(base)
+    else:
+        result = _try_scan(base)
+
+    if result is None:
         return 1
     if result.returncode != 0:
         sys.stderr.write(
@@ -96,7 +141,13 @@ def main():
 
     # 4. Emit events for each detection-class AP
     state = load_dedup()
+    # T-0036: parallel state for the Sonar GUI. Loaded so prior findings
+    # survive a run with 0 new emits — customer opening Sonar at lunch
+    # still sees the 11:45 finding even if the 12:00 run was clean.
+    bg_state = load_state()
+    findings = list(bg_state.get("findings", []))
     emitted = 0
+    now_ts = time.time()
 
     for ap in aps:
         label = ap.get("threat_label", "")
@@ -135,10 +186,36 @@ def main():
         )
         emitted += 1
 
+        # T-0036: append to GUI-visible findings list. Same dedup gate as
+        # the bus emit so a sustained condition doesn't fill the ring buffer.
+        findings.append({
+            "ts": now_ts,
+            "category": cat,
+            "label": label,
+            "bssid": bssid,
+            "ssid": ap.get("ssid", ""),
+            "signal": ap.get("signal"),
+            "encryption": ap.get("encryption"),
+            "summary": summary,
+        })
+
+    # Cap findings ring buffer (oldest dropped first).
+    if len(findings) > MAX_BG_FINDINGS:
+        findings = findings[-MAX_BG_FINDINGS:]
+
     # Garbage-collect dedup entries older than 2x TTL
     cutoff = time.time() - (RE_EMIT_TTL_SEC * 2)
     state = {k: v for k, v in state.items() if v >= cutoff}
     save_dedup(state)
+
+    # T-0036: always write GUI state — last_run timestamp + AP count tell
+    # the user the helper is alive even when there are no findings.
+    save_state({
+        "last_run": now_ts,
+        "ap_count": len(aps),
+        "emitted_this_run": emitted,
+        "findings": findings,
+    })
 
     sys.stderr.write(
         f"[gp-sonar-detect] scan done — {len(aps)} APs seen, {emitted} events emitted\n"

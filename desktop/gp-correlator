@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""gp-correlator — cross-app correlation daemon.
+
+Polls gp_events.detect_correlations() on a fixed interval. Persists active
+findings to ~/.local/share/phantom/correlated-incidents.json (atomic write).
+On a NEW critical finding, announces to the local Chamber chat for AI/operator
+visibility. Dedup keyed on pattern_id with a 5-minute cooldown so a finding
+that stays "active" for 30 minutes doesn't spam Chamber every poll.
+
+Run via systemd (ghostport-correlator.service). User-mode daemon — no sudo.
+
+CLI:
+    gp-correlator              run the daemon (used by systemd)
+    gp-correlator --once       one detection pass, write file, exit
+    gp-correlator --status     print current findings JSON, exit
+    gp-correlator --help       usage
+"""
+
+import json
+import os
+import signal
+import sys
+import time
+from collections import OrderedDict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gp_events
+
+POLL_INTERVAL_S = 30
+PRUNE_INTERVAL_S = 3600
+CHAMBER_DEDUP_COOLDOWN_S = 300
+DEDUP_CACHE_MAX = 500
+CHAMBER_URL = "http://127.0.0.1:4242/api/messages"
+CHAMBER_USER = "correlator"
+HTTP_TIMEOUT_S = 5
+
+OUTPUT_DIR = os.path.expanduser("~/.local/share/phantom")
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "correlated-incidents.json")
+TMP_FILE = OUTPUT_FILE + ".tmp"
+
+
+def log(msg):
+    sys.stdout.write(f"[gp-correlator] {msg}\n")
+    sys.stdout.flush()
+
+
+def err(msg):
+    sys.stderr.write(f"[gp-correlator] ERROR: {msg}\n")
+    sys.stderr.flush()
+
+
+def write_atomic(findings):
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    payload = {
+        "generated_at": time.time(),
+        "count": len(findings),
+        "findings": findings,
+    }
+    with open(TMP_FILE, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(TMP_FILE, OUTPUT_FILE)
+
+
+def post_chamber(text):
+    """Best-effort POST to the local Chamber. urllib only — no extra deps."""
+    import urllib.request
+    body = json.dumps({"username": CHAMBER_USER, "text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        CHAMBER_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as r:
+            r.read()
+    except Exception as e:
+        err(f"chamber post failed: {e}")
+
+
+def format_chamber_msg(finding):
+    name = finding.get("name", finding.get("pattern_id", "unknown"))
+    sev = finding.get("severity", "?").upper()
+    desc = finding.get("description", "")
+    evidence = finding.get("evidence_summary", []) or []
+    bullets = "\n".join(f"  - {e}" for e in evidence[:6])
+    return (
+        f"[CORRELATOR] {sev}: {name}\n"
+        f"{desc}\n"
+        f"{bullets}".rstrip()
+    )
+
+
+class DedupCache(OrderedDict):
+    """LRU map of pattern_id -> last_announce_epoch. Caps at DEDUP_CACHE_MAX."""
+    def touch(self, key, ts):
+        if key in self:
+            self.move_to_end(key)
+        self[key] = ts
+        while len(self) > DEDUP_CACHE_MAX:
+            self.popitem(last=False)
+
+
+def detection_pass(dedup_cache, announce):
+    findings = gp_events.detect_correlations()
+    if announce and findings:
+        now = time.time()
+        for f in findings:
+            sev = f.get("severity", "")
+            if sev != gp_events.SEVERITY_CRITICAL:
+                continue
+            pid = f.get("pattern_id", "")
+            last = dedup_cache.get(pid, 0)
+            if now - last < CHAMBER_DEDUP_COOLDOWN_S:
+                continue
+            post_chamber(format_chamber_msg(f))
+            dedup_cache.touch(pid, now)
+    write_atomic(findings)
+    return findings
+
+
+_running = True
+
+def _stop(*_):
+    global _running
+    _running = False
+
+
+def main_loop():
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    dedup = DedupCache()
+    last_prune = 0.0
+    log(f"started — poll={POLL_INTERVAL_S}s, output={OUTPUT_FILE}")
+    while _running:
+        try:
+            findings = detection_pass(dedup, announce=True)
+            if findings:
+                log(f"{len(findings)} active correlation(s)")
+            now = time.time()
+            if now - last_prune > PRUNE_INTERVAL_S:
+                gp_events.prune()
+                last_prune = now
+        except Exception as e:
+            err(f"detection pass failed: {e}")
+        # Sleep in 1-second slices so SIGTERM lands fast.
+        slept = 0
+        while _running and slept < POLL_INTERVAL_S:
+            time.sleep(1)
+            slept += 1
+    log("stopped")
+
+
+def main():
+    args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        sys.stdout.write(__doc__ or "")
+        return 0
+    if "--status" in args:
+        try:
+            with open(OUTPUT_FILE) as f:
+                sys.stdout.write(f.read())
+        except FileNotFoundError:
+            sys.stdout.write('{"count": 0, "findings": []}\n')
+        return 0
+    if "--once" in args:
+        findings = detection_pass(DedupCache(), announce=False)
+        log(f"one-shot: {len(findings)} active correlation(s) → {OUTPUT_FILE}")
+        return 0
+    main_loop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
