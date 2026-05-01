@@ -2,35 +2,35 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128pt" height="128pt" viewBox="0 0 128 128" version="1.1">
 <g id="surface11">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <!-- Lobster trap / crab pot — packet capture cage -->
 <!-- Rope to buoy -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 64 18 C 62 22 60 26 60 32"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 64 18 C 62 22 60 26 60 32"/>
 <!-- Buoy float at top -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 58 16 C 58 12 70 12 70 16 C 70 20 58 20 58 16"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 58 16 C 58 12 70 12 70 16 C 70 20 58 20 58 16"/>
 <!-- Cage body — 3/4 view rectangle -->
 <!-- Front face -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 24 40 L 84 40 L 84 96 L 24 96 Z"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 24 40 L 84 40 L 84 96 L 24 96 Z"/>
 <!-- Back face — offset for depth -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 40 32 L 100 32 L 100 88 L 84 96"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 100 32 L 84 40"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 40 32 L 100 32 L 100 88 L 84 96"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 100 32 L 84 40"/>
 <!-- Top face connecting front to back -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 24 40 L 40 32"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 84 96 L 100 88"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 24 40 L 40 32"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 84 96 L 100 88"/>
 <!-- Cage wire ribs — horizontal bars on front face -->
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 54 L 84 54"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 68 L 84 68"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 82 L 84 82"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 54 L 84 54"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 68 L 84 68"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 24 82 L 84 82"/>
 <!-- Cage wire ribs — vertical bars on front face -->
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 44 40 L 44 96"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 64 40 L 64 96"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 44 40 L 44 96"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 64 40 L 64 96"/>
 <!-- Funnel entrance — cone pointing inward on right side -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 84 48 C 72 56 72 60 72 68 C 72 76 72 80 84 88"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 84 48 C 72 56 72 60 72 68 C 72 76 72 80 84 88"/>
 <!-- Funnel opening -->
-<circle style="fill:none;stroke-width:1.5;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.6;" cx="72" cy="68" r="6"/>
+<circle style="fill:none;stroke-width:1.5;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;" cx="72" cy="68" r="6"/>
 <!-- Captured packets inside the trap -->
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke:none;" cx="42" cy="62" r="4"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.7;stroke:none;" cx="54" cy="76" r="3.5"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.8;stroke:none;" cx="36" cy="80" r="3"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="42" cy="62" r="4"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" cx="54" cy="76" r="3.5"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" cx="36" cy="80" r="3"/>
 </g>
 </svg>

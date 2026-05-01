@@ -8,37 +8,37 @@
 <g id="surface1">
 
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 
 <g clip-path="url(#circleClip)">
 
 <!-- 2x2 grid of widget tiles with subtle depth (filled rounded squares with strong border) -->
 
 <!-- Top-left tile — gauge hint (arc) -->
-<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.95;" d="M 28 28 L 58 28 Q 62 28 62 32 L 62 58 Q 62 62 58 62 L 32 62 Q 28 62 28 58 Z"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.85;" d="M 36 52 A 10 10 0 0 1 54 52"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke:none;" cx="45" cy="48" r="1.8"/>
+<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.95;" d="M 28 28 L 58 28 Q 62 28 62 32 L 62 58 Q 62 62 58 62 L 32 62 Q 28 62 28 58 Z"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;" d="M 36 52 A 10 10 0 0 1 54 52"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="45" cy="48" r="1.8"/>
 
 <!-- Top-right tile — stats bars -->
-<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.95;" d="M 70 28 L 96 28 Q 100 28 100 32 L 100 58 Q 100 62 96 62 L 70 62 Q 66 62 66 58 L 66 32 Q 66 28 70 28 Z"/>
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;" d="M 73 55 L 73 49"/>
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;" d="M 79 55 L 79 43"/>
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;" d="M 85 55 L 85 37"/>
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;" d="M 91 55 L 91 40"/>
+<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.95;" d="M 70 28 L 96 28 Q 100 28 100 32 L 100 58 Q 100 62 96 62 L 70 62 Q 66 62 66 58 L 66 32 Q 66 28 70 28 Z"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 73 55 L 73 49"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 79 55 L 79 43"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 85 55 L 85 37"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 91 55 L 91 40"/>
 
 <!-- Bottom-left tile — status dots -->
-<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.95;" d="M 28 70 L 58 70 Q 62 70 62 74 L 62 100 Q 62 104 58 104 L 32 104 Q 28 104 28 100 Z"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke:none;" cx="38" cy="82" r="2.2"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;" d="M 44 82 L 54 82"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.7;stroke:none;" cx="38" cy="90" r="2.2"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;" d="M 44 90 L 54 90"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.9;stroke:none;" cx="38" cy="98" r="2.2"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;" d="M 44 98 L 52 98"/>
+<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.95;" d="M 28 70 L 58 70 Q 62 70 62 74 L 62 100 Q 62 104 58 104 L 32 104 Q 28 104 28 100 Z"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="38" cy="82" r="2.2"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;" d="M 44 82 L 54 82"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" cx="38" cy="90" r="2.2"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;" d="M 44 90 L 54 90"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="38" cy="98" r="2.2"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;" d="M 44 98 L 52 98"/>
 
 <!-- Bottom-right tile — line graph -->
-<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.95;" d="M 70 70 L 96 70 Q 100 70 100 74 L 100 100 Q 100 104 96 104 L 70 104 Q 66 104 66 100 L 66 74 Q 66 70 70 70 Z"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;" d="M 72 96 L 78 88 L 84 92 L 90 78 L 96 82"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:1;stroke:none;" cx="90" cy="78" r="1.8"/>
+<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.10;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.95;" d="M 70 70 L 96 70 Q 100 70 100 74 L 100 100 Q 100 104 96 104 L 70 104 Q 66 104 66 100 L 66 74 Q 66 70 70 70 Z"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 72 96 L 78 88 L 84 92 L 90 78 L 96 82"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="90" cy="78" r="1.8"/>
 
 </g>
 </g>

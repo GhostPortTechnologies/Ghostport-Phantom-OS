@@ -7,67 +7,67 @@
 </defs>
 <g id="surface61">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.137255%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <g clip-path="url(#circleClip)">
 
 <!-- === SEA URCHIN BODY — central dome/test === -->
 <!-- Body fill — slightly oval, organic shape -->
-<path style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.12;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 64 48 C 78 48 88 54 88 66 C 88 78 78 84 64 84 C 50 84 40 78 40 66 C 40 54 50 48 64 48"/>
+<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.12;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 64 48 C 78 48 88 54 88 66 C 88 78 78 84 64 84 C 50 84 40 78 40 66 C 40 54 50 48 64 48"/>
 
 <!-- Body plate texture — meridional lines -->
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 52 50 C 48 58 48 74 52 82"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 64 48 C 64 56 64 76 64 84"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 76 50 C 80 58 80 74 76 82"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 52 50 C 48 58 48 74 52 82"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 64 48 C 64 56 64 76 64 84"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 76 50 C 80 58 80 74 76 82"/>
 
 <!-- Body plate texture — horizontal band -->
-<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 42 62 C 50 60 58 59 64 59 C 70 59 78 60 86 62"/>
-<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 42 70 C 50 72 58 73 64 73 C 70 73 78 72 86 70"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 42 62 C 50 60 58 59 64 59 C 70 59 78 60 86 62"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 42 70 C 50 72 58 73 64 73 C 70 73 78 72 86 70"/>
 
 <!-- Tubercle bumps on body — small dots where spines attach -->
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.4;stroke:none;" cx="52" cy="58" r="1.5"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.4;stroke:none;" cx="64" cy="55" r="1.5"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.4;stroke:none;" cx="76" cy="58" r="1.5"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" cx="46" cy="66" r="1.3"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" cx="82" cy="66" r="1.3"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" cx="52" cy="74" r="1.3"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.35;stroke:none;" cx="76" cy="74" r="1.3"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" cx="58" cy="64" r="1.2"/>
-<circle style="fill:rgb(86.274510%,54.117647%,86.666667%);fill-opacity:0.3;stroke:none;" cx="70" cy="64" r="1.2"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" cx="52" cy="58" r="1.5"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" cx="64" cy="55" r="1.5"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" cx="76" cy="58" r="1.5"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" cx="46" cy="66" r="1.3"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" cx="82" cy="66" r="1.3"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" cx="52" cy="74" r="1.3"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" cx="76" cy="74" r="1.3"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.3;stroke:none;" cx="58" cy="64" r="1.2"/>
+<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.3;stroke:none;" cx="70" cy="64" r="1.2"/>
 
 <!-- === SPINES — radiating outward from body, varying lengths === -->
 <!-- Top spines — longest, reaching upward -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 64 48 C 63 40 62 28 60 16"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 56 50 C 52 42 46 30 42 18"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 72 50 C 76 42 82 30 86 18"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 48 52 C 42 44 34 34 28 24"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 80 52 C 86 44 94 34 100 24"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 64 48 C 63 40 62 28 60 16"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 56 50 C 52 42 46 30 42 18"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 72 50 C 76 42 82 30 86 18"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 48 52 C 42 44 34 34 28 24"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 80 52 C 86 44 94 34 100 24"/>
 
 <!-- Upper-side spines -->
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 42 56 C 34 52 24 46 14 42"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 86 56 C 94 52 104 46 114 42"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 42 56 C 34 52 24 46 14 42"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.8;stroke-miterlimit:10;" d="M 86 56 C 94 52 104 46 114 42"/>
 
 <!-- Side spines — horizontal, medium length -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 40 66 C 32 66 22 66 12 66"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 88 66 C 96 66 106 66 116 66"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 40 66 C 32 66 22 66 12 66"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 88 66 C 96 66 106 66 116 66"/>
 
 <!-- Lower-side spines -->
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.75;stroke-miterlimit:10;" d="M 42 76 C 34 80 24 86 16 90"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.75;stroke-miterlimit:10;" d="M 86 76 C 94 80 104 86 112 90"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.75;stroke-miterlimit:10;" d="M 42 76 C 34 80 24 86 16 90"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.75;stroke-miterlimit:10;" d="M 86 76 C 94 80 104 86 112 90"/>
 
 <!-- Bottom spines -->
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.65;stroke-miterlimit:10;" d="M 50 82 C 46 90 40 100 36 108"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 64 84 C 64 92 64 102 64 112"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.65;stroke-miterlimit:10;" d="M 78 82 C 82 90 88 100 92 108"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.65;stroke-miterlimit:10;" d="M 50 82 C 46 90 40 100 36 108"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 64 84 C 64 92 64 102 64 112"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.65;stroke-miterlimit:10;" d="M 78 82 C 82 90 88 100 92 108"/>
 
 <!-- Shorter secondary spines — fill gaps between primary spines -->
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 60 48 C 58 38 56 28 54 22"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 68 48 C 70 38 72 28 74 22"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.45;stroke-miterlimit:10;" d="M 44 60 C 36 56 26 50 20 46"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.45;stroke-miterlimit:10;" d="M 84 60 C 92 56 102 50 108 46"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 40 72 C 32 74 22 78 14 80"/>
-<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 88 72 C 96 74 106 78 114 80"/>
-<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 46 82 C 40 92 34 102 30 110"/>
-<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(86.274510%,54.117647%,86.666667%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 82 82 C 88 92 94 102 98 110"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 60 48 C 58 38 56 28 54 22"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 68 48 C 70 38 72 28 74 22"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.45;stroke-miterlimit:10;" d="M 44 60 C 36 56 26 50 20 46"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.45;stroke-miterlimit:10;" d="M 84 60 C 92 56 102 50 108 46"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 40 72 C 32 74 22 78 14 80"/>
+<path style="fill:none;stroke-width:1.2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 88 72 C 96 74 106 78 114 80"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 46 82 C 40 92 34 102 30 110"/>
+<path style="fill:none;stroke-width:1;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 82 82 C 88 92 94 102 98 110"/>
 
 </g>
 </g>
