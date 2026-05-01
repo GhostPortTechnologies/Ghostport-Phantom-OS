@@ -2285,21 +2285,12 @@ function humanRate(bps) {
   return `${bits.toFixed(0)} bps`;
 }
 
-app.get("/api/tools/bandwidth", async (req, res) => {
-  try {
-    const stats = {};
-    for (const iface of BANDWIDTH_IFACES) {
-      const s = readIfaceStats(iface);
-      if (s) stats[iface] = s;
-    }
-    res.json({ ok: true, interfaces: stats });
-  } catch (e) {
-    console.error("[GhostPort] Error:", e.message);
-    res.status(500).json({ ok: false, error: "Operation failed" });
-  }
-});
+// T-0070: /api/tools/bandwidth (raw-counter endpoint) deleted — sole consumer was
+// arsenal.js fetchBandwidth(), now migrated to /rate. Both UIs (TRAFFIC MONITOR in
+// index.html inline block + Arsenal bandwidth card) share the rate endpoint. Lock
+// below provides soft serialization; clients tolerate 429 and retry on next poll.
 
-// DECISION: 1-second delay done with setTimeout/Promise, not blocking the event loop
+// 1-second delay done with setTimeout/Promise, not blocking the event loop
 let bandwidthInProgress = false;
 app.get("/api/tools/bandwidth/rate", async (req, res) => {
   if (bandwidthInProgress) return res.status(429).json({ ok: false, error: "Bandwidth test already running" });
@@ -3500,104 +3491,6 @@ app.post("/api/arsenal/quicblock", async (req, res) => {
 });
 
 /**
- * POST /api/arsenal/antifingerprint — { enabled: true|false }
- * Toggles anti-fingerprint DNS blocklist (35 tracking/fingerprinting domains)
- */
-app.post("/api/arsenal/antifingerprint", async (req, res) => {
-  const { enabled } = req.body;
-  try {
-    const confFile = "/etc/dnsmasq.d/30-anti-fingerprint.conf";
-    const disabledFile = confFile + ".disabled";
-
-    if (enabled) {
-      await run(`sudo test -f ${disabledFile} && sudo mv ${disabledFile} ${confFile} || true`);
-    } else {
-      await run(`sudo test -f ${confFile} && sudo mv ${confFile} ${disabledFile} || true`);
-    }
-
-    await run("sudo systemctl restart pihole-FTL");
-    await withArsenal(arsenal => { arsenal.antiFingerprint = enabled; });
-
-    console.log(`[Arsenal] Anti-fingerprint DNS ${enabled ? "enabled" : "disabled"}`);
-    res.json({ ok: true, antiFingerprint: enabled });
-  } catch (e) {
-    console.error("[Arsenal] Anti-fingerprint toggle failed:", e.message);
-    res.status(500).json({ ok: false, error: "Operation failed" });
-  }
-});
-
-/**
- * POST /api/arsenal/webrtcblock — { enabled: true|false }
- * Toggles WebRTC STUN/TURN port blocking
- */
-app.post("/api/arsenal/webrtcblock", async (req, res) => {
-  const { enabled } = req.body;
-  try {
-    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
-    const mode = modeFile.out.trim();
-
-    if (mode !== "isp") {
-      if (enabled) {
-        await run(`sudo gp-mode ${mode} --no-rollback`);
-      } else {
-        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
-      }
-    }
-
-    await withArsenal(arsenal => { arsenal.webrtcBlock = enabled; });
-    console.log(`[Arsenal] WebRTC block ${enabled ? "enabled" : "disabled"}`);
-    res.json({ ok: true, webrtcBlock: enabled });
-  } catch (e) {
-    console.error("[Arsenal] WebRTC block toggle failed:", e.message);
-    res.status(500).json({ ok: false, error: "Operation failed" });
-  }
-});
-
-/**
- * POST /api/arsenal/covertraffic — { enabled: true|false }
- * Toggles cover traffic generation (traffic analysis resistance)
- */
-app.post("/api/arsenal/covertraffic", async (req, res) => {
-  const { enabled } = req.body;
-  try {
-    if (enabled) {
-      await run("sudo systemctl enable --now ghostport-noise.service");
-    } else {
-      await run("sudo systemctl disable --now ghostport-noise.service");
-    }
-    await withArsenal(arsenal => { arsenal.coverTraffic = enabled; });
-    console.log(`[Arsenal] Cover traffic ${enabled ? "enabled" : "disabled"}`);
-    res.json({ ok: true, coverTraffic: enabled });
-  } catch (e) {
-    console.error("[Arsenal] Cover traffic toggle failed:", e.message);
-    res.status(500).json({ ok: false, error: "Operation failed" });
-  }
-});
-
-/**
- * GET /api/tools/ja3check
- * Returns the device's TLS fingerprint (JA3 hash) for diagnostic purposes
- */
-app.get("/api/tools/ja3check", async (req, res) => {
-  try {
-    const result = await run("curl -s --max-time 10 https://ja3er.com/json 2>/dev/null || echo '{}'");
-    let ja3Data = {};
-    try { ja3Data = JSON.parse(result.out.trim()); } catch { ja3Data = { error: "Could not reach ja3er.com" }; }
-
-    res.json({
-      ok: true,
-      ja3_hash: ja3Data.ja3_hash || ja3Data.ja3 || null,
-      ja3_text: ja3Data.ja3_text || null,
-      user_agent: ja3Data.User_Agent || ja3Data.user_agent || null,
-      source: "ja3er.com",
-      note: "This is the Pi's own TLS fingerprint via curl. Connected devices will have different fingerprints based on their browser.",
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: "JA3 check failed" });
-  }
-});
-
-/**
  * POST /api/arsenal/schedules — { time: "HH:MM", days: [0-6], mode: "isp"|... }
  */
 app.post("/api/arsenal/schedules", async (req, res) => {
@@ -3701,62 +3594,6 @@ app.post("/api/theme", (req, res) => {
   try {
     fs.writeFileSync(THEME_FILE, JSON.stringify({ color }), "utf8");
     res.json({ ok: true, color });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-// ── Privacy Paycheck (money saved from blocked ads) ──────
-// Industry avg CPM (cost per 1000 impressions):
-// Display ads: $2-5, Video ads: $10-30, Native ads: $5-15
-// Conservative: $3.50 display CPM. Data costs ~$0.001/ad load (avg 150KB payload).
-// Time saved: ~2.5 seconds per blocked ad (page load improvement).
-
-app.get("/api/tools/paycheck", (req, res) => {
-  try {
-    const tally = readTally();
-    const blocked = tally.blocked || 0;
-    const total = tally.total || 0;
-
-    // Money saved from not seeing ads (advertiser value = your attention value)
-    const cpmDisplay = 3.50;   // conservative display ad CPM
-    const adRevenueSaved = (blocked / 1000) * cpmDisplay;
-
-    // Data saved (avg ad payload ~150KB including trackers, scripts, pixels)
-    const bytesPerAd = 150 * 1024;
-    const dataSavedBytes = blocked * bytesPerAd;
-    const dataSavedMB = dataSavedBytes / (1024 * 1024);
-    const dataSavedGB = dataSavedMB / 1024;
-
-    // Time saved (avg 2.5 seconds per ad load — DNS + fetch + render)
-    const secondsPerAd = 2.5;
-    const timeSavedSeconds = blocked * secondsPerAd;
-    const timeSavedMinutes = timeSavedSeconds / 60;
-    const timeSavedHours = timeSavedMinutes / 60;
-
-    // Data cost savings (avg US mobile data: ~$10/GB)
-    const dataCostPerGB = 10;
-    const dataCostSaved = dataSavedGB * dataCostPerGB;
-
-    // Total estimated savings
-    const totalSaved = adRevenueSaved + dataCostSaved;
-
-    res.json({
-      ok: true,
-      blocked,
-      total,
-      blockRate: total > 0 ? ((blocked / total) * 100).toFixed(1) : "0.0",
-      savings: {
-        total: +totalSaved.toFixed(2),
-        adValue: +adRevenueSaved.toFixed(2),
-        dataCost: +dataCostSaved.toFixed(2),
-        dataSavedMB: +dataSavedMB.toFixed(1),
-        dataSavedGB: +dataSavedGB.toFixed(2),
-        timeSavedMinutes: +timeSavedMinutes.toFixed(1),
-        timeSavedHours: +timeSavedHours.toFixed(1),
-      },
-      methodology: "CPM $3.50 display, 150KB/ad payload, 2.5s/ad load, $10/GB data"
-    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
