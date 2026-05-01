@@ -10,6 +10,8 @@ from gi.repository import Gtk, Gdk, GLib, Pango
 import json
 import re
 import math
+import os
+import sqlite3
 import subprocess
 import time
 import cairo
@@ -272,8 +274,14 @@ class AtlasApp(GhostPortApp):
         btn_bar.set_margin_end(8)
         btn_bar.set_margin_top(2)
         btn_bar.set_margin_bottom(2)
+        # T-0057 — open the RF Neighborhood sidecar window.
+        nb_btn = Gtk.Button(label="🛰 Neighborhood")
+        nb_btn.connect("clicked", self._on_open_neighborhood)
+        btn_bar.pack_start(nb_btn, False, False, 0)
         btn_bar.pack_end(self.make_help_button(sections=self.HELP_SECTIONS), False, False, 0)
         root.pack_start(btn_bar, False, False, 0)
+        self._neighborhood_win = None
+        self._neighborhood_refresh_id = 0
 
         # Status bar
         self.status_bar = self.make_status_bar("Scanning network...")
@@ -726,6 +734,132 @@ class AtlasApp(GhostPortApp):
 
     def on_theme_changed(self):
         self.canvas.queue_draw()
+
+    # ── T-0057 RF Neighborhood window ────────────────────────────────
+
+    NEIGHBORHOOD_EVENTS_DB = os.path.expanduser("~/.local/share/phantom/events.db")
+    NEIGHBORHOOD_LOOKBACK_S = 600  # show BSSIDs seen in the last 10 min
+
+    def _on_open_neighborhood(self, _btn):
+        if self._neighborhood_win is not None:
+            self._neighborhood_win.present()
+            return
+        win = Gtk.Window(title="🛰 RF Neighborhood — passive Wi-Fi scan")
+        win.set_default_size(820, 480)
+        win.set_transient_for(self)
+        win.connect("delete-event", self._on_close_neighborhood)
+        self._neighborhood_win = win
+
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vbox.set_margin_start(8); vbox.set_margin_end(8)
+        vbox.set_margin_top(8); vbox.set_margin_bottom(8)
+        win.add(vbox)
+
+        hdr = Gtk.Label()
+        hdr.set_markup(
+            "<small>BSSIDs detected by Sonar in the last "
+            f"{self.NEIGHBORHOOD_LOOKBACK_S // 60} min. "
+            "Auto-refresh every 30s. Read-only.</small>"
+        )
+        hdr.set_xalign(0.0)
+        vbox.pack_start(hdr, False, False, 0)
+
+        # ListStore columns: ssid, bssid, vendor, channel, security, rssi, last_seen_age, wps
+        self._neighborhood_store = Gtk.ListStore(str, str, str, str, str, int, str, str)
+        tv = Gtk.TreeView(model=self._neighborhood_store)
+        for i, title in enumerate(["SSID", "BSSID", "Vendor", "Ch", "Security", "RSSI", "Last seen", "WPS"]):
+            renderer = Gtk.CellRendererText()
+            col = Gtk.TreeViewColumn(title, renderer, text=i)
+            col.set_resizable(True)
+            col.set_sort_column_id(i)
+            tv.append_column(col)
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scroll.add(tv)
+        vbox.pack_start(scroll, True, True, 0)
+
+        self._neighborhood_status = Gtk.Label(label="")
+        self._neighborhood_status.set_xalign(0.0)
+        vbox.pack_start(self._neighborhood_status, False, False, 0)
+
+        win.show_all()
+        self._refresh_neighborhood()
+        self._neighborhood_refresh_id = GLib.timeout_add_seconds(30, self._refresh_neighborhood)
+
+    def _on_close_neighborhood(self, win, _evt):
+        if self._neighborhood_refresh_id:
+            GLib.source_remove(self._neighborhood_refresh_id)
+            self._neighborhood_refresh_id = 0
+        self._neighborhood_win = None
+        win.destroy()
+        return True
+
+    def _refresh_neighborhood(self):
+        """Read recent beacon_seen events, update the ListStore. Returns True so
+        GLib.timeout_add_seconds keeps firing."""
+        if self._neighborhood_store is None or self._neighborhood_win is None:
+            return False
+        rows = self._read_neighborhood()
+        self._neighborhood_store.clear()
+        for r in rows:
+            self._neighborhood_store.append(r)
+        self._neighborhood_status.set_text(
+            f"{len(rows)} BSSIDs seen in last {self.NEIGHBORHOOD_LOOKBACK_S // 60}m  "
+            f"|  Updated: {time.strftime('%H:%M:%S')}"
+        )
+        return True
+
+    def _read_neighborhood(self):
+        """Pull last 10 min of beacon_seen events from gp_events DB. Most-recent
+        observation wins per BSSID. Returns list of tuples matching ListStore."""
+        out = []
+        if not os.path.exists(self.NEIGHBORHOOD_EVENTS_DB):
+            return out
+        now = time.time()
+        try:
+            c = sqlite3.connect(f"file:{self.NEIGHBORHOOD_EVENTS_DB}?mode=ro", uri=True).cursor()
+            c.execute(
+                "SELECT timestamp, details FROM events "
+                "WHERE source='sonar-sniffer' AND category='beacon_seen' "
+                "AND timestamp > ? ORDER BY timestamp ASC",
+                (now - self.NEIGHBORHOOD_LOOKBACK_S,),
+            )
+            seen = {}
+            for ts, details in c.fetchall():
+                try:
+                    d = json.loads(details) if details else {}
+                except Exception:
+                    continue
+                bssid = d.get("bssid")
+                if not bssid:
+                    continue
+                seen[bssid] = (ts, d)
+        except sqlite3.Error:
+            return out
+
+        for bssid, (ts, d) in seen.items():
+            sec = d.get("security") or {}
+            sec_label = sec.get("mode") or "?"
+            mfp = sec.get("mfp")
+            if mfp == "required":
+                sec_label += "+MFP"
+            elif mfp == "absent" and sec_label != "open":
+                sec_label += " (no MFP)"
+            age = int(now - ts)
+            age_str = f"{age // 60}m {age % 60}s ago" if age >= 60 else f"{age}s ago"
+            out.append((
+                d.get("ssid") or "(hidden)",
+                bssid,
+                d.get("vendor") or "—",
+                str(d.get("channel") or "?"),
+                sec_label,
+                int(d.get("rssi_dbm") or 0),
+                age_str,
+                d.get("wps") or "?",
+            ))
+        # Sort by RSSI desc (strongest first)
+        out.sort(key=lambda r: -r[5])
+        return out
 
 
 if __name__ == "__main__":
