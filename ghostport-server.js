@@ -1250,6 +1250,9 @@ function readVersion() {
 let rollbackTimer = null;
 let rollbackTarget = null;
 let rollbackDeadline = null;
+// T-0067: arsenal.json contents at rollback-arm time. Restored on rollback
+// fire so user can't strand a Kill Switch toggle in a mode where it no-ops.
+let rollbackArsenalSnapshot = null;
 
 function cancelRollback() {
   if (rollbackTimer) {
@@ -1257,6 +1260,7 @@ function cancelRollback() {
     rollbackTimer = null;
     rollbackTarget = null;
     rollbackDeadline = null;
+    rollbackArsenalSnapshot = null;
     // Also cancel the shell-level rollback
     run("sudo gp-mode confirm");
   }
@@ -1266,13 +1270,36 @@ function scheduleRollback(previousMode, timeoutSec = 60) {
   cancelRollback();
   rollbackTarget = previousMode;
   rollbackDeadline = Date.now() + timeoutSec * 1000;
+  // T-0067: snapshot arsenal state so we can restore it if the rollback fires.
+  // Read-only snapshot — no lock needed; writes are serialized by withArsenal().
+  try {
+    rollbackArsenalSnapshot = readArsenal();
+  } catch (e) {
+    rollbackArsenalSnapshot = null;
+    console.warn("[GhostPort] rollback snapshot failed:", e.message);
+  }
 
   rollbackTimer = setTimeout(async () => {
     console.log(`[GhostPort] Rollback timer expired — reverting to ${previousMode}`);
+    // T-0067: restore arsenal.json BEFORE the mode revert so the new (old)
+    // mode comes up with the correct arsenal state. Serialize through
+    // withArsenal() to avoid clobbering an in-flight toggle.
+    if (rollbackArsenalSnapshot) {
+      try {
+        await withArsenal((arsenal) => {
+          for (const k of Object.keys(arsenal)) delete arsenal[k];
+          Object.assign(arsenal, rollbackArsenalSnapshot);
+        });
+        console.log("[GhostPort] Arsenal state reverted to pre-switch snapshot");
+      } catch (e) {
+        console.error("[GhostPort] Arsenal restore failed:", e.message);
+      }
+    }
     await run(`sudo gp-mode ${previousMode} --no-rollback`);
     rollbackTimer = null;
     rollbackTarget = null;
     rollbackDeadline = null;
+    rollbackArsenalSnapshot = null;
   }, timeoutSec * 1000);
 }
 
@@ -3013,9 +3040,11 @@ app.get("/api/arsenal/status", async (req, res) => {
 
     res.json({
       ok: true,
+      mode: activeMode,                         // expose current mode for UI gating (used by Ghost Mode + Kill Switch + QUIC Block)
       killSwitch: arsenal.killSwitch,
       killSwitchTripped,
       killSwitchAuto: arsenal.killSwitchAuto !== false, // default true
+      killSwitchApplicable: inTunnel,           // monitor only runs in tunnel modes (doublehop/zhop)
       dnsLeakDetected,
       encryptedDns: (dnsStatus === "doh" || dnsStatus === "tunnel"),
       dnsStatus,
@@ -3025,6 +3054,9 @@ app.get("/api/arsenal/status", async (req, res) => {
       dreadnoughtApplicable: !inTunnel,          // UI hides control in tunnel modes
       macRandomization: macService.out.trim() === "enabled",
       quicBlock: arsenal.quicBlock !== false, // default true
+      // QUIC block rule is hardcoded in zerotrust/doublehop/zhop .nft profiles, so the
+      // user-facing toggle is only authoritative in ISP mode. Other modes force-enable.
+      quicBlockManaged: activeMode !== "isp",
       tcpScrub:  !!arsenal.tcpScrub,          // default false
       ghostMode: !!arsenal.ghostMode,         // default false
       ghostReady: (() => {
