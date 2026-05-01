@@ -411,6 +411,36 @@ done
 
 **Fix pattern** for API-based theme fetches that fall back to default on failure: read theme.json directly BEFORE the API call (see `ghostport-widget.py::get_theme()` for reference). theme.json is the source of truth anyway.
 
+### Event-bus dedup: producer-local, consumer-windowed (DECISION RECORD 2026-04-29 — T-0044)
+
+`gp_events.emit()` is intentionally **not** deduplicated. Every call writes a row. Dedup lives in two specific places, with different scopes — and **they should not be consolidated**.
+
+**The two existing producer paths in Sonar:**
+
+| Producer | Dedup primitive | Scope | Why |
+|---|---|---|---|
+| `gp-sonar.py` GUI (`SonarApp._emitted_events`) | `OrderedDict[(category, bssid)]`, MAX 5000, no TTL | per-process / per-session, cleared on app close | Gates *both* the bus emit and the user-facing `notify-send` so a sustained condition doesn't spam the desktop. Closing and reopening Sonar is a deliberate "clear and re-evaluate" gesture — the user wants to re-see the alert if it's still active. |
+| `gp-sonar-detect` headless helper (`should_emit` + `sonar-detect-emitted.json`) | persistent JSON `{"<cat>\|<bssid>": last_ts}`, 30-min TTL | cross-run / cross-process | Daemon scan is fed to the bus for downstream correlation. The 30-min re-emit is what keeps a sustained condition *fresh* on the bus so time-windowed correlation rules (e.g., the 90s `coordinated_mitm` window) can pair it with a freshly-arrived peer event. |
+
+**Why we don't fold these into one shared store**
+
+1. **Different audiences.** The GUI primitive gates user-visible notifications; the helper primitive gates internal bus traffic. A single store would force one audience's policy on the other — either re-spamming desktop notifications on app reopen, or letting the bus go stale and breaking correlation windows.
+2. **Different lifetimes are correct.** GUI `_emitted_events` clearing on app restart is a *feature*, not a bug. Helper persistence across reboots is a *feature* too. Both lifetimes match their audience's expectation.
+3. **Industry pattern is consumer-side.** Prometheus alertmanager (`group_interval`), Splunk throttling, PagerDuty deduplication — all live on the *consumer* side, not in the producers. `gp-correlator` already follows this pattern with its 5-min per-pattern Chamber dedup. Adding shared producer-side dedup would introduce a third layer of coordination without removing the consumer one.
+4. **The "double-fire" cost is minimal.** When the GUI is open during a background-helper scan window, a sustained threat may emit once from each producer. Both rows land in `events.db`. The correlator dedups before any user-visible action. Cost: two extra rows in a 7-day-retention SQLite table. Benefit of consolidating: zero — the user sees one notification either way (GUI controls notify-send), and the bus infrastructure doesn't care.
+
+**Rule for new producers (Stonefish, Crow's Nest, future apps):**
+
+- If your producer is a **user-facing app** with notify-send / mako alerts: implement an in-memory per-session `_emitted_events` dict, gate both bus emit and user notification on it, clear on `_on_destroy`.
+- If your producer is a **headless daemon** that feeds the bus: implement persistent dedup with a TTL **shorter than the largest correlation window** in `gp_events.CORRELATION_PATTERNS` (currently 600s for `wardriving_pattern`), so sustained conditions stay correlatable.
+- **Do not invent a third dedup primitive.** Reuse one of the two patterns above. If a future case genuinely needs a different primitive, document why here before shipping it.
+
+**Rule for new consumers:**
+
+- All time-windowed dedup / suppression / grouping for user-visible output happens in the consumer (currently `gp-correlator`). Do not push consumer-only concerns into producers. If you need a different suppression policy for a different output channel (e.g., Discord vs Chamber vs ntfy), implement it on the channel side, not in the bus producer.
+
+**Decision origin:** T-0044 (2026-04-29) closed the consolidation question after T-0021 item 6 deferral. T-0041 (the "implement consolidation" ticket that depends on this decision) is recommended for closure as won't-fix on the same basis; pending operator review.
+
 ---
 
 ## 6. Safety Checklist (Pre-Ship)
@@ -487,3 +517,84 @@ GhostPort's resource management is modeled after FortiGate appliance patterns:
 /etc/gpmodes/              # nftables firewall profiles
 /opt/phantom/docs/       # Documentation
 ```
+
+---
+
+## 9. Out-of-tree kernel modules (hardware enablement)
+
+**Rule origin:** 2026-04-30 — T-0048 PCIe path build. Spent an hour on `openwrt/mt76` main before discovering API drift; the rpi kernel git source compiled clean in two minutes.
+
+### 9.1 Source selection — use the rpi kernel git, NOT vendor-upstream main
+
+When a hardware module is missing from the rpi kernel package (`linux-image-rpi-2712`), build the kernel's own source for that module out-of-tree. This guarantees API match.
+
+```bash
+git clone --depth 1 --filter=blob:none --sparse \
+  --branch rpi-6.12.y https://github.com/raspberrypi/linux /usr/src/<driver>-rpi
+git -C /usr/src/<driver>-rpi sparse-checkout set drivers/net/wireless/<vendor>/<driver>
+cp -r /usr/src/<driver>-rpi/drivers/net/wireless/<vendor>/<driver> /usr/src/<driver>-build
+```
+
+**Do NOT use vendor upstreams (`openwrt/mt76`, `morrownr/8821au`, etc.) main branches.** They track newer mac80211 / cfg80211 APIs than our kernel ships, causing build failures with errors like *"incompatible pointer type"* on `.set_rts_threshold`, `.get_txpower`, `.set_antenna` (kernel 6.12 added MLO link_id params; many vendor trees haven't ported yet).
+
+### 9.2 Headers package — use `linux-headers-rpi-2712` (NOT `raspberrypi-kernel-headers`)
+
+```bash
+sudo apt install -y linux-headers-rpi-2712 build-essential bc
+ls -la /lib/modules/$(uname -r)/build   # should resolve to /usr/src/linux-headers-...+rpt-rpi-2712
+```
+
+If `/lib/modules/$(uname -r)/build` is missing, the headers package is wrong.
+
+### 9.3 Build invocation — kernel external-module pattern
+
+```bash
+cd /usr/src/<driver>-build
+sudo make -C /lib/modules/$(uname -r)/build M=$(pwd) \
+    CONFIG_<DRIVER_FAMILY>=m CONFIG_<SPECIFIC>=m \
+    CONFIG_<UNRELATED>=n ... modules
+```
+
+Pass `=n` for unrelated subdirs in the same source tree — otherwise the build walks every subdirectory and fails on whichever one has API drift you don't care about.
+
+### 9.4 Install + autoload
+
+```bash
+sudo mkdir -p /lib/modules/$(uname -r)/extra/<driver>
+sudo cp <driver>.ko /lib/modules/$(uname -r)/extra/<driver>/
+sudo depmod -a
+sudo modprobe <driver>
+grep <driver> /lib/modules/$(uname -r)/modules.alias | head -3
+```
+
+### 9.5 Pi 5 PCIe gotcha — `coherent_pool=1M`
+
+Pi 5 firmware sets `coherent_pool=1M` in the kernel cmdline by default. Many DMA-heavy PCIe devices (Wi-Fi 6, NVMe with high queue depth, SDR cards) need 16-32 MB of DMA-coherent memory and probe-fail with `-ENOMEM`. Override:
+
+```bash
+sudo cp -p /boot/firmware/cmdline.txt /boot/firmware/cmdline.txt.bak.$(date +%Y%m%d-%H%M%S)
+sudo sed -i 's/^/coherent_pool=64M /' /boot/firmware/cmdline.txt
+# Reboot required (operator-only per OPERATOR-SOP rule #18)
+```
+
+Kernel honors duplicate cmdline params last-wins; prepending `coherent_pool=64M` overrides firmware's `coherent_pool=1M`.
+
+### 9.6 Survival across kernel updates — DKMS
+
+A one-shot build is bound to the current kernel version. On `apt`-driven kernel updates, `/lib/modules/<new-kernel>/extra/` is empty — the driver disappears.
+
+For customer fleets, package as DKMS (T-0049 tracks this for the mt76 driver). Until DKMS lands, pin the kernel if the driver is mission-critical:
+```bash
+sudo apt-mark hold linux-image-rpi-2712 linux-headers-rpi-2712
+```
+
+### 9.7 Failure-mode diagnosis
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `make: *** No targets. Stop.` | Wrong invocation pattern | Use `make -C /lib/modules/.../build M=$(pwd) modules` |
+| `LINUX_VERSION_CODE not defined` | Missing `#include <linux/version.h>` | Patch the source or pull from rpi kernel git |
+| `incompatible pointer type` on cfg80211 ops | Vendor-upstream API drift | Switch to rpi kernel git source |
+| `probe with driver X failed with error -12` | DMA-coherent pool exhausted | Increase `coherent_pool` in cmdline |
+| `error -110` (timeout) | Hardware not responding / firmware load failed | Check `dmesg` for firmware-load errors |
+| `Unknown symbol mt76_*` at modprobe | Built against different mt76 version than loaded | Build all dependent helpers from same tree, install to `extra/`, depmod -a |

@@ -20,8 +20,10 @@ __pycache__/
 *.token
 credentials*
 auth*.json
+*-auth.json
 fleet-auth*
 bridge-auth*
+wigle-cache.json
 stripe*.json
 arsenal.json
 pihole.json

@@ -35,6 +35,33 @@ CLAIMING: Task #X — gp-toolname
 ```
 If two instances claim the same task, **first claim wins**. This prevented duplicate work in Phase 3.
 
+For ticket-driven work (AI-TICKET-SOP), the equivalent is `gp-tickets claim T-NNNN --by <handle>`. Anything in `in_progress` status is taken — do NOT start; pick another approved ticket or coordinate hand-off via Chamber + ticket update note.
+
+### Multi-Window Squad Briefing (READ THIS if you were spawned alongside other windows)
+
+When the operator opens many terminal windows at once to parallelize ticket work, every AI in those windows must follow these rules to avoid collisions, lockouts, and load incidents:
+
+1. **Claim before you read code.** First action after kickoff ritual: `gp-tickets list --status approved`, pick one, `gp-tickets claim T-NNNN --by <your-handle>`. If the claim fails because another window beat you to it, pick a different ticket — do NOT race to edit the same files.
+
+2. **One designated security sweeper for the whole squad.** Only that handle runs `gp-qa --security` or `gp-qa --paranoid` (gitleaks + trivy + osemgrep are whole-tree scanners). Everyone else uses plain `gp-qa <files>` (per-file quality only). Parallel security sweeps caused the 2026-04-17 load-21 incident on a 4-core Pi. PYTHON-QA-SOP §9.5 is the canonical rule. Check `uptime` before any heavy scan; skip if load > 4× cores.
+
+3. **Exclusive-edit zones — announce in Chamber before touching:**
+   - `/etc/gpmodes/*.nft` and any nftables-affecting work — only one window at a time, and no mode switches mid-edit by anyone else.
+   - `ghostport-server.js` — single editor, others wait or work on isolated routes.
+   - `gp_app_base.py` — any change ripples to all 15+ desktop apps; senior review required.
+   - Theme engine (`gp-theme`, `gp-theme-colors.sh`, `theme-defaults/`) — single editor; theme changes touch every app's runtime polling.
+   - Pre-commit hooks / `.gitleaks.toml` — single editor; live-fire test required after every edit (SECRET-SAFETY-SOP §11.2.13).
+
+4. **Never restart shared services without operator OK.** This is OPERATOR-SOP rule #18 and applies even harder under multi-window load: `ghostport.service`, `lightdm`, `labwc`, `pihole-FTL`, `ghostport-sni`, any `systemctl restart` of a unit another window depends on. If your fix needs a restart to take effect, post the request in Chamber and wait — don't preempt another window's debug session.
+
+5. **Mode switches are operator-only during squad sessions.** `sudo gp-mode <mode>` flushes conntrack, rotates nftables, and triggers a 60s rollback timer. If multiple windows run gp-mode in parallel the rollback timers race and you can land in mixed-mode state (2026-04-02 incident). If a ticket genuinely needs a mode switch, request it in Chamber and let the operator drive it.
+
+6. **Use `gp-tickets update` as your scratch log.** Don't rely on memory between context resets — every non-trivial step gets a ticket update note so the next AI (or restarted you) can resume. AI-TICKET-SOP §3 requires this.
+
+7. **Drift check at 30 minutes.** Per SESSION-KICKOFF-SOP §5: re-run `gp-preflight`, `htop`, `chamber tail -20`. Catching drift early beats unwinding a broken state.
+
+If the operator briefed you with rules that conflict with the above, the operator's briefing wins for this session — but mention the conflict in Chamber so the SOP gets updated next pass.
+
 ### When to "Put Someone in Check"
 Ask your senior to review when:
 - A phase completes (quality gate)

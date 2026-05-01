@@ -170,6 +170,35 @@ If you're picking up an in-flight ticket from a previous AI:
 
 ---
 
+## 8.5 Closure Discipline — never bury deferred items in closure notes
+
+**Rule: if you close a ticket with N-of-M items shipped (M > N), every deferred item gets its own follow-up ticket BEFORE you mark the parent done. No exceptions.**
+
+A deferral buried in a closure note evaporates: it's not on any kanban column, not in `gp-tickets list`, not in any AI's startup ritual. The next session has no surface to find it. Operator review of "done" tickets reads as work complete — it isn't.
+
+**What counts as a deferral:**
+- "5 of 6 items shipped, item N deferred because …"
+- "Item X turned out to need T-NNNN to land first — defer"
+- "Scope grew during work; the X part is moved to a future pass"
+- Any item from the original ticket body that did NOT ship as part of this close
+
+**What you must do BEFORE closing:**
+1. File a follow-up ticket via `gp-tickets propose` for each deferred item.
+2. Title format: `<original-area>: <item summary> (deferred from T-NNNN #<item-number>)`
+3. Body must include: the deferral rationale (cite the original ticket's closure reasoning), any blockers (e.g., "depends on T-NNNN"), and pointers back to the parent ticket so context is preserved.
+4. In the parent ticket's closure note, list the spawned ticket IDs explicitly: `Deferred items spawned: T-XXXX, T-YYYY`.
+5. THEN run `gp-tickets close <parent>`.
+
+**Acceptable exception — already-done overlap.** If an item turns out to be already-shipped by a sibling ticket (e.g., T-0020 #2 was already done by T-0018), you do NOT need a follow-up ticket — but the closure note must explicitly cite the sibling ticket and line numbers proving it. "Already done" without proof reads identically to "I forgot."
+
+**Acceptable exception — won't-do.** If during work you decide an item shouldn't ship at all (was a bad idea, no longer applicable), state that decision in the closure note with the reasoning. Do NOT spawn a follow-up. The parent ticket's body + closure note are now the audit trail for the kill.
+
+**Rule origin:** 2026-04-29 — T-0021 closed as "5 of 6 shipped" with item #6 deferred via a sound rationale (dedup consolidation should wait for T-0026's event bus) but no follow-up ticket. Caught during operator review of newly-finished tickets; T-0041 was filed retroactively to recover the lost work. Pattern is high-frequency (T-0020 had a similar partial-completion shape; only escaped this rule because the deferred item was actually already-done overlap). The closure note is not durable enough to be the only record of pending work.
+
+**Related anti-pattern: "scope creep into the close."** Equally bad in the other direction — completing items that were NOT in the original ticket body and burying them in the closure note as bonus work. Those need their own tickets too, after-the-fact, so the audit trail matches the work done. (See SCOPE-DISCIPLINE-SOP.)
+
+---
+
 ## 9. Related SOPs
 
 - `OPERATOR-SOP.md` — squad management, quality gates (the gauntlet still applies to ticket-driven work)
