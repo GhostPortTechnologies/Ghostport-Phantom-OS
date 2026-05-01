@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+"""gp-rogue-block — captive-portal poisoning for confirmed evil-twin BSSIDs.
+
+PHASE A SCOPE: CLI wrapper + state + auto-expire only. No Sonar UI integration
+(that's Phase B, filed separately). The operator or a future Sonar action button
+calls this wrapper; the wrapper itself does not auto-fire.
+
+WHAT IT DOES
+    Adds a small set of captive-portal regex entries to Pi-hole's regex-deny
+    list, tagged with "gp-rogue-<bssid8>" in the comment so they can be found
+    and removed later. While entries are armed, a client that autoconnects to
+    the rogue AP gets a failed captive-portal probe — visible failure beats
+    silent harvest.
+
+NETWORK-WIDE EFFECT
+    The block applies to ALL Pi-hole clients on the LAN, not just clients
+    on the rogue AP. That is intentional per the T-0031 design: a failing
+    captive-portal smoke test is a loud, fleet-wide signal that the network
+    has an evil twin currently flagged.
+
+CAPTIVE-PORTAL DOMAINS POISONED PER ARM
+    msftconnecttest.com   (Windows / Edge)
+    captive.apple.com     (iOS / macOS)
+    connectivitycheck.gstatic.com  (Android / Chrome OS)
+
+USAGE
+    gp-rogue-block arm <bssid> [--ssid SSID] [--ttl-hours N]
+    gp-rogue-block release <bssid>
+    gp-rogue-block release-all
+    gp-rogue-block list
+    gp-rogue-block expire-stale       # called by ghostport-rogue-expire.timer
+    gp-rogue-block --help
+
+DATA
+    State: ~/.local/share/phantom/rogue-blocks.json (atomic writes)
+    API: POST/DELETE /api/domains/deny/regex via gp-pihole sid lifecycle
+    Default TTL: 24h (configurable per-arm with --ttl-hours)
+
+EXIT
+    0 success
+    1 usage error
+    2 cannot reach Pi-hole API
+    3 already armed (arm) / not found (release)
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+CLI_PW_FILE = "/etc/pihole/cli_pw"
+SID_CACHE = "/tmp/gp-pihole-sid"
+SID_TTL = 1500
+HTTP_TIMEOUT = 5
+BASE_URL = "http://localhost/api"
+
+CAPTIVE_PORTAL_DOMAINS = [
+    r"(\.|^)msftconnecttest\.com$",
+    r"(\.|^)captive\.apple\.com$",
+    r"(\.|^)connectivitycheck\.gstatic\.com$",
+]
+DEFAULT_TTL_HOURS = 24
+COMMENT_PREFIX = "gp-rogue-"
+
+STATE_DIR = os.path.expanduser("~/.local/share/phantom")
+STATE_FILE = os.path.join(STATE_DIR, "rogue-blocks.json")
+TMP_FILE = STATE_FILE + ".tmp"
+
+
+def log(msg):
+    sys.stdout.write(f"[gp-rogue-block] {msg}\n")
+    sys.stdout.flush()
+
+
+def err(msg):
+    sys.stderr.write(f"[gp-rogue-block] ERROR: {msg}\n")
+    sys.stderr.flush()
+
+
+def _load_state():
+    try:
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+            if not isinstance(data, dict) or "blocks" not in data:
+                return {"version": 1, "blocks": {}}
+            return data
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"version": 1, "blocks": {}}
+
+
+def _save_state(data):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    with open(TMP_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(TMP_FILE, STATE_FILE)
+
+
+# ── Pi-hole sid (re-uses gp-pihole's cached sid; minimal own auth as fallback) ──
+
+def _read_cli_pw():
+    r = subprocess.run(
+        ["sudo", "-n", "cat", CLI_PW_FILE],
+        capture_output=True, text=True, timeout=5,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        err("cannot read /etc/pihole/cli_pw via sudo")
+        sys.exit(2)
+    return r.stdout.strip()
+
+
+def _write_sid(sid):
+    fd = os.open(SID_CACHE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.write(fd, sid.encode())
+    os.close(fd)
+
+
+def _read_sid():
+    if not os.path.isfile(SID_CACHE):
+        return None
+    try:
+        if time.time() - os.path.getmtime(SID_CACHE) >= SID_TTL:
+            return None
+        with open(SID_CACHE) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _auth():
+    pw = _read_cli_pw()
+    body = json.dumps({"password": pw}).encode()
+    req = urllib.request.Request(
+        f"{BASE_URL}/auth", data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            d = json.loads(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
+        err(f"auth failed: {e}")
+        sys.exit(2)
+    sid = (d.get("session") or {}).get("sid")
+    if not sid:
+        err("auth returned no sid")
+        sys.exit(2)
+    _write_sid(sid)
+    return sid
+
+
+def _get_sid(force=False):
+    if not force:
+        cached = _read_sid()
+        if cached:
+            return cached
+    return _auth()
+
+
+def _api_call(method, path, body=None, retried=False):
+    sid = _get_sid(force=retried)
+    headers = {"X-FTL-SID": sid}
+    data = None
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{BASE_URL}/{path.lstrip('/')}",
+        data=data, headers=headers, method=method,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            raw = resp.read()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and not retried:
+            return _api_call(method, path, body=body, retried=True)
+        err(f"{method} {path} HTTP {e.code}")
+        sys.exit(2)
+    except (urllib.error.URLError, json.JSONDecodeError) as e:
+        err(f"{method} {path} error: {e}")
+        sys.exit(2)
+
+
+# ── Pi-hole regex domain operations ──
+
+def _add_regex(domain, comment):
+    return _api_call(
+        "POST", "domains/deny/regex",
+        body={"domain": domain, "comment": comment, "enabled": True, "groups": [0]},
+    )
+
+
+def _delete_regex(domain):
+    """v6 path-encodes the domain (slashes inside regexes get encoded)."""
+    encoded = urllib.request.quote(domain, safe="")
+    return _api_call("DELETE", f"domains/deny/regex/{encoded}")
+
+
+# ── Public actions ──
+
+def cmd_arm(bssid, ssid, ttl_hours):
+    bssid = bssid.lower().strip()
+    state = _load_state()
+    if bssid in state["blocks"]:
+        err(f"BSSID {bssid} already armed (since {state['blocks'][bssid]['armed_at']})")
+        sys.exit(3)
+    tag = f"{COMMENT_PREFIX}{bssid.replace(':', '')[:8]}"
+    armed_domains = []
+    for d in CAPTIVE_PORTAL_DOMAINS:
+        comment = f"{tag} ssid={ssid or '?'}"
+        try:
+            _add_regex(d, comment)
+            armed_domains.append(d)
+        except SystemExit:
+            # Roll back any partial arms
+            for d_done in armed_domains:
+                try:
+                    _delete_regex(d_done)
+                except SystemExit:
+                    pass
+            raise
+    now = time.time()
+    state["blocks"][bssid] = {
+        "ssid": ssid or "",
+        "armed_at": now,
+        "expires_at": now + ttl_hours * 3600,
+        "tag": tag,
+        "domains": armed_domains,
+    }
+    _save_state(state)
+    log(f"armed {bssid} (ssid={ssid or '?'}, ttl={ttl_hours}h, "
+        f"{len(armed_domains)} domains: {tag})")
+
+
+def cmd_release(bssid):
+    bssid = bssid.lower().strip()
+    state = _load_state()
+    block = state["blocks"].get(bssid)
+    if not block:
+        err(f"BSSID {bssid} not armed")
+        sys.exit(3)
+    failures = 0
+    for d in block.get("domains", CAPTIVE_PORTAL_DOMAINS):
+        try:
+            _delete_regex(d)
+        except SystemExit:
+            failures += 1
+    state["blocks"].pop(bssid, None)
+    _save_state(state)
+    log(f"released {bssid} ({len(block.get('domains', []))} domains, "
+        f"{failures} delete failures — Pi-hole may have already removed them)")
+
+
+def cmd_release_all():
+    state = _load_state()
+    bssids = list(state["blocks"].keys())
+    if not bssids:
+        log("no active blocks")
+        return
+    for b in bssids:
+        cmd_release(b)
+
+
+def cmd_list():
+    state = _load_state()
+    blocks = state["blocks"]
+    if not blocks:
+        log("no active blocks")
+        return
+    now = time.time()
+    for bssid, info in sorted(blocks.items(), key=lambda kv: kv[1].get("armed_at", 0)):
+        age_h = (now - info.get("armed_at", now)) / 3600
+        ttl_h = (info.get("expires_at", now) - now) / 3600
+        log(f"{bssid}  ssid={info.get('ssid') or '?':24s}  "
+            f"armed {age_h:.1f}h ago  expires in {ttl_h:.1f}h  tag={info.get('tag')}")
+
+
+def cmd_expire_stale():
+    """Called hourly by systemd timer. Releases any block past its expires_at."""
+    state = _load_state()
+    now = time.time()
+    stale = [b for b, info in state["blocks"].items() if info.get("expires_at", 0) < now]
+    if not stale:
+        return
+    log(f"auto-expiring {len(stale)} stale block(s)")
+    for b in stale:
+        cmd_release(b)
+
+
+# ── CLI ──
+
+def main():
+    parser = argparse.ArgumentParser(prog="gp-rogue-block", add_help=False)
+    parser.add_argument("--help", "-h", action="store_true")
+    sub = parser.add_subparsers(dest="cmd")
+
+    arm = sub.add_parser("arm", add_help=False)
+    arm.add_argument("bssid")
+    arm.add_argument("--ssid", default="")
+    arm.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS)
+
+    rel = sub.add_parser("release", add_help=False)
+    rel.add_argument("bssid")
+
+    sub.add_parser("release-all", add_help=False)
+    sub.add_parser("list", add_help=False)
+    sub.add_parser("expire-stale", add_help=False)
+
+    args, _ = parser.parse_known_args()
+
+    if args.help or not args.cmd:
+        sys.stdout.write(__doc__)
+        return 0
+
+    if args.cmd == "arm":
+        cmd_arm(args.bssid, args.ssid, args.ttl_hours)
+    elif args.cmd == "release":
+        cmd_release(args.bssid)
+    elif args.cmd == "release-all":
+        cmd_release_all()
+    elif args.cmd == "list":
+        cmd_list()
+    elif args.cmd == "expire-stale":
+        cmd_expire_stale()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
