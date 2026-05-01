@@ -19,6 +19,18 @@ function setToggle(id, on) {
   el.classList.toggle("on", on);
 }
 
+// T-0066: gate a toggle from being interactable when the underlying feature
+// is mode-incompatible (e.g. Kill Switch outside tunnel modes) or
+// mode-managed (e.g. QUIC Block hard-coded in tunnel-mode nft profiles).
+function setToggleEnabled(id, enabled, reason) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.toggle("disabled", !enabled);
+  el.style.pointerEvents = enabled ? "" : "none";
+  el.style.opacity = enabled ? "" : "0.45";
+  if (reason) el.title = enabled ? "" : reason;
+}
+
 function setToggleLoading(id, loading) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -28,11 +40,22 @@ function setToggleLoading(id, loading) {
 // ── Arsenal status polling ──────────────────────────────────
 
 function updateArsenalUI(data) {
-  // Kill Switch
+  // Kill Switch — only meaningful in tunnel modes (doublehop/zhop). Outside
+  // those modes, killswitch monitor early-returns; toggling silently no-ops.
+  // T-0066: gate the UI by killSwitchApplicable so the toggle doesn't lie.
   setToggle("tog-killswitch", data.killSwitch);
   setToggle("tog-ks-auto", data.killSwitchAuto !== false);
+  setToggleEnabled("tog-killswitch", data.killSwitchApplicable !== false,
+    "Kill Switch monitors VPN health — only available in DoubleHop / ZHop modes");
+  setToggleEnabled("tog-ks-auto", data.killSwitchApplicable !== false,
+    "Auto-trip requires VPN monitoring — only available in tunnel modes");
+  const ksLockNote = document.getElementById("ks-lock-note");
+  if (ksLockNote) ksLockNote.style.display = (data.killSwitchApplicable === false) ? "block" : "none";
   const ksStatus = document.getElementById("ks-status");
-  if (data.killSwitchTripped) {
+  if (data.killSwitchApplicable === false) {
+    ksStatus.className = "arsenal-status off";
+    ksStatus.textContent = "N/A IN " + (data.mode || "?").toUpperCase();
+  } else if (data.killSwitchTripped) {
     ksStatus.className = "arsenal-status tripped";
     ksStatus.textContent = data.dnsLeakDetected ? "TRIPPED — DNS LEAK" : "TRIPPED — VPN DOWN";
   } else if (data.killSwitch) {
@@ -59,12 +82,23 @@ function updateArsenalUI(data) {
     leakAlert.classList.remove("visible");
   }
 
-  // QUIC Block
+  // QUIC Block — rule is hardcoded in zerotrust/doublehop/zhop nft profiles,
+  // so the user-toggle is only authoritative in ISP mode. T-0066: gate the
+  // UI by quicBlockManaged so the toggle doesn't lie about a ghost rule.
   setToggle("tog-quicblock", data.quicBlock);
+  setToggleEnabled("tog-quicblock", !data.quicBlockManaged,
+    "QUIC blocking is enforced by the current mode profile — toggle disabled");
+  const quicLockNote = document.getElementById("quic-lock-note");
+  if (quicLockNote) quicLockNote.style.display = data.quicBlockManaged ? "block" : "none";
   const quicStatus = document.getElementById("quic-status");
   if (quicStatus) {
-    quicStatus.className = "arsenal-status " + (data.quicBlock ? "on" : "off");
-    quicStatus.textContent = data.quicBlock ? "BLOCKING" : "OFF";
+    if (data.quicBlockManaged) {
+      quicStatus.className = "arsenal-status on";
+      quicStatus.textContent = "MODE-MANAGED";
+    } else {
+      quicStatus.className = "arsenal-status " + (data.quicBlock ? "on" : "off");
+      quicStatus.textContent = data.quicBlock ? "BLOCKING" : "OFF";
+    }
   }
 
   // TCP Fingerprint Scrub
@@ -155,7 +189,7 @@ function renderClients(clients) {
     return;
   }
   list.innerHTML = clients.map(c => {
-    var macIcon = c.macRandomized ? '<span title="MAC randomized" style="color:var(--green);margin-left:4px">&#x1f512;</span>' : '<span title="Real MAC exposed — enable Private WiFi Address" style="color:#ff4466;margin-left:4px">&#x26a0;</span>';
+    var macIcon = c.macRandomized ? '<span title="MAC randomized" style="color:var(--green);margin-left:4px">&#x1f512;</span>' : '<span title="Real MAC exposed — enable Private WiFi Address" style="color:var(--red);margin-left:4px">&#x26a0;</span>';
     return '<div class="client-row"><span class="client-host">' + escapeHtml(c.hostname) + '</span><span class="client-ip">' + escapeHtml(c.ip) + '</span><span class="client-mac">' + escapeHtml(c.mac) + macIcon + '</span></div>';
   }).join("");
   var randomized = clients.filter(function(c) { return c.macRandomized; }).length;
@@ -173,7 +207,7 @@ function updateMacPrivacyCount(randomized, total) {
     el.style.color = "var(--green)";
   } else {
     el.textContent = randomized + "/" + total + " devices using private MAC — " + (total - randomized) + " exposed";
-    el.style.color = "#ff4466";
+    el.style.color = "var(--red)";
   }
 }
 
@@ -331,6 +365,11 @@ async function arsenalToggle(feature) {
   if (!cfg) return;
 
   const toggle = document.getElementById(cfg.togId);
+  // Mode-locked toggles refuse interaction (Kill Switch in non-tunnel modes; QUIC in tunnel/ZT)
+  if (toggle.classList.contains("locked")) {
+    log(`Arsenal: ${feature} is locked by the current mode — change mode to control it`, "warn");
+    return;
+  }
   const isOn = toggle.classList.contains("on");
   const newState = !isOn;
 
@@ -639,7 +678,7 @@ async function totpLoadStatus() {
       document.getElementById("totp-setup").style.display = "none";
       document.getElementById("totp-on").style.display = "block";
       badge.textContent = "ACTIVE";
-      badge.style.background = "rgba(57,255,143,0.15)";
+      badge.style.background = "var(--green-13)";
       badge.style.color = "var(--green)";
       badge.style.display = "inline-block";
       // Load backup code count
@@ -1006,15 +1045,15 @@ async function fetchBandwidth() {
           txRate = Math.max(0, (s.tx - bwPrev[iface].tx) / elapsed);
         }
         var c = colors[iface] || "#888";
-        return '<div style="padding:6px 0;border-bottom:1px solid #1a1a1a">'
+        return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">'
           + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">'
           + '<span style="color:' + c + ';font-size:12px;font-weight:600">' + (labels[iface] || iface) + '</span>'
-          + '<span style="color:#555;font-size:10px">Total: ' + formatBytes(s.rx + s.tx) + '</span>'
+          + '<span style="color:var(--text-dim);font-size:10px">Total: ' + formatBytes(s.rx + s.tx) + '</span>'
           + '</div>'
           + '<div style="display:flex;gap:16px;font-size:11px">'
-          + '<span style="color:#4CAF50">↓ ' + formatRate(rxRate) + '</span>'
-          + '<span style="color:#ff9800">↑ ' + formatRate(txRate) + '</span>'
-          + '<span style="color:#555;margin-left:auto">↓ ' + formatBytes(s.rx) + ' / ↑ ' + formatBytes(s.tx) + '</span>'
+          + '<span style="color:var(--green)">↓ ' + formatRate(rxRate) + '</span>'
+          + '<span style="color:var(--amber)">↑ ' + formatRate(txRate) + '</span>'
+          + '<span style="color:var(--text-dim);margin-left:auto">↓ ' + formatBytes(s.rx) + ' / ↑ ' + formatBytes(s.tx) + '</span>'
           + '</div>'
           + '</div>';
       }).join("");
@@ -1115,12 +1154,12 @@ async function fetchEnemies() {
         badge = `<span style="font-size:9px;color:var(--text-faint)">${fmtBytes(b.bytes)}</span>`;
       } else {
         const pctBlocked = b.attempted ? Math.round((b.blocked / b.attempted) * 100) : 0;
-        const badgeColor = pctBlocked === 100 ? "var(--green)" : pctBlocked === 0 ? "var(--red)" : "#e8c200";
+        const badgeColor = pctBlocked === 100 ? "var(--green)" : pctBlocked === 0 ? "var(--red)" : "var(--amber)";
         const badgeText = pctBlocked === 100 ? "✓ all blocked" : pctBlocked === 0 ? "⚠ none blocked" : `${pctBlocked}% blocked`;
         badge = `<span style="font-size:9px;color:${badgeColor}">${badgeText}</span>`;
         rightLabel = val.toLocaleString();
       }
-      return `<div style="padding:4px 0;border-bottom:1px solid #1a1a1a">
+      return `<div style="padding:4px 0;border-bottom:1px solid var(--border)">
         <div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:3px">
           <span style="color:var(--text)">${escapeHtml(b.name)}</span>
           <span style="display:flex;gap:8px;align-items:center">
@@ -1128,7 +1167,7 @@ async function fetchEnemies() {
             <span style="color:var(--text);font-weight:bold">${escapeHtml(rightLabel)}</span>
           </span>
         </div>
-        <div style="height:4px;background:#1a1a1a;border-radius:2px;overflow:hidden">
+        <div style="height:4px;background:var(--bg2);border-radius:2px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:linear-gradient(90deg,#d00,#f44)"></div>
         </div>
       </div>`;
