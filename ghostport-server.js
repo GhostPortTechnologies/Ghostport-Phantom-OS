@@ -1626,20 +1626,6 @@ app.post("/api/mode/rollback", async (req, res) => {
 });
 
 /**
- * GET /api/pihole
- * Returns Pi-hole stats
- */
-app.get("/api/pihole", async (req, res) => {
-  try {
-    const r = await piholeApi("GET", "/stats/summary");
-    if (r.status !== 200) return res.json({ ok: false, error: "Pi-hole unreachable" });
-    res.json({ ok: true, ...r.data });
-  } catch (e) {
-    res.json({ ok: false, error: "Pi-hole unreachable" });
-  }
-});
-
-/**
  * POST /api/tailscale
  * Body: { action: "start" | "stop" }
  */
@@ -1655,30 +1641,6 @@ app.post("/api/tailscale", async (req, res) => {
   const cmd = "sudo systemctl enable --now tailscaled";
   const result = await run(cmd);
   res.json({ ok: result.ok, action, error: result.err || null });
-});
-
-/**
- * GET /api/wg
- * Returns WireGuard peer stats
- */
-app.get("/api/wg", async (req, res) => {
-  const result = await run("sudo wg show all dump 2>/dev/null");
-  if (!result.ok) return res.json({ ok: false, error: "WireGuard unavailable" });
-
-  const lines = result.out.split("\n").filter(Boolean);
-  const peers = lines.slice(1).filter(line => line.split("\t").length >= 7).map((line) => {
-    const [pubkey, , endpoint, allowedIps, lastHandshake, rx, tx] = line.split("\t");
-    return {
-      pubkey: pubkey?.slice(0, 12) + "...",
-      endpoint,
-      allowedIps,
-      lastHandshake: lastHandshake === "0" ? "never" : new Date((parseInt(lastHandshake, 10) || 0) * 1000).toLocaleTimeString(),
-      rx: `${((parseInt(rx, 10) || 0) / 1024).toFixed(1)} KiB`,
-      tx: `${((parseInt(tx, 10) || 0) / 1024).toFixed(1)} KiB`,
-    };
-  });
-
-  res.json({ ok: true, peers });
 });
 
 // ── hostapd ───────────────────────────────────────────────
@@ -3006,21 +2968,6 @@ app.post("/api/pihole/reset-password", async (req, res) => {
   } catch (e) {
     console.error("[GhostPort] Error:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });
-  }
-});
-
-/**
- * GET /api/pihole/status — check if Pi-hole API is connected
- */
-app.get("/api/pihole/status", async (req, res) => {
-  const config = readPiholeConfig();
-  if (!config) return res.json({ ok: true, configured: false, connected: false });
-  // Test current session
-  try {
-    const r = await piholeApi("GET", "/stats/summary");
-    res.json({ ok: true, configured: true, connected: r.status === 200 });
-  } catch {
-    res.json({ ok: true, configured: true, connected: false });
   }
 });
 
