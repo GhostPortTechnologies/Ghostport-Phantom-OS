@@ -187,11 +187,22 @@ def select_adapter(monitor_radio=None):
 def setup_monitor_mode(phy, monitor_iface="mon0"):
     """Bring up a monitor-mode interface on the given phy.
 
-    Sequence: delete any existing iface named monitor_iface, add a new monitor
-    interface on phy, bring it up. Each step has a 5s timeout. Returns
-    (ok: bool, message: str).
+    Also sweeps sibling managed / AP-VLAN vifs on the same phy so the monitor
+    vif owns the radio — without this, channel-lock operations on the monitor
+    vif fail with EBUSY because an idle managed vif holds channel-state. AP /
+    P2P-GO vifs are never touched (would drop clients). Returns (ok, message).
     """
-    cmds = [
+    # Phys can host multiple vifs (mt7921 allows total<=2); a default 'wlanN'
+    # managed vif left over from kernel boot will block channel ops on mon0.
+    sweep_cmds = []
+    for vif in _phy_interfaces(phy):
+        if vif["name"] == monitor_iface:
+            continue
+        if vif["type"] in ("managed", "AP/VLAN"):
+            sweep_cmds.append(["sudo", "-n", "/usr/sbin/ip", "link", "set", vif["name"], "down"])
+            sweep_cmds.append(["sudo", "-n", "/usr/sbin/iw", "dev", vif["name"], "del"])
+
+    cmds = sweep_cmds + [
         # Best-effort delete; ignore failure (interface may not exist yet).
         ["sudo", "-n", "/usr/sbin/ip", "link", "set", monitor_iface, "down"],
         ["sudo", "-n", "/usr/sbin/iw", "dev", monitor_iface, "del"],
@@ -199,7 +210,7 @@ def setup_monitor_mode(phy, monitor_iface="mon0"):
         ["sudo", "-n", "/usr/sbin/iw", "phy", phy, "interface", "add", monitor_iface, "type", "monitor"],
         ["sudo", "-n", "/usr/sbin/ip", "link", "set", monitor_iface, "up"],
     ]
-    best_effort_count = 2
+    best_effort_count = len(sweep_cmds) + 2
     for idx, cmd in enumerate(cmds):
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
