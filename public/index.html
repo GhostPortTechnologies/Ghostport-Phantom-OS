@@ -547,6 +547,9 @@
     }
     .toggle-switch.loading .toggle-track { opacity: 0.5; }
     .toggle-switch.loading { pointer-events: none; }
+    /* T-0066: explanatory note shown under Kill Switch / QUIC cards when mode-locked.
+       Toggle disable styling is applied via setToggleEnabled() in arsenal.js. */
+    .arsenal-lock-note { font-size: 9px; color: var(--text-faint); letter-spacing: 0.5px; margin-top: 4px; font-style: italic; }
     /* Keyboard-focus ring for custom switches — .toggle-switch and .dn-check
        are both divs, so browsers don't draw focus outlines by default. */
     .toggle-switch:focus, .toggle-switch:focus-visible,
@@ -1808,6 +1811,7 @@
               </div>
               <div class="arsenal-desc">Blocks all traffic if VPN drops or DNS leaks detected</div>
               <div class="arsenal-status off" id="ks-status">OFF</div>
+              <div class="arsenal-lock-note" id="ks-lock-note" style="display:none">Tunnel modes only — switch to Double Hop or Z-HOP to arm.</div>
               <div class="ks-auto-row">
                 <div class="toggle-switch" id="tog-ks-auto" onclick="toggleKsAuto()">
                   <div class="toggle-track"></div><div class="toggle-thumb"></div>
@@ -1836,6 +1840,7 @@
               </div>
               <div class="arsenal-desc">Blocks QUIC to prevent DNS filter bypass</div>
               <div class="arsenal-status on" id="quic-status">BLOCKING</div>
+              <div class="arsenal-lock-note" id="quic-lock-note" style="display:none">Locked by current mode — block is hardcoded in Zero Trust / Double Hop / Z-HOP.</div>
             </div>
             <div class="arsenal-card" id="ac-tcpscrub">
               <div class="arsenal-header">
@@ -2239,6 +2244,38 @@
         <div id="fs-device-list" style="max-height:200px;overflow-y:auto;font-size:10px;color:var(--text-faint)">Loading...</div>
         <div id="fs-gravity" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:10px;color:var(--text-dim)">
           <span class="spinner"></span><span>Updating blocklists...</span>
+        </div>
+
+        <!-- T-0068: Bedtime schedules — DNS blocks for a specific device on a recurring time window -->
+        <div style="display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+          <span style="font-size:16px">🌙</span>
+          <div style="font-family:'Georgia','Times New Roman',serif;font-size:13px;color:var(--green);letter-spacing:1px;flex:1">Bedtime Schedules</div>
+          <button class="arsenal-btn" onclick="window._bedtimeShowAdd()">+ ADD</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">DNS blocks per device on a recurring time window. Useful for kids' devices.</div>
+        <div id="bedtime-list" style="max-height:200px;overflow-y:auto;font-size:11px;margin-top:8px">Loading...</div>
+        <div id="bedtime-form" style="display:none;margin-top:8px;padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:4px">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+            <input id="bt-mac" type="text" placeholder="MAC (aa:bb:cc:dd:ee:ff)" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-family:'Courier New',monospace;font-size:11px">
+            <input id="bt-name" type="text" placeholder="Device name (optional)" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-size:11px">
+            <input id="bt-bedtime" type="time" value="21:00" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-size:11px">
+            <input id="bt-wakeup" type="time" value="07:00" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:4px 6px;font-size:11px">
+          </div>
+          <div style="display:flex;gap:4px;margin-bottom:6px;font-size:10px;color:var(--text-dim);align-items:center">
+            <span>Days:</span>
+            <label><input type="checkbox" class="bt-day" data-d="0" checked> Sun</label>
+            <label><input type="checkbox" class="bt-day" data-d="1" checked> Mon</label>
+            <label><input type="checkbox" class="bt-day" data-d="2" checked> Tue</label>
+            <label><input type="checkbox" class="bt-day" data-d="3" checked> Wed</label>
+            <label><input type="checkbox" class="bt-day" data-d="4" checked> Thu</label>
+            <label><input type="checkbox" class="bt-day" data-d="5" checked> Fri</label>
+            <label><input type="checkbox" class="bt-day" data-d="6" checked> Sat</label>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="arsenal-btn" onclick="window._bedtimeSubmit()">SAVE</button>
+            <button class="arsenal-btn" style="background:var(--bg3)" onclick="window._bedtimeHideAdd()">CANCEL</button>
+            <span id="bt-form-status" style="font-size:10px;align-self:center"></span>
+          </div>
         </div>
       </div>
 
@@ -4138,6 +4175,133 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     // Init
     load();
     setInterval(load, 30000);
+  })();
+
+  // ── Bedtime Schedules (T-0068) ──────────────────────────
+  (function() {
+    var DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var listEl, formEl, statusEl;
+    var rules = [];
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    }
+
+    function fmtDays(days) {
+      if (!Array.isArray(days) || days.length === 0) return '—';
+      if (days.length === 7) return 'every day';
+      return days.slice().sort().map(function(d) { return DAY_LABELS[d]; }).join(',');
+    }
+
+    function render() {
+      if (!rules.length) {
+        listEl.innerHTML = '<div style="color:var(--text-faint);padding:6px 0">No bedtime schedules. Click + ADD to create one.</div>';
+        return;
+      }
+      var h = '';
+      rules.forEach(function(r) {
+        var nameOrMac = r.name || r.mac;
+        h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">';
+        h += '<div class="toggle-switch ' + (r.enabled ? 'on' : '') + '" onclick="window._bedtimeToggle(\'' + esc(r.id) + '\')"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>';
+        h += '<div style="flex:1">';
+        h += '<div style="color:var(--green);font-size:11px">' + esc(nameOrMac) + '</div>';
+        h += '<div style="color:var(--text-dim);font-size:9px;font-family:Courier New,monospace">' + esc(r.mac) + '</div>';
+        h += '<div style="color:var(--text-dim);font-size:10px">' + esc(r.bedtime) + ' → ' + esc(r.wakeup) + ' · ' + esc(fmtDays(r.days)) + '</div>';
+        h += '</div>';
+        h += '<button class="arsenal-btn" style="font-size:9px;padding:3px 8px" onclick="window._bedtimeDelete(\'' + esc(r.id) + '\')">DELETE</button>';
+        h += '</div>';
+      });
+      listEl.innerHTML = h;
+    }
+
+    async function load() {
+      try {
+        var res = await fetch('/api/bedtime');
+        var data = await res.json();
+        if (data.ok) { rules = data.rules || []; render(); }
+      } catch (e) { console.error('[Bedtime] load error:', e); }
+    }
+
+    window._bedtimeShowAdd = function() {
+      formEl.style.display = 'block';
+      statusEl.textContent = '';
+      document.getElementById('bt-mac').focus();
+    };
+    window._bedtimeHideAdd = function() {
+      formEl.style.display = 'none';
+      document.getElementById('bt-mac').value = '';
+      document.getElementById('bt-name').value = '';
+      statusEl.textContent = '';
+    };
+
+    window._bedtimeSubmit = async function() {
+      var mac = document.getElementById('bt-mac').value.trim().toLowerCase();
+      var name = document.getElementById('bt-name').value.trim();
+      var bedtime = document.getElementById('bt-bedtime').value;
+      var wakeup = document.getElementById('bt-wakeup').value;
+      var days = Array.from(document.querySelectorAll('.bt-day:checked')).map(function(c) { return parseInt(c.dataset.d, 10); });
+      if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac)) {
+        statusEl.style.color = 'var(--red, #ff6666)';
+        statusEl.textContent = 'Invalid MAC';
+        return;
+      }
+      if (days.length === 0) {
+        statusEl.style.color = 'var(--red, #ff6666)';
+        statusEl.textContent = 'Pick at least one day';
+        return;
+      }
+      statusEl.style.color = 'var(--text-dim)';
+      statusEl.textContent = 'Saving...';
+      try {
+        var res = await fetch('/api/bedtime', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({mac: mac, name: name, bedtime: bedtime, wakeup: wakeup, days: days}),
+        });
+        var data = await res.json();
+        if (data.ok) {
+          window._bedtimeHideAdd();
+          await load();
+        } else {
+          statusEl.style.color = 'var(--red, #ff6666)';
+          statusEl.textContent = data.error || 'Save failed';
+        }
+      } catch (e) {
+        statusEl.style.color = 'var(--red, #ff6666)';
+        statusEl.textContent = 'Network error';
+      }
+    };
+
+    window._bedtimeToggle = async function(id) {
+      var r = rules.find(function(x) { return x.id === id; });
+      if (!r) return;
+      var newEnabled = !r.enabled;
+      try {
+        var res = await fetch('/api/bedtime/' + encodeURIComponent(id), {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({enabled: newEnabled}),
+        });
+        var data = await res.json();
+        if (data.ok) await load();
+      } catch (e) { console.error('[Bedtime] toggle error:', e); }
+    };
+
+    window._bedtimeDelete = async function(id) {
+      if (!confirm('Delete this bedtime schedule?')) return;
+      try {
+        var res = await fetch('/api/bedtime/' + encodeURIComponent(id), {method: 'DELETE'});
+        var data = await res.json();
+        if (data.ok) await load();
+      } catch (e) { console.error('[Bedtime] delete error:', e); }
+    };
+
+    listEl = document.getElementById('bedtime-list');
+    formEl = document.getElementById('bedtime-form');
+    statusEl = document.getElementById('bt-form-status');
+    if (listEl) load();
   })();
 
   loadWifiConfig();
