@@ -1763,13 +1763,13 @@
       </div>
 
       <!-- DNS Leak Alert -->
-      <div class="dns-leak-alert tech-only" id="dns-leak-alert">
+      <div class="dns-leak-alert tech-only section-banner" id="dns-leak-alert">
         <strong>⚠ DNS LEAK DETECTED</strong> — Your DNS queries are being exposed to your ISP.
         <span id="dns-leak-action"></span>
       </div>
 
       <!-- WiFi Sensing Alert -->
-      <div id="wifi-sensing-alert" style="display:none;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:14px 16px;margin-top:16px;font-size:12px;color:var(--red)">
+      <div id="wifi-sensing-alert" class="section-banner" style="display:none;background:rgba(255,68,68,0.08);border:1px solid rgba(255,68,68,0.3);border-radius:8px;padding:14px 16px;margin-top:16px;font-size:12px;color:var(--red)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
           <span style="font-size:18px">📡</span>
           <strong style="letter-spacing:1px">ISP WIFI SENSING RISK DETECTED</strong>
@@ -1783,7 +1783,7 @@
       </div>
 
       <!-- Pi-hole Setup Banner -->
-      <div class="arsenal-card arsenal-card-wide tech-only" id="pihole-setup" style="display:none; margin-top:20px; border-color:var(--amber);">
+      <div class="arsenal-card arsenal-card-wide tech-only section-banner" id="pihole-setup" style="display:none; margin-top:20px; border-color:var(--amber);">
         <div class="arsenal-header">
           <span class="arsenal-icon">⚙</span>
           <span class="arsenal-name" style="color:var(--amber)">Pi-hole Setup Required</span>
@@ -3647,7 +3647,12 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     var el = label.nextElementSibling;
     while (el) {
       if (el.classList && el.classList.contains("section-label")) break;
-      fn(el);
+      // Skip banners that sit between sections — they must stay visible
+      // regardless of which neighboring section is collapsed (security alerts,
+      // setup prompts, etc.). Tag with class="section-banner" to opt out.
+      if (!el.classList || !el.classList.contains("section-banner")) {
+        fn(el);
+      }
       el = el.nextElementSibling;
     }
   }
