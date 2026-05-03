@@ -1377,25 +1377,35 @@ app.get("/api/status", async (req, res) => {
     const modeBase = modeScores[activeMode] || 20;
     score += modeBase;
     scoreBreakdown.push({ name: "mode", value: modeBase, label: activeMode });
-    // Encrypted DNS
+    // Tunnel-only features only earn points when the underlying defense is
+    // actually active. The arsenal.* flags persist across mode switches as
+    // user intent, so honoring them unconditionally inflates the score in
+    // ISP/ZeroTrust where the watcher / nft rules / cover-traffic loop are
+    // all no-ops. T-0075.
+    const inTunnel = activeMode === "doublehop" || activeMode === "zhop";
+    // Encrypted DNS — works in all modes (tunnel via wg1→EC2 unbound, non-tunnel via cloudflared DoH)
     if (arsenal.encryptedDns) { score += 10; scoreBreakdown.push({ name: "encryptedDns", value: 10 }); }
-    // WireGuard handshake fresh (<60s)
+    // WireGuard wg1 handshake fresh (<3min)
     if (wg1Up && handshakeAge < 180) { score += 5; scoreBreakdown.push({ name: "wgHandshake", value: 5 }); }
     else if (wg1Up && handshakeAge >= 180) { score -= 10; scoreBreakdown.push({ name: "wgHandshake", value: -10, label: "stale" }); }
     // Tailscale connected
     if (tsUp) { score += 5; scoreBreakdown.push({ name: "tailscale", value: 5 }); }
-    // Pi-hole active (always up in our setup)
-    score += 5; scoreBreakdown.push({ name: "pihole", value: 5 });
-    // Kill switch
-    if (arsenal.killSwitch) { score += 5; scoreBreakdown.push({ name: "killSwitch", value: 5 }); }
-    // MAC randomization
+    // Pi-hole — only credit when /stats/summary actually responded this poll
+    if (pihole.ok) { score += 5; scoreBreakdown.push({ name: "pihole", value: 5 }); }
+    else { scoreBreakdown.push({ name: "pihole", value: 0, label: "down" }); }
+    // Kill switch — wg0-down watcher only runs in tunnel modes (see startKillSwitch)
+    if (arsenal.killSwitch && inTunnel) { score += 5; scoreBreakdown.push({ name: "killSwitch", value: 5 }); }
+    else if (arsenal.killSwitch) { scoreBreakdown.push({ name: "killSwitch", value: 0, label: `n/a in ${activeMode}` }); }
+    // MAC randomization — wlan0 AP, mode-independent (applies on next reboot)
     if (arsenal.macRandomization) { score += 3; scoreBreakdown.push({ name: "macRandomization", value: 3 }); }
-    // WebRTC blocked
-    if (arsenal.webrtcBlock) { score += 3; scoreBreakdown.push({ name: "webrtcBlock", value: 3 }); }
-    // Anti-fingerprint DNS
+    // WebRTC blocked — STUN/TURN drop rules only exist in doublehop.nft / zhop.nft
+    if (arsenal.webrtcBlock && inTunnel) { score += 3; scoreBreakdown.push({ name: "webrtcBlock", value: 3 }); }
+    else if (arsenal.webrtcBlock) { scoreBreakdown.push({ name: "webrtcBlock", value: 0, label: `n/a in ${activeMode}` }); }
+    // Anti-fingerprint DNS — Pi-hole reads /etc/dnsmasq.d/30-anti-fingerprint.conf in all modes
     if (arsenal.antiFingerprint) { score += 3; scoreBreakdown.push({ name: "antiFingerprint", value: 3 }); }
-    // Cover traffic
-    if (arsenal.coverTraffic) { score += 2; scoreBreakdown.push({ name: "coverTraffic", value: 2 }); }
+    // Cover traffic — gp-noise check_mode() no-ops outside doublehop/zhop
+    if (arsenal.coverTraffic && inTunnel) { score += 2; scoreBreakdown.push({ name: "coverTraffic", value: 2 }); }
+    else if (arsenal.coverTraffic) { scoreBreakdown.push({ name: "coverTraffic", value: 0, label: `n/a in ${activeMode}` }); }
     // Normalize to 0-100
     const securityScore = Math.max(0, Math.min(100, score));
 
@@ -2351,6 +2361,29 @@ app.get("/api/tools/bandwidth/rate", async (req, res) => {
   }
 });
 
+// ── TLS fingerprint (JA3) diagnostic ─────────────────────
+// Restored 2026-05-01 — planned feature, not stub. Reports the Pi's own TLS
+// fingerprint via ja3er.com. Per-device fingerprints would require server-side
+// TLS interception or a downloadable browser test page (future work).
+app.get("/api/tools/ja3check", async (req, res) => {
+  try {
+    const result = await run("curl -s --max-time 10 https://ja3er.com/json 2>/dev/null || echo '{}'");
+    let ja3Data = {};
+    try { ja3Data = JSON.parse(result.out.trim()); } catch { ja3Data = { error: "Could not reach ja3er.com" }; }
+
+    res.json({
+      ok: true,
+      ja3_hash: ja3Data.ja3_hash || ja3Data.ja3 || null,
+      ja3_text: ja3Data.ja3_text || null,
+      user_agent: ja3Data.User_Agent || ja3Data.user_agent || null,
+      source: "ja3er.com",
+      note: "This is the Pi's own TLS fingerprint via curl. Connected devices will have different fingerprints based on their browser.",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "JA3 check failed" });
+  }
+});
+
 // ── system update ────────────────────────────────────────
 
 app.post("/api/tools/update", async (req, res) => {
@@ -3049,6 +3082,9 @@ app.get("/api/arsenal/status", async (req, res) => {
       // user-facing toggle is only authoritative in ISP mode. Other modes force-enable.
       quicBlockManaged: activeMode !== "isp",
       tcpScrub:  !!arsenal.tcpScrub,          // default false
+      // Anti-fingerprint DNS blocklist toggle. Backend renames the
+      // /etc/dnsmasq.d/30-anti-fingerprint.conf file to .disabled when off.
+      antiFingerprint: arsenal.antiFingerprint !== false,  // default ON
       ghostMode: !!arsenal.ghostMode,         // default false
       ghostReady: (() => {
         try {
@@ -3491,6 +3527,85 @@ app.post("/api/arsenal/quicblock", async (req, res) => {
 });
 
 /**
+ * POST /api/arsenal/antifingerprint — { enabled: true|false }
+ * Toggles anti-fingerprint DNS blocklist (35 tracking/fingerprinting domains).
+ * Restored 2026-05-01 — backend assets (/etc/dnsmasq.d/30-anti-fingerprint.conf)
+ * remained installed and active after the original delete; only the API toggle was lost.
+ */
+app.post("/api/arsenal/antifingerprint", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const confFile = "/etc/dnsmasq.d/30-anti-fingerprint.conf";
+    const disabledFile = confFile + ".disabled";
+
+    if (enabled) {
+      await run(`sudo test -f ${disabledFile} && sudo mv ${disabledFile} ${confFile} || true`);
+    } else {
+      await run(`sudo test -f ${confFile} && sudo mv ${confFile} ${disabledFile} || true`);
+    }
+
+    await run("sudo systemctl restart pihole-FTL");
+    await withArsenal(arsenal => { arsenal.antiFingerprint = enabled; });
+
+    console.log(`[Arsenal] Anti-fingerprint DNS ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, antiFingerprint: enabled });
+  } catch (e) {
+    console.error("[Arsenal] Anti-fingerprint toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/webrtcblock — { enabled: true|false }
+ * Toggles WebRTC STUN/TURN port blocking (3478/3479/5349).
+ * Restored 2026-05-01 — gp-webrtc-block rules in doublehop.nft / zhop.nft are live.
+ */
+app.post("/api/arsenal/webrtcblock", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
+    const mode = modeFile.out.trim();
+
+    if (mode !== "isp") {
+      if (enabled) {
+        await run(`sudo gp-mode ${mode} --no-rollback`);
+      } else {
+        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+      }
+    }
+
+    await withArsenal(arsenal => { arsenal.webrtcBlock = enabled; });
+    console.log(`[Arsenal] WebRTC block ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, webrtcBlock: enabled });
+  } catch (e) {
+    console.error("[Arsenal] WebRTC block toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
+ * POST /api/arsenal/covertraffic — { enabled: true|false }
+ * Toggles cover traffic generation (traffic-analysis resistance).
+ * Restored 2026-05-01 — ghostport-noise.service still installed.
+ */
+app.post("/api/arsenal/covertraffic", async (req, res) => {
+  const { enabled } = req.body;
+  try {
+    if (enabled) {
+      await run("sudo systemctl enable --now ghostport-noise.service");
+    } else {
+      await run("sudo systemctl disable --now ghostport-noise.service");
+    }
+    await withArsenal(arsenal => { arsenal.coverTraffic = enabled; });
+    console.log(`[Arsenal] Cover traffic ${enabled ? "enabled" : "disabled"}`);
+    res.json({ ok: true, coverTraffic: enabled });
+  } catch (e) {
+    console.error("[Arsenal] Cover traffic toggle failed:", e.message);
+    res.status(500).json({ ok: false, error: "Operation failed" });
+  }
+});
+
+/**
  * POST /api/arsenal/schedules — { time: "HH:MM", days: [0-6], mode: "isp"|... }
  */
 app.post("/api/arsenal/schedules", async (req, res) => {
@@ -3594,6 +3709,63 @@ app.post("/api/theme", (req, res) => {
   try {
     fs.writeFileSync(THEME_FILE, JSON.stringify({ color }), "utf8");
     res.json({ ok: true, color });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── Privacy Paycheck (money saved from blocked ads) ──────
+// Restored 2026-05-01 — planned feature with documented methodology.
+// Industry avg CPM (cost per 1000 impressions):
+// Display ads: $2-5, Video ads: $10-30, Native ads: $5-15
+// Conservative: $3.50 display CPM. Data costs ~$0.001/ad load (avg 150KB payload).
+// Time saved: ~2.5 seconds per blocked ad (page load improvement).
+
+app.get("/api/tools/paycheck", (req, res) => {
+  try {
+    const tally = readTally();
+    const blocked = tally.blocked || 0;
+    const total = tally.total || 0;
+
+    // Money saved from not seeing ads (advertiser value = your attention value)
+    const cpmDisplay = 3.50;   // conservative display ad CPM
+    const adRevenueSaved = (blocked / 1000) * cpmDisplay;
+
+    // Data saved (avg ad payload ~150KB including trackers, scripts, pixels)
+    const bytesPerAd = 150 * 1024;
+    const dataSavedBytes = blocked * bytesPerAd;
+    const dataSavedMB = dataSavedBytes / (1024 * 1024);
+    const dataSavedGB = dataSavedMB / 1024;
+
+    // Time saved (avg 2.5 seconds per ad load — DNS + fetch + render)
+    const secondsPerAd = 2.5;
+    const timeSavedSeconds = blocked * secondsPerAd;
+    const timeSavedMinutes = timeSavedSeconds / 60;
+    const timeSavedHours = timeSavedMinutes / 60;
+
+    // Data cost savings (avg US mobile data: ~$10/GB)
+    const dataCostPerGB = 10;
+    const dataCostSaved = dataSavedGB * dataCostPerGB;
+
+    // Total estimated savings
+    const totalSaved = adRevenueSaved + dataCostSaved;
+
+    res.json({
+      ok: true,
+      blocked,
+      total,
+      blockRate: total > 0 ? ((blocked / total) * 100).toFixed(1) : "0.0",
+      savings: {
+        total: +totalSaved.toFixed(2),
+        adValue: +adRevenueSaved.toFixed(2),
+        dataCost: +dataCostSaved.toFixed(2),
+        dataSavedMB: +dataSavedMB.toFixed(1),
+        dataSavedGB: +dataSavedGB.toFixed(2),
+        timeSavedMinutes: +timeSavedMinutes.toFixed(1),
+        timeSavedHours: +timeSavedHours.toFixed(1),
+      },
+      methodology: "CPM $3.50 display, 150KB/ad payload, 2.5s/ad load, $10/GB data"
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

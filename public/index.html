@@ -1667,7 +1667,7 @@
           </div>
           <details class="mode-details" onclick="event.stopPropagation()">
             <summary>MORE INFO</summary>
-            <div class="mode-details-content">WireGuard VPN + strict DNS lockdown. All traffic encrypted, all DNS queries forced through tunnel. Nothing leaks.</div>
+            <div class="mode-details-content">WireGuard VPN + strict DNS lockdown. All traffic encrypted, all DNS queries forced through the tunnel.</div>
           </details>
         </div>
 
@@ -1842,18 +1842,41 @@
               <div class="arsenal-status on" id="quic-status">BLOCKING</div>
               <div class="arsenal-lock-note" id="quic-lock-note" style="display:none">Locked by current mode — block is hardcoded in Zero Trust / Double Hop / Z-HOP.</div>
             </div>
-            <div class="arsenal-card" id="ac-tcpscrub">
+            <div class="arsenal-card arsenal-card-wide" id="ac-fingerprint-defense">
               <div class="arsenal-header">
-                <span class="arsenal-icon">🧽</span>
-                <span class="arsenal-name">TCP Fingerprint Scrub</span>
-                <div class="arsenal-toggle">
-                  <div class="toggle-switch" id="tog-tcpscrub" onclick="arsenalToggle('tcpscrub')">
-                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                <span class="arsenal-icon">🕵️</span>
+                <span class="arsenal-name">Fingerprint Defense</span>
+              </div>
+              <div class="arsenal-desc" style="margin-bottom:10px">
+                Two-layer defense against being identified across the network.
+                TCP Scrub hides your OS from <em>network observers</em> (ISP, hotel WiFi).
+                Anti-Fingerprint blocks <em>website tracker scripts</em> (FingerprintJS, mixpanel, hotjar) at the DNS layer.
+                Run both — they protect against different attackers.
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+                <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                    <span style="font-size:14px">🧽</span>
+                    <strong style="font-size:11px;color:var(--green);letter-spacing:0.5px">TCP SCRUB</strong>
+                    <div class="toggle-switch" id="tog-tcpscrub" onclick="arsenalToggle('tcpscrub')" style="margin-left:auto">
+                      <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                    </div>
                   </div>
+                  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">Network layer — normalizes outbound TTL + MSS</div>
+                  <div class="arsenal-status off" id="tcpscrub-status" style="font-size:9px">OFF</div>
+                </div>
+                <div style="padding:10px;background:var(--bg);border:1px solid var(--border);border-radius:6px">
+                  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                    <span style="font-size:14px">🚫</span>
+                    <strong style="font-size:11px;color:var(--green);letter-spacing:0.5px">ANTI-FINGERPRINT</strong>
+                    <div class="toggle-switch" id="tog-antifingerprint" onclick="arsenalToggle('antifingerprint')" style="margin-left:auto">
+                      <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                    </div>
+                  </div>
+                  <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px">DNS layer — blocks ~50 tracker / fingerprint domains</div>
+                  <div class="arsenal-status off" id="antifingerprint-status" style="font-size:9px">OFF</div>
                 </div>
               </div>
-              <div class="arsenal-desc">Normalizes outbound TTL + MSS so passive observers can't fingerprint your OS</div>
-              <div class="arsenal-status off" id="tcpscrub-status">OFF</div>
             </div>
             <div class="arsenal-card" id="ac-macrandom">
               <div class="arsenal-header">
@@ -1865,7 +1888,7 @@
                   </div>
                 </div>
               </div>
-              <div class="arsenal-desc">Random MAC on reboot to prevent tracking</div>
+              <div class="arsenal-desc">Randomizes the AP's WiFi MAC (wlan0) on each reboot</div>
               <div class="arsenal-status off" id="mac-status">OFF</div>
             </div>
             <div class="arsenal-card" id="ac-terminalmode">
@@ -1955,7 +1978,7 @@
                   <button class="arsenal-btn" id="btn-securityscan" onclick="runSecurityScan()">RUN SCAN</button>
                 </div>
               </div>
-              <div class="arsenal-desc">Full system audit — firewall, SSH, permissions, 200+ controls</div>
+              <div class="arsenal-desc">Quick scan — open ports, DNS, firewall, mode posture, package CVEs</div>
               <div id="security-scan-result"></div>
             </div>
             <div class="arsenal-card arsenal-card-wide" id="ac-mac-privacy">
@@ -2133,9 +2156,9 @@
             <div class="arsenal-card">
               <div class="arsenal-header">
                 <span class="arsenal-icon">📡</span>
-                <span class="arsenal-name">Kill WiFi Sensing</span>
+                <span class="arsenal-name">WiFi Sensing Audit</span>
               </div>
-              <div class="arsenal-desc">Step-by-step ISP-router replacement guide. Stops physical-presence surveillance via WiFi sensing.</div>
+              <div class="arsenal-desc">Detects ISP-shipped WiFi networks (CoxWiFi, XFINITY, etc.) that enable physical-presence surveillance. Includes a step-by-step ISP-router replacement guide — the actual fix is replacing the gateway.</div>
               <div style="margin-top:8px">
                 <a href="/modem-guide.html" class="arsenal-btn" style="text-decoration:none;font-size:9px;padding:4px 10px">OPEN GUIDE</a>
               </div>
@@ -2453,7 +2476,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
           <span class="arsenal-name">Internet Source</span>
           <span id="wan-badge" style="font-size:9px;letter-spacing:1px;padding:2px 8px;border-radius:4px;background:var(--green-13);color:var(--green);margin-left:auto">ETHERNET</span>
         </div>
-        <div class="arsenal-desc">Choose how GhostPort connects to the internet — via Ethernet cable or an upstream WiFi network. WiFi WAN uses the M.2 radio in concurrent AP+station mode.</div>
+        <div class="arsenal-desc">Choose how GhostPort connects to the internet — Ethernet cable or upstream WiFi. WiFi WAN uses the M.2 radio so the onboard radio keeps serving your AP.</div>
 
         <div style="display:flex;gap:8px;margin-top:12px">
           <button class="arsenal-btn" id="wan-eth-btn" onclick="switchWanEthernet()" style="flex:1;opacity:1">ETHERNET</button>
@@ -2652,7 +2675,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     isp:       { icon: "🌐", level: "STANDARD", desc: "Normal browsing — no privacy filtering active.", color: "var(--text-dim)" },
     zerotrust: { icon: "🛡️", level: "PROTECTED", desc: "Ads and trackers blocked. DNS is locked down.", color: "#ffaa00" },
     doublehop: { icon: "🔒", level: "PRIVATE", desc: "All traffic encrypted through VPN. Your ISP can't see what you do.", color: "var(--green)" },
-    zhop:      { icon: "🔐", level: "MAX PRIVACY", desc: "VPN + DNS lockdown. Nothing leaks.", color: "var(--green)" },
+    zhop:      { icon: "🔐", level: "MAX PRIVACY", desc: "VPN + DNS lockdown. All traffic encrypted, DNS forced through tunnel.", color: "var(--green)" },
   };
 
   function toggleViewMode() {

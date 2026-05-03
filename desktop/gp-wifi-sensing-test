@@ -1,0 +1,25 @@
+#!/bin/bash
+# gp-wifi-sensing-test — unit-tests for the ISP-SSID matcher used by the
+# dashboard's WiFi Sensing Audit feature. Pass --live to also hit the
+# running API endpoint.
+set -euo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    cat <<'EOF'
+gp-wifi-sensing-test — verify the ISP-SSID matcher
+
+Unit-tests the regex patterns in ghostport-server.js:ISP_SSID_PATTERNS
+against ~20 positive cases (real ISP SSIDs that MUST fire) and ~12
+negative cases (plausible-looking SSIDs that MUST NOT fire).
+
+USAGE:
+  gp-wifi-sensing-test            run unit tests
+  gp-wifi-sensing-test --live     also hit /api/wifi-sensing-check
+
+Patterns must be kept in sync between the test (gp_wifi_sensing_test.py)
+and the server (ghostport-server.js:ISP_SSID_PATTERNS).
+EOF
+    exit 0
+fi
+
+exec python3 /opt/ghostport/desktop/gp_wifi_sensing_test.py "$@"

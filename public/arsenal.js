@@ -109,6 +109,16 @@ function updateArsenalUI(data) {
     scrubStatus.textContent = data.tcpScrub ? "SCRUBBING" : "OFF";
   }
 
+  // Anti-Fingerprint DNS blocklist (paired with TCP Scrub in the UI card).
+  // antiFingerprint defaults to ON if absent (the .conf is shipped active).
+  const afEnabled = data.antiFingerprint !== false;
+  setToggle("tog-antifingerprint", afEnabled);
+  const afStatus = document.getElementById("antifingerprint-status");
+  if (afStatus) {
+    afStatus.className = "arsenal-status " + (afEnabled ? "on" : "off");
+    afStatus.textContent = afEnabled ? "BLOCKING" : "OFF";
+  }
+
   // DNS Protection (read-only — mode section is the source of truth)
   const ednsStatus = document.getElementById("edns-status");
   const ednsDesc = document.getElementById("edns-desc");
@@ -1715,7 +1725,7 @@ async function runSecurityScan() {
   log("Starting security scan...", "info");
 
   try {
-    const res = await fetch(ARSENAL_API + "/api/security/scan");
+    const res = await fetch(ARSENAL_API + "/api/security/lynis");
     const data = await res.json();
 
     if (!data.ok) {
