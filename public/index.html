@@ -394,7 +394,16 @@
     .section-label {
       font-size: 10px; color: var(--text-dim);
       letter-spacing: 3px; margin-bottom: 12px;
+      cursor: pointer; user-select: none;
+      transition: color 0.15s;
     }
+    .section-label:hover { color: var(--green); }
+    .section-label .section-chevron {
+      display: inline-block; width: 12px;
+      transition: transform 0.15s;
+    }
+    .section-label.collapsed .section-chevron { transform: rotate(-90deg); }
+    .section-collapsed { display: none !important; }
 
     /* Mode cards */
     .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
@@ -1681,7 +1690,7 @@
       </div>
 
       <!-- Tunnel status -->
-      <div class="section-label tech-only">▸ TUNNEL STATUS</div>
+      <div class="section-label tech-only" id="section-tunnel-status" onclick="toggleSection(this)"><span class="section-chevron">▸</span> TUNNEL STATUS</div>
       <div class="tunnels tech-only">
         <div class="stat-box">
           <div class="tunnel-header">
@@ -1721,18 +1730,18 @@
 
       <!-- DECISION: Topology placed after tunnel status since it visualizes the same network state -->
       <!-- Network Topology -->
-      <div class="section-label tech-only" id="section-topology" style="margin-top:20px">▸ NETWORK TOPOLOGY</div>
+      <div class="section-label tech-only" id="section-topology" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> NETWORK TOPOLOGY</div>
       <div class="tech-only" id="topology-wrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:16px;min-height:200px">
         <div id="topology-container"></div>
       </div>
 
       <!-- Support -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ SUPPORT</div>
+      <div class="section-label tech-only" id="section-support" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> SUPPORT</div>
       <div class="support-buttons tech-only">
         <button class="btn-support" id="btn-diag" onclick="runDiagnostics()">RUN DIAGNOSTICS</button>
         <button class="btn-support" id="btn-ticket" onclick="toggleTicketForm()">SUBMIT TICKET</button>
       </div>
-      <div class="section-label tech-only" style="margin-top:16px">▸ REPAIR TOOLS</div>
+      <div class="section-label tech-only" id="section-repair-tools" style="margin-top:16px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> REPAIR TOOLS</div>
       <div class="support-buttons tech-only" style="flex-wrap:wrap">
         <button class="btn-support" id="btn-ap" onclick="repairAction('ap')">RESTART AP</button>
         <button class="btn-support" id="btn-dns" onclick="repairAction('dns')">RESTART DNS</button>
@@ -1788,7 +1797,7 @@
       </div>
 
       <!-- Arsenal -->
-      <div class="section-label tech-only" id="section-arsenal" style="margin-top:20px">▸ ARSENAL</div>
+      <div class="section-label tech-only" id="section-arsenal" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> ARSENAL</div>
       <div class="tech-only" id="arsenal-sections">
 
         <!-- Privacy Controls -->
@@ -2192,7 +2201,7 @@
 
 
       <!-- Software Status -->
-      <div class="section-label" style="margin-top:20px">▸ SOFTWARE STATUS</div>
+      <div class="section-label" id="section-software-status" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> SOFTWARE STATUS</div>
       <div class="arsenal-card" id="software-status-card" style="padding:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
           <span style="font-size:20px">📦</span>
@@ -2207,7 +2216,7 @@
       </div>
 
       <!-- Family Shield -->
-      <div class="section-label" style="margin-top:20px">▸ FAMILY SHIELD</div>
+      <div class="section-label" id="section-family-shield" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> FAMILY SHIELD</div>
       <div class="arsenal-card" style="padding:16px">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
           <span style="font-size:24px">🛡️</span>
@@ -2303,7 +2312,7 @@
       </div>
 
       <!-- WireGuard Setup -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ WIREGUARD VPN</div>
+      <div class="section-label tech-only" id="section-wireguard-vpn" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> WIREGUARD VPN</div>
       <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🔐</span>
@@ -2384,7 +2393,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <!-- Device Passcode -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ DEVICE PASSCODE</div>
+      <div class="section-label tech-only" id="section-device-passcode" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> DEVICE PASSCODE</div>
       <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🔑</span>
@@ -2403,7 +2412,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <!-- Two-Factor Authentication -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ TWO-FACTOR AUTHENTICATION</div>
+      <div class="section-label tech-only" id="section-two-factor-authentication" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> TWO-FACTOR AUTHENTICATION</div>
       <div class="arsenal-card tech-only" id="totp-card">
         <div class="arsenal-header">
           <span class="arsenal-icon">🔐</span>
@@ -2453,7 +2462,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <!-- Pi-hole Password -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ PI-HOLE</div>
+      <div class="section-label tech-only" id="section-pi-hole" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> PI-HOLE</div>
       <div class="arsenal-card tech-only">
         <div class="arsenal-header">
           <span class="arsenal-icon">🛡</span>
@@ -2469,7 +2478,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
 
 
       <!-- WiFi WAN -->
-      <div class="section-label tech-only" style="margin-top:20px">▸ WAN UPLINK</div>
+      <div class="section-label tech-only" id="section-wan-uplink" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> WAN UPLINK</div>
       <div class="arsenal-card tech-only" id="wan-card">
         <div class="arsenal-header">
           <span class="arsenal-icon" id="wan-icon">🔌</span>
@@ -2501,7 +2510,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <!-- WiFi Network (AP) -->
-      <div class="section-label" style="margin-top:20px">▸ WIFI NETWORK</div>
+      <div class="section-label" id="section-wifi-network" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> WIFI NETWORK</div>
       <div class="arsenal-card">
         <div class="arsenal-header">
           <span class="arsenal-icon">📶</span>
@@ -2532,7 +2541,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     <!-- Right panel -->
     <div class="right-panel">
       <div>
-        <div class="section-label" id="section-stats">▸ SHIP STATS</div>
+        <div class="section-label" id="section-stats" onclick="toggleSection(this)"><span class="section-chevron">▸</span> SHIP STATS</div>
         <div class="ship-stats">
           <div class="ship-stat">
             <div>
@@ -2563,7 +2572,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <div class="tech-only">
-        <div class="section-label">▸ CREW LOG</div>
+        <div class="section-label" id="section-crew-log" onclick="toggleSection(this)"><span class="section-chevron">▸</span> CREW LOG</div>
         <div class="log-box" id="log-box"></div>
       </div>
 
@@ -2582,7 +2591,7 @@ AllowedIPs = 0.0.0.0/0"></textarea>
       </div>
 
       <div class="tech-only" id="bandwidth-section">
-        <div class="section-label">▸ BANDWIDTH</div>
+        <div class="section-label" id="section-bandwidth" onclick="toggleSection(this)"><span class="section-chevron">▸</span> BANDWIDTH</div>
         <div id="bandwidth-result" class="tm-panel">
           <div class="tm-header">
             <div class="tm-dot" id="tm-dot"></div>
@@ -3627,6 +3636,43 @@ AllowedIPs = 0.0.0.0/0"></textarea>
   // ── Arsenal Category Toggle ─────────────────────────────
   var arsenalCatState = {};
   try { arsenalCatState = JSON.parse(localStorage.getItem("gp-arsenal-cats") || "{}"); } catch {}
+
+  // Top-level section accordion. Walks forward from the clicked label
+  // through siblings, hiding/revealing them until the next section-label.
+  // State persisted per-section in localStorage so customer preferences stick.
+  var sectionState = {};
+  try { sectionState = JSON.parse(localStorage.getItem("gp-section-states") || "{}"); } catch {}
+
+  function _walkSectionContent(label, fn) {
+    var el = label.nextElementSibling;
+    while (el) {
+      if (el.classList && el.classList.contains("section-label")) break;
+      fn(el);
+      el = el.nextElementSibling;
+    }
+  }
+
+  window.toggleSection = function(label) {
+    if (!label || !label.id) return;
+    var collapsed = !label.classList.contains("collapsed");
+    label.classList.toggle("collapsed", collapsed);
+    _walkSectionContent(label, function(el) {
+      el.classList.toggle("section-collapsed", collapsed);
+    });
+    sectionState[label.id] = collapsed;
+    localStorage.setItem("gp-section-states", JSON.stringify(sectionState));
+  };
+
+  // Restore saved section states on first paint (defaults: all open).
+  (function() {
+    document.querySelectorAll(".section-label").forEach(function(label) {
+      if (!label.id || sectionState[label.id] !== true) return;
+      label.classList.add("collapsed");
+      _walkSectionContent(label, function(el) {
+        el.classList.add("section-collapsed");
+      });
+    });
+  })();
 
   window.toggleArsenalCat = function(cat) {
     var grid = document.getElementById("arsenal-grid-" + cat);
