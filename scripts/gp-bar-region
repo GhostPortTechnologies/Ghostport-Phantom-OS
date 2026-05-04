@@ -1,0 +1,45 @@
+#!/bin/bash
+# gp-bar-region — waybar JSON module showing current wg1 region
+set -uo pipefail
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "gp-bar-region — waybar JSON module for current wg1 data-plane region"
+  exit 0
+fi
+
+STATE_FILE="/etc/ghostport/active-region.json"
+
+emit() {
+  jq -nc --arg t "$1" --arg c "$2" --arg tip "$3" \
+    '{text:$t, class:$c, tooltip:$tip}'
+}
+
+if [ ! -r "$STATE_FILE" ]; then
+  emit "⊕ ?" "unknown" "region state file missing — run gp-region status"
+  exit 0
+fi
+
+id=$(jq -r '.id // "unknown"' "$STATE_FILE" 2>/dev/null)
+ts=$(jq -r '.switched_at // 0' "$STATE_FILE" 2>/dev/null)
+
+case "$id" in
+  us-east-1) label="EAST"; long="Virginia (us-east-1)" ;;
+  us-west-1) label="WEST"; long="San Jose (us-west-1)" ;;
+  us-west-2) label="WEST-OR"; long="Oregon (us-west-2)" ;;
+  *)         label="$id"; long="$id" ;;
+esac
+
+tooltip="data-plane region: $long"
+if [[ "$ts" =~ ^[0-9]+$ ]] && [ "$ts" -gt 0 ]; then
+  age=$(( $(date +%s) - ts ))
+  if   [ "$age" -lt 60 ];    then a="${age}s"
+  elif [ "$age" -lt 3600 ];  then a="$((age/60))m"
+  elif [ "$age" -lt 86400 ]; then a="$((age/3600))h"
+  else                            a="$((age/86400))d"
+  fi
+  tooltip="$tooltip"$'\n'"last switch: $a ago"$'\n'"click to pick"
+else
+  tooltip="$tooltip"$'\n'"click to pick"
+fi
+
+emit "⊕ $label" "$id" "$tooltip"

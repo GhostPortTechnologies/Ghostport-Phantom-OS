@@ -1417,6 +1417,27 @@
   </div>
 </div>
 
+<!-- WebRTC block first-enable warning modal — reuses dn-modal styling -->
+<div class="dn-modal" id="webrtc-modal">
+  <div class="dn-modal-box">
+    <div class="dn-modal-title">⚠ BLOCK WEBRTC LEAK?</div>
+    <div class="dn-modal-body">
+      WebRTC is the browser tech that lets websites discover your <strong>real public IP</strong> via STUN/TURN — bypassing the VPN tunnel even when DoubleHop / ZHop is active.<br><br>
+      Enabling this drops the 3 STUN ports (<code>3478, 3479, 5349</code>) at the LAN→WAN forward stage.<br><br>
+      <strong>Heads up:</strong> this may break:<br>
+      • <strong>Zoom / Google Meet / Discord</strong> video calls — they fall back to lower-quality TLS-relayed video over the tunnel<br>
+      • <strong>WebRTC-based IoT</strong> (Nest cameras, Ring doorbells) live view<br>
+      • Some <strong>peer-to-peer</strong> apps (Synology Drive, Plex remote)<br><br>
+      <strong>Audio calls usually keep working.</strong> You can disable this any time with one click — no reboot, immediate effect.<br><br>
+      Recommended for journalists, activists, anyone who needs strict IP-leak prevention. Most users can leave this off.
+    </div>
+    <div class="dn-modal-actions">
+      <button class="dn-modal-btn cancel" onclick="webrtcCancel()">CANCEL</button>
+      <button class="dn-modal-btn confirm" onclick="webrtcConfirm()">ENGAGE</button>
+    </div>
+  </div>
+</div>
+
 <!-- ACR first-enable warning modal — reuses dn-modal styling since same visual language -->
 <div class="dn-modal" id="acr-modal">
   <div class="dn-modal-box">
@@ -1728,6 +1749,28 @@
         </div>
       </div>
 
+      <!-- WG1 Region picker — switch which AWS region terminates the data plane -->
+      <div class="section-label tech-only" id="section-region" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> WG1 REGION</div>
+      <div class="tech-only" id="region-wrap" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div>
+            <div style="color:var(--dim);font-size:11px;letter-spacing:1px">CURRENT</div>
+            <div id="region-current" style="color:var(--green);font-weight:bold;font-size:14px">--</div>
+          </div>
+          <div>
+            <div style="color:var(--dim);font-size:11px;letter-spacing:1px">SWITCH TO</div>
+            <select id="region-select" style="background:var(--bg);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:4px;font-family:inherit"></select>
+          </div>
+          <button class="btn" id="region-switch-btn" onclick="regionSwitch()">SWITCH</button>
+        </div>
+        <div id="region-rollback-bar" style="display:none;margin-top:12px;padding:10px;background:linear-gradient(90deg,#1a1400,#1a1000);border:1px solid #ffaa0066;border-left:3px solid var(--amber);border-radius:4px">
+          <span style="color:var(--amber);font-weight:bold;letter-spacing:1px">ROLLBACK ARMED</span> — auto-revert in <span id="region-rollback-countdown">60</span>s
+          <button class="btn btn-confirm" onclick="regionConfirm()" style="margin-left:8px">CONFIRM</button>
+          <button class="btn btn-rollback" onclick="regionRollback()">REVERT</button>
+        </div>
+        <div id="region-status-msg" style="margin-top:8px;font-size:12px;color:var(--dim)"></div>
+      </div>
+
       <!-- DECISION: Topology placed after tunnel status since it visualizes the same network state -->
       <!-- Network Topology -->
       <div class="section-label tech-only" id="section-topology" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> NETWORK TOPOLOGY</div>
@@ -1886,6 +1929,19 @@
                   <div class="arsenal-status off" id="antifingerprint-status" style="font-size:9px">OFF</div>
                 </div>
               </div>
+            </div>
+            <div class="arsenal-card" id="ac-webrtcblock">
+              <div class="arsenal-header">
+                <span class="arsenal-icon">🛰️</span>
+                <span class="arsenal-name">WebRTC Leak Block</span>
+                <div class="arsenal-toggle">
+                  <div class="toggle-switch" id="tog-webrtcblock" onclick="webrtcToggle()">
+                    <div class="toggle-track"></div><div class="toggle-thumb"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="arsenal-desc">Drops STUN ports 3478/3479/5349 so websites can't learn your real public IP via WebRTC. <strong>May break Zoom/Meet/Discord video</strong> — tunnel modes only.</div>
+              <div class="arsenal-status off" id="webrtcblock-status">OFF — VIDEO CALLS WORK</div>
             </div>
             <div class="arsenal-card" id="ac-macrandom">
               <div class="arsenal-header">

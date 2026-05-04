@@ -119,6 +119,22 @@ function updateArsenalUI(data) {
     afStatus.textContent = afEnabled ? "BLOCKING" : "OFF";
   }
 
+  // WebRTC Leak Block (Path A): default OFF; tunnel-mode-only. Toggle is
+  // gated outside tunnel modes so customer can't toggle a no-op.
+  setToggle("tog-webrtcblock", !!data.webrtcBlock);
+  setToggleEnabled("tog-webrtcblock", data.webrtcBlockApplicable !== false,
+    "WebRTC blocking only applies in DoubleHop / ZHop. Switch to a tunnel mode.");
+  const webrtcStatus = document.getElementById("webrtcblock-status");
+  if (webrtcStatus) {
+    if (data.webrtcBlockApplicable === false) {
+      webrtcStatus.className = "arsenal-status off";
+      webrtcStatus.textContent = "N/A IN " + (data.mode || "?").toUpperCase();
+    } else {
+      webrtcStatus.className = "arsenal-status " + (data.webrtcBlock ? "on" : "off");
+      webrtcStatus.textContent = data.webrtcBlock ? "BLOCKING" : "OFF — VIDEO CALLS WORK";
+    }
+  }
+
   // DNS Protection (read-only — mode section is the source of truth)
   const ednsStatus = document.getElementById("edns-status");
   const ednsDesc = document.getElementById("edns-desc");
@@ -318,6 +334,25 @@ function dreadnoughtConfirm() {
   setDreadnought(true);
 }
 
+// WebRTC Leak Block — confirmation modal on first ENABLE only.
+// Disabling is a safe instant action and skips the modal.
+function webrtcToggle() {
+  const tog = document.getElementById("tog-webrtcblock");
+  if (!tog || tog.classList.contains("disabled")) return;
+  if (tog.classList.contains("on")) {
+    arsenalToggle("webrtcblock");  // disable — no modal
+  } else {
+    document.getElementById("webrtc-modal").classList.add("visible");
+  }
+}
+function webrtcCancel() {
+  document.getElementById("webrtc-modal").classList.remove("visible");
+}
+function webrtcConfirm() {
+  document.getElementById("webrtc-modal").classList.remove("visible");
+  arsenalToggle("webrtcblock");
+}
+
 async function setDreadnought(enabled) {
   log(`Dreadnought: ${enabled ? "engaging..." : "disengaging..."}`, "warn");
   try {
@@ -367,6 +402,8 @@ async function arsenalToggle(feature) {
     killswitch: { endpoint: "/api/arsenal/killswitch", key: "killSwitch", togId: "tog-killswitch" },
     quicblock: { endpoint: "/api/arsenal/quicblock", key: "quicBlock", togId: "tog-quicblock" },
     tcpscrub:  { endpoint: "/api/arsenal/tcpscrub",  key: "tcpScrub",  togId: "tog-tcpscrub"  },
+    antifingerprint: { endpoint: "/api/arsenal/antifingerprint", key: "antiFingerprint", togId: "tog-antifingerprint" },
+    webrtcblock: { endpoint: "/api/arsenal/webrtcblock", key: "webrtcBlock", togId: "tog-webrtcblock" },
     macrandom: { endpoint: "/api/arsenal/macrandom", key: "macRandomization", togId: "tog-macrandom" },
     terminalmode: { endpoint: "/api/terminal-mode", key: "terminalMode", togId: "tog-terminalmode" },
   };
@@ -1785,3 +1822,109 @@ async function runSecurityScan() {
   btn.disabled = false;
   btn.textContent = "RUN SCAN";
 }
+
+// ── Region toggle (wg1 EC2 endpoint switching) ──────────────────────────
+let regionRollbackTimer = null;
+let regionRollbackEnd = 0;
+
+async function loadRegionState() {
+  try {
+    const [stateR, listR] = await Promise.all([
+      fetch("/api/region"),
+      fetch("/api/region/list"),
+    ]);
+    const state = await stateR.json();
+    const list = await listR.json();
+
+    const cur = document.getElementById("region-current");
+    if (cur) cur.textContent = state.id || "unknown";
+
+    const sel = document.getElementById("region-select");
+    if (sel && list.ok && list.regions) {
+      sel.innerHTML = list.regions.map(function(r) {
+        const selAttr = r.id === state.id ? " selected" : "";
+        return '<option value="' + escapeHtml(r.id) + '"' + selAttr + '>' + escapeHtml(r.label) + '</option>';
+      }).join("");
+    }
+
+    const rbBar = document.getElementById("region-rollback-bar");
+    if (state.rollback_timer === "armed" && rbBar) {
+      rbBar.style.display = "block";
+      if (regionRollbackTimer === null && state.switched_at) {
+        regionRollbackEnd = (state.switched_at + 60) * 1000;
+        startRegionCountdown();
+      }
+    } else if (rbBar) {
+      rbBar.style.display = "none";
+      stopRegionCountdown();
+    }
+  } catch (e) {
+    console.warn("loadRegionState:", e);
+  }
+}
+
+function startRegionCountdown() {
+  stopRegionCountdown();
+  const cd = document.getElementById("region-rollback-countdown");
+  regionRollbackTimer = setInterval(function() {
+    const remain = Math.max(0, Math.round((regionRollbackEnd - Date.now()) / 1000));
+    if (cd) cd.textContent = remain;
+    if (remain <= 0) { stopRegionCountdown(); setTimeout(loadRegionState, 1500); }
+  }, 500);
+}
+
+function stopRegionCountdown() {
+  if (regionRollbackTimer !== null) { clearInterval(regionRollbackTimer); regionRollbackTimer = null; }
+}
+
+async function regionSwitch() {
+  const sel = document.getElementById("region-select");
+  const target = sel && sel.value;
+  if (!target) return;
+  const btn = document.getElementById("region-switch-btn");
+  const msg = document.getElementById("region-status-msg");
+  if (btn) { btn.disabled = true; btn.textContent = "SWITCHING..."; }
+  if (msg) msg.textContent = "Switching to " + target + " — waiting for handshake + verify (~10s)...";
+  try {
+    const r = await fetch("/api/region/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ region: target }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      if (msg) msg.textContent = "Switched to " + target + ". Confirm within 60s or auto-revert.";
+    } else {
+      if (msg) msg.textContent = "Switch failed: " + (data.error || data.output || "unknown — check journal");
+    }
+    setTimeout(loadRegionState, 1000);
+  } catch (e) {
+    if (msg) msg.textContent = "Switch error: " + e.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "SWITCH"; }
+  }
+}
+
+async function regionConfirm() {
+  const r = await fetch("/api/region/confirm", { method: "POST" });
+  const data = await r.json();
+  const msg = document.getElementById("region-status-msg");
+  if (msg) msg.textContent = data.ok ? "Confirmed — region is committed." : ("Confirm failed: " + (data.error || ""));
+  setTimeout(loadRegionState, 500);
+}
+
+async function regionRollback() {
+  const r = await fetch("/api/region/rollback", { method: "POST" });
+  const data = await r.json();
+  const msg = document.getElementById("region-status-msg");
+  if (msg) msg.textContent = data.ok ? "Rolled back to previous region." : ("Rollback failed: " + (data.error || ""));
+  setTimeout(loadRegionState, 500);
+}
+
+// initial + periodic refresh (gracefully no-ops if elements not in DOM)
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", loadRegionState);
+} else {
+  loadRegionState();
+}
+setInterval(loadRegionState, 15000);

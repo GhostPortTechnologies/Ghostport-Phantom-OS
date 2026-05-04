@@ -1621,6 +1621,17 @@ app.post("/api/mode", async (req, res) => {
       console.log("[Arsenal] QUIC block disabled — removed rules after mode switch");
     }
 
+    // Re-apply WebRTC block rules if toggle is ON (Path A: rules are no longer
+    // hardcoded in mode profiles — toggle is authoritative). Tunnel modes only.
+    const inTunnelNow = mode === "doublehop" || mode === "zhop";
+    if (arsenalAfter.webrtcBlock === true && inTunnelNow) {
+      // Idempotent: clear any existing then re-add. Quiet on already-absent.
+      await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+      await run('sudo nft add rule inet filter forward iifname "wlan0" udp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
+      await run('sudo nft add rule inet filter forward iifname "wlan0" tcp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
+      console.log("[Arsenal] WebRTC block restored after mode switch");
+    }
+
     console.log(`[GhostPort] Mode switched: ${result.out}`);
     logActivity("mode", `Mode switched to ${mode.toUpperCase()}`, `from ${previousMode.toUpperCase()}`);
     res.json({
@@ -1660,6 +1671,61 @@ app.post("/api/mode/rollback", async (req, res) => {
   console.log(`[GhostPort] Manual rollback to ${target}`);
   const result = await run(`sudo gp-mode ${target} --no-rollback`);
   res.json({ ok: result.ok, mode: target, message: result.out, error: result.err || null });
+});
+
+// ── Region (wg1 EC2 endpoint) toggle — backed by /usr/local/bin/gp-region ──
+const REGION_STATE_FILE = "/etc/ghostport/active-region.json";
+const REGION_VALID_ID = /^[a-z]{2}-[a-z]+-[0-9]+$/;
+let regionSwitchInProgress = false;
+
+app.get("/api/region", (req, res) => {
+  try {
+    const raw = fs.readFileSync(REGION_STATE_FILE, "utf8");
+    const state = JSON.parse(raw);
+    res.json({ ok: true, ...state });
+  } catch (e) {
+    res.json({ ok: false, error: "state-file-missing-or-invalid", id: null });
+  }
+});
+
+app.get("/api/region/list", async (req, res) => {
+  const result = await run("curl -s --max-time 5 http://10.66.66.1:8080/api/regions", 8000);
+  if (!result.ok || !result.out) {
+    return res.status(502).json({ ok: false, error: "fleet-api-unreachable" });
+  }
+  try {
+    const data = JSON.parse(result.out);
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: "fleet-api-bad-json" });
+  }
+});
+
+app.post("/api/region/switch", async (req, res) => {
+  const { region } = req.body || {};
+  if (!region || typeof region !== "string" || !REGION_VALID_ID.test(region)) {
+    return res.status(400).json({ ok: false, error: "invalid-region-id" });
+  }
+  if (regionSwitchInProgress) {
+    return res.status(409).json({ ok: false, error: "switch-already-in-progress" });
+  }
+  regionSwitchInProgress = true;
+  try {
+    const result = await run(`sudo gp-region switch ${region}`, 30000);
+    res.json({ ok: result.ok, region, output: result.out, error: result.err || null });
+  } finally {
+    regionSwitchInProgress = false;
+  }
+});
+
+app.post("/api/region/confirm", async (req, res) => {
+  const result = await run("sudo gp-region confirm", 8000);
+  res.json({ ok: result.ok, output: result.out, error: result.err || null });
+});
+
+app.post("/api/region/rollback", async (req, res) => {
+  const result = await run("sudo gp-region rollback", 30000);
+  res.json({ ok: result.ok, output: result.out, error: result.err || null });
 });
 
 /**
@@ -2963,6 +3029,21 @@ function stopDnsLeakMonitor() {
       console.error("[Arsenal] TCP scrub restore failed:", e.message);
     }
   }
+  // Restore WebRTC block if previously enabled (Path A: not in mode profiles).
+  if (arsenal.webrtcBlock === true) {
+    try {
+      const modeNow = readFileOr("/etc/phantom/current-mode", "isp").out.trim();
+      const inTunnelNow = modeNow === "doublehop" || modeNow === "zhop";
+      if (inTunnelNow) {
+        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+        await run('sudo nft add rule inet filter forward iifname "wlan0" udp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
+        await run('sudo nft add rule inet filter forward iifname "wlan0" tcp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
+        console.log("[Arsenal] WebRTC block restored on startup (tunnel mode)");
+      }
+    } catch (e) {
+      console.error("[Arsenal] WebRTC block restore failed:", e.message);
+    }
+  }
   // Always run DNS leak monitor in protected modes
   startDnsLeakMonitor();
 })();
@@ -3085,6 +3166,10 @@ app.get("/api/arsenal/status", async (req, res) => {
       // Anti-fingerprint DNS blocklist toggle. Backend renames the
       // /etc/dnsmasq.d/30-anti-fingerprint.conf file to .disabled when off.
       antiFingerprint: arsenal.antiFingerprint !== false,  // default ON
+      // WebRTC leak block (Path A 2026-05-02): toggle is authoritative,
+      // rules added at runtime. Tunnel modes only.
+      webrtcBlock: !!arsenal.webrtcBlock,                  // default OFF
+      webrtcBlockApplicable: inTunnel,                     // tunnel modes only
       ghostMode: !!arsenal.ghostMode,         // default false
       ghostReady: (() => {
         try {
@@ -3560,23 +3645,29 @@ app.post("/api/arsenal/antifingerprint", async (req, res) => {
  * Toggles WebRTC STUN/TURN port blocking (3478/3479/5349).
  * Restored 2026-05-01 — gp-webrtc-block rules in doublehop.nft / zhop.nft are live.
  */
+// Path A (2026-05-02): rules are NO LONGER hardcoded in mode .nft profiles.
+// Toggle is the authoritative source. Default state is OFF — customer opts in.
+// Mechanism: drops UDP+TCP STUN/TURN ports (3478, 3479, 5349) at the LAN→WAN
+// forward stage. Tunnel modes only (rules have no effect outside tunnel forwarding).
 app.post("/api/arsenal/webrtcblock", async (req, res) => {
   const { enabled } = req.body;
   try {
     const modeFile = await run("cat /etc/phantom/current-mode 2>/dev/null || echo isp");
     const mode = modeFile.out.trim();
+    const inTunnel = mode === "doublehop" || mode === "zhop";
 
-    if (mode !== "isp") {
+    if (inTunnel) {
+      // Idempotent: clear any existing rules first regardless of enable/disable.
+      await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
       if (enabled) {
-        await run(`sudo gp-mode ${mode} --no-rollback`);
-      } else {
-        await run('sudo nft -a list chain inet filter forward 2>/dev/null | grep gp-webrtc-block | sed -n "s/.*handle \\([0-9]*\\)/\\1/p" | while read h; do sudo nft delete rule inet filter forward handle $h; done');
+        await run('sudo nft add rule inet filter forward iifname "wlan0" udp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
+        await run('sudo nft add rule inet filter forward iifname "wlan0" tcp dport \\{ 3478, 3479, 5349 \\} drop comment \\"gp-webrtc-block\\"');
       }
     }
 
-    await withArsenal(arsenal => { arsenal.webrtcBlock = enabled; });
-    console.log(`[Arsenal] WebRTC block ${enabled ? "enabled" : "disabled"}`);
-    res.json({ ok: true, webrtcBlock: enabled });
+    await withArsenal(arsenal => { arsenal.webrtcBlock = !!enabled; });
+    console.log(`[Arsenal] WebRTC block ${enabled ? "enabled" : "disabled"} (mode=${mode})`);
+    res.json({ ok: true, webrtcBlock: !!enabled, applicable: inTunnel });
   } catch (e) {
     console.error("[Arsenal] WebRTC block toggle failed:", e.message);
     res.status(500).json({ ok: false, error: "Operation failed" });

@@ -1,20 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Mutual exclusion — prevent concurrent mode switches from guards/API/CLI
+LOCK_FILE="/tmp/gp-mode.lock"
+exec 8>"$LOCK_FILE"
+if ! flock -w 5 8; then
+  echo "ERROR: Another mode switch is in progress" >&2
+  exit 1
+fi
+
 MODE="${1:-}"
 NFT="/usr/sbin/nft"
 RULEDIR="/etc/gpmodes"
 BACKUP="/tmp/nft.ruleset.backup"
-MODEFILE="/etc/phantom/current-mode"
+MODEFILE="/etc/ghostport/current-mode"
 ROLLBACK_PID_FILE="/tmp/gp-rollback.pid"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 iface_exists() { ip link show "$1" >/dev/null 2>&1; }
 iface_up() { ip link show "$1" 2>/dev/null | grep -qE "state (UP|UNKNOWN)"; }
+wan_if() { sed -n 's/^define WAN_IF = "\(.*\)"/\1/p' /etc/gpmodes/common.nft; }
 
 save_rules() { sudo $NFT list ruleset > "$BACKUP" 2>/dev/null || true; }
 restore_rules() { [[ -s "$BACKUP" ]] && sudo $NFT -f "$BACKUP" || true; }
 
 get_current_mode() { cat "$MODEFILE" 2>/dev/null || echo "isp"; }
+
+CUSTOM_RULES="/etc/ghostport/custom-rules.nft"
+
+apply_custom_rules() {
+  [[ -f "$CUSTOM_RULES" ]] || return 0
+  if sudo $NFT -c -f "$CUSTOM_RULES" >/dev/null 2>&1; then
+    sudo $NFT -f "$CUSTOM_RULES"
+    echo "[gp-mode] Applied custom firewall rules"
+  else
+    echo "[gp-mode] WARNING: custom-rules.nft failed dry-run, skipped" >&2
+  fi
+}
 
 apply_profile() {
   local f="$1"
@@ -26,7 +48,8 @@ apply_profile() {
     restore_rules
     die "No masquerade rule after applying $f; restored previous ruleset."
   fi
-  sudo conntrack -F 2>/dev/null || true
+  apply_custom_rules
+  sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
   sudo pihole reloaddns 2>/dev/null || true
 }
 
@@ -37,6 +60,40 @@ ensure_tailscale() {
   fi
 }
 
+# Pin WireGuard endpoint IPs via WAN gateway BEFORE tunnels start
+# Prevents AllowedIPs 0.0.0.0/0 from hijacking the default route
+pin_endpoints() {
+  local gateway wif
+  wif=$(wan_if)
+  gateway=$(ip route show default dev "$wif" 2>/dev/null | awk '{print $3}' | head -1)
+  [[ -z "$gateway" ]] && die "No default gateway on $wif — cannot pin endpoints"
+
+  # Pin control plane endpoint (wg0)
+  local ep0
+  ep0=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
+  if [[ -n "$ep0" ]]; then
+    sudo ip route replace "$ep0" via "$gateway" dev "$wif" 2>/dev/null || true
+    echo "[gp-mode] Pinned wg0 endpoint $ep0 via $gateway dev $wif"
+  fi
+
+  # Pin data plane endpoint (wg1)
+  local ep1
+  ep1=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg1.conf 2>/dev/null || true)
+  if [[ -n "$ep1" ]]; then
+    sudo ip route replace "$ep1" via "$gateway" dev "$wif" 2>/dev/null || true
+    echo "[gp-mode] Pinned wg1 endpoint $ep1 via $gateway dev $wif"
+  fi
+}
+
+clean_pinned_routes() {
+  local ep
+  ep=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
+  [[ -n "$ep" ]] && sudo ip route del "$ep" 2>/dev/null || true
+  ep=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg1.conf 2>/dev/null || true)
+  [[ -n "$ep" ]] && sudo ip route del "$ep" 2>/dev/null || true
+}
+
+# Start wg0 (control plane — AllowedIPs 10.66.66.0/24, always up in tunnel modes)
 start_wg0() {
   sudo systemctl stop wg-quick@wg0 >/dev/null 2>&1 || true
   sudo ip link del wg0 2>/dev/null || true
@@ -45,6 +102,7 @@ start_wg0() {
 
   local tmpconf
   tmpconf=$(mktemp)
+  chmod 600 "$tmpconf"
   sudo grep -v '^Address\|^DNS\|^PostUp\|^PostDown\|^SaveConfig' /etc/wireguard/wg0.conf > "$tmpconf"
   sudo wg setconf wg0 "$tmpconf" || { rm -f "$tmpconf"; die "Failed to configure wg0"; }
   rm -f "$tmpconf"
@@ -53,6 +111,33 @@ start_wg0() {
   addr=$(sudo grep -oP 'Address\s*=\s*\K\S+' /etc/wireguard/wg0.conf)
   sudo ip addr replace "$addr" dev wg0 2>/dev/null || true
   sudo ip link set wg0 mtu 1420 up || die "Failed to bring up wg0"
+  sudo ip link set wg0 txqueuelen 5000 2>/dev/null || true
+
+  # Add route for control plane subnet through wg0
+  sudo ip route replace 10.66.66.0/24 dev wg0 2>/dev/null || true
+  echo "[gp-mode] wg0 (control plane) up — 10.66.66.0/24"
+}
+
+# Start wg1 (data plane — AllowedIPs 0.0.0.0/0, doublehop/zhop only)
+start_wg1() {
+  sudo systemctl stop wg-quick@wg1 >/dev/null 2>&1 || true
+  sudo ip link del wg1 2>/dev/null || true
+
+  sudo ip link add wg1 type wireguard || die "Failed to create wg1"
+
+  local tmpconf
+  tmpconf=$(mktemp)
+  chmod 600 "$tmpconf"
+  sudo grep -v '^Address\|^DNS\|^PostUp\|^PostDown\|^SaveConfig' /etc/wireguard/wg1.conf > "$tmpconf"
+  sudo wg setconf wg1 "$tmpconf" || { rm -f "$tmpconf"; die "Failed to configure wg1"; }
+  rm -f "$tmpconf"
+
+  local addr
+  addr=$(sudo grep -oP 'Address\s*=\s*\K\S+' /etc/wireguard/wg1.conf)
+  sudo ip addr replace "$addr" dev wg1 2>/dev/null || true
+  sudo ip link set wg1 mtu 1420 up || die "Failed to bring up wg1"
+  sudo ip link set wg1 txqueuelen 5000 2>/dev/null || true
+  echo "[gp-mode] wg1 (data plane) up"
 }
 
 stop_wg0() {
@@ -60,29 +145,34 @@ stop_wg0() {
   sudo ip link del wg0 2>/dev/null || true
 }
 
+stop_wg1() {
+  sudo systemctl stop wg-quick@wg1 >/dev/null 2>&1 || true
+  sudo ip link del wg1 2>/dev/null || true
+}
+
+# Set up routing for dual-tunnel mode
 fix_wg_routing() {
-  local wg_endpoint gateway
-  wg_endpoint=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
-  gateway=$(ip route show default dev eth0 | awk '{print $3}' | head -1)
-
-  # Host route for WG endpoint via eth0 (prevent routing loop)
-  if [[ -n "$wg_endpoint" && -n "$gateway" ]]; then
-    sudo ip route replace "$wg_endpoint" via "$gateway" dev eth0 2>/dev/null || true
-  fi
-
-  # Keep Tailscale traffic on tailscale0
+  # Tailscale stays on its own interface
   sudo ip route replace 100.64.0.0/10 dev tailscale0 2>/dev/null || true
 
-  # Default route through wg0 (lower metric wins over eth0's metric 100)
-  sudo ip route replace default dev wg0 metric 10 2>/dev/null || true
+  # Control plane subnet through wg0
+  sudo ip route replace 10.66.66.0/24 dev wg0 2>/dev/null || true
+
+  # Data plane subnet through wg1
+  sudo ip route replace 10.66.67.0/24 dev wg1 2>/dev/null || true
+
+  # Default route through wg1 (data plane carries internet traffic)
+  sudo ip route replace default dev wg1 metric 10 2>/dev/null || true
+  echo "[gp-mode] Routing: default->wg1, 10.66.66.0/24->wg0, tailscale->ts0"
 }
 
 clean_wg_routing() {
+  sudo ip route del default dev wg1 2>/dev/null || true
   sudo ip route del default dev wg0 2>/dev/null || true
+  sudo ip route del 10.66.66.0/24 dev wg0 2>/dev/null || true
+  sudo ip route del 10.66.67.0/24 dev wg1 2>/dev/null || true
   sudo ip route del 100.64.0.0/10 dev tailscale0 2>/dev/null || true
-  local wg_endpoint
-  wg_endpoint=$(sudo grep -oP 'Endpoint\s*=\s*\K[^:]+' /etc/wireguard/wg0.conf 2>/dev/null || true)
-  [[ -n "$wg_endpoint" ]] && sudo ip route del "$wg_endpoint" 2>/dev/null || true
+  clean_pinned_routes
 }
 
 cancel_rollback() {
@@ -101,22 +191,26 @@ schedule_rollback() {
   local timeout="${2:-60}"
   cancel_rollback
   (
+    exec 8>&-  # Release flock so gp-mode confirm can acquire it
     sleep "$timeout"
+    # Verify we are still the expected rollback process
+    [[ "$(cat "$ROLLBACK_PID_FILE" 2>/dev/null)" == "$$" ]] || exit 0
     echo "[gp-mode] Rollback timer expired — reverting to $prev_mode" >&2
-    sudo "$0" "$prev_mode" --no-rollback
+    sudo /usr/local/bin/gp-mode "$prev_mode" --no-rollback
   ) &
   echo $! | sudo tee "$ROLLBACK_PID_FILE" > /dev/null
   echo "Rollback scheduled: will revert to $prev_mode in ${timeout}s if not confirmed."
 }
 
 status() {
-  local ts="down" wg="down"
+  local ts="down" wg0s="down" wg1s="down"
   iface_up tailscale0 && ts="up" || true
-  iface_up wg0 && wg="up" || true
-  echo "tailscale0=$ts wg0=$wg"
+  iface_up wg0 && wg0s="up" || true
+  iface_up wg1 && wg1s="up" || true
+  echo "tailscale0=$ts wg0=$wg0s wg1=$wg1s"
   echo "mode=$(get_current_mode)"
   echo "nat_rules:"
-  sudo $NFT list ruleset 2>/dev/null | grep -E 'oifname "(eth0|wg0|tailscale0)".*masquerade' || true
+  sudo $NFT list ruleset 2>/dev/null | grep 'masquerade' || true
   if [[ -f "$ROLLBACK_PID_FILE" ]]; then
     local pid
     pid=$(cat "$ROLLBACK_PID_FILE" 2>/dev/null || true)
@@ -132,6 +226,21 @@ status() {
 }
 
 NO_ROLLBACK=false
+
+# Verify DNS works after mode switch — catches silent failures
+verify_dns() {
+  local mode="$1" retries=3 delay=2
+  for i in $(seq 1 $retries); do
+    if dig +short +timeout=3 +tries=1 cloudflare.com @127.0.0.1 >/dev/null 2>&1; then
+      echo "[gp-mode] DNS verified OK for $mode"
+      return 0
+    fi
+    sleep $delay
+  done
+  echo "[gp-mode] WARNING: DNS not responding after $mode switch — dns-guard will auto-repair" >&2
+  logger -t gp-mode "DNS verification failed after switching to $mode"
+  return 1
+}
 for arg in "$@"; do
   [[ "$arg" == "--no-rollback" ]] && NO_ROLLBACK=true
 done
@@ -140,49 +249,60 @@ case "$MODE" in
   isp)
     cancel_rollback
     clean_wg_routing
+    stop_wg1
     stop_wg0
     ensure_tailscale
     apply_profile "$RULEDIR/isp.nft"
     echo "isp" | sudo tee "$MODEFILE" > /dev/null
     gp-dns-upstream isp 2>/dev/null || true
-    echo "Mode: ISP (LAN -> eth0). Tailscale: management."
+    echo "Mode: ISP (LAN -> $(wan_if)). Tailscale: management."
+    verify_dns isp
     ;;
   zerotrust)
     PREV=$(get_current_mode)
     ensure_tailscale
     clean_wg_routing
+    stop_wg1
     stop_wg0
     apply_profile "$RULEDIR/zerotrust.nft"
     echo "zerotrust" | sudo tee "$MODEFILE" > /dev/null
     gp-dns-upstream zerotrust 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
-    echo "Mode: ZeroTrust (LAN -> eth0, DNS locked). Tailscale: management."
+    echo "Mode: ZeroTrust (LAN -> $(wan_if), DNS locked). Tailscale: management."
+    verify_dns zerotrust
     ;;
   doublehop)
     PREV=$(get_current_mode)
     ensure_tailscale
-    apply_profile "$RULEDIR/doublehop.nft"
+    # CRITICAL ORDER: pin endpoints BEFORE any tunnel with 0.0.0.0/0
+    pin_endpoints
     start_wg0
-    iface_exists wg0 || die "wg0 does not exist; refusing to switch."
-    iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
+    start_wg1
+    iface_exists wg1 || die "wg1 does not exist; refusing to switch."
+    iface_up wg1 || die "wg1 is not UP; refusing to switch (internet would break)."
     fix_wg_routing
+    apply_profile "$RULEDIR/doublehop.nft"
     echo "doublehop" | sudo tee "$MODEFILE" > /dev/null
     gp-dns-upstream doublehop 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
-    echo "Mode: DoubleHop (LAN -> wg0). Tailscale: management."
+    echo "Mode: DoubleHop (LAN -> wg1 data plane). Control: wg0. Tailscale: management."
+    verify_dns doublehop
     ;;
   zhop)
     PREV=$(get_current_mode)
     ensure_tailscale
-    apply_profile "$RULEDIR/zhop.nft"
+    pin_endpoints
     start_wg0
-    iface_exists wg0 || die "wg0 does not exist; refusing to switch."
-    iface_up wg0 || die "wg0 is not UP; refusing to switch (internet would break)."
+    start_wg1
+    iface_exists wg1 || die "wg1 does not exist; refusing to switch."
+    iface_up wg1 || die "wg1 is not UP; refusing to switch (internet would break)."
     fix_wg_routing
+    apply_profile "$RULEDIR/zhop.nft"
     echo "zhop" | sudo tee "$MODEFILE" > /dev/null
     gp-dns-upstream zhop 2>/dev/null || true
     [[ "$NO_ROLLBACK" == false ]] && schedule_rollback "$PREV" 60
-    echo "Mode: ZHop (LAN -> wg0, DNS locked). Tailscale: management."
+    echo "Mode: ZHop (LAN -> wg1 data plane, DNS locked). Control: wg0. Tailscale: management."
+    verify_dns zhop
     ;;
   confirm)
     cancel_rollback
@@ -192,6 +312,10 @@ case "$MODE" in
     if [[ -f "$ROLLBACK_PID_FILE" ]]; then
       cancel_rollback
       PREV="${2:-isp}"
+      case "$PREV" in
+        isp|zerotrust|doublehop|zhop) ;;
+        *) die "Invalid rollback target: $PREV" ;;
+      esac
       echo "Manual rollback to $PREV..."
       exec sudo "$0" "$PREV" --no-rollback
     else

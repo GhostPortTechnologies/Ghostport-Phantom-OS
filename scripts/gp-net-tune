@@ -1,0 +1,40 @@
+#!/bin/bash
+# gp-net-tune — runtime network tuning (governor, NIC ring, RPS, txqueuelen)
+# Sysctl values live in /etc/sysctl.d/99-gp-throughput.conf.
+# Idempotent — safe to re-run any time.
+
+set -u
+
+WAN_IF="eth0"
+LAN_IF="wlan0"
+
+# 1. CPU governor: performance (max single-core for WireGuard ChaCha20 hot path)
+for g in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+    echo performance > "$g" 2>/dev/null || true
+done
+
+# 2. WAN NIC ring buffer — 4096/4096 (max RX 8192 but 4096 is the proven sweet spot)
+if command -v ethtool >/dev/null; then
+    ethtool -G "$WAN_IF" rx 4096 tx 4096 >/dev/null 2>&1 || true
+fi
+
+# 3. Receive Packet Steering — spread RX softirq across all 4 cores
+#    (eth0 is single-queue on Pi 5 macb driver; without RPS one core handles all)
+for q in /sys/class/net/$WAN_IF/queues/rx-*/rps_cpus; do
+    echo f > "$q" 2>/dev/null || true
+done
+for q in /sys/class/net/$WAN_IF/queues/rx-*/rps_flow_cnt; do
+    echo 4096 > "$q" 2>/dev/null || true
+done
+# Same for LAN AP
+for q in /sys/class/net/$LAN_IF/queues/rx-*/rps_cpus; do
+    echo f > "$q" 2>/dev/null || true
+done
+
+# 4. WireGuard tunnel txqueuelen — absorb bursts on tunnel egress
+#    Re-applied here in case the systemd service starts after wg was brought up.
+for i in wg0 wg1; do
+    [ -d /sys/class/net/$i ] && ip link set "$i" txqueuelen 5000 2>/dev/null || true
+done
+
+exit 0

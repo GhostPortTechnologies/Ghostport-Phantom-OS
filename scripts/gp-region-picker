@@ -1,0 +1,37 @@
+#!/bin/bash
+# gp-region-picker — fuzzel picker for switching wg1 region
+# V0: dry-runs gp-region switch (live swap arrives after T-0110 approval).
+set -uo pipefail
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  echo "gp-region-picker — opens a fuzzel picker, switches wg1 region (currently DRY-RUN)"
+  exit 0
+fi
+
+API_URL="http://10.66.66.1:8080/api/regions"
+STATE_FILE="/etc/ghostport/active-region.json"
+
+data=$(curl -s --max-time 5 "$API_URL" 2>/dev/null) || {
+  notify-send -u critical "Region switcher" "fleet API unreachable at $API_URL"
+  exit 2
+}
+
+current=$(jq -r '.id // "unknown"' "$STATE_FILE" 2>/dev/null)
+
+# Format: "<label>  [⊕ current]\t<id>" then fuzzel, take col 2 as id
+choice=$(echo "$data" \
+  | jq -r --arg cur "$current" '
+      .regions[] |
+      "\(.label)\(if .id == $cur then "  ⊕ current" else "" end)\t\(.id)"' \
+  | fuzzel --dmenu --prompt "wg1 region: " --lines 5 --width 40 \
+  | awk -F'\t' '{print $2}')
+
+[ -z "$choice" ] && exit 0
+
+if [ "$choice" = "$current" ]; then
+  notify-send "Region switcher" "Already on $choice — no change."
+  exit 0
+fi
+
+output=$(gp-region switch "$choice" 2>&1 || true)
+notify-send -t 8000 "Region switch (DRY-RUN)" "$output"

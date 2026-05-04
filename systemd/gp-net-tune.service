@@ -1,0 +1,14 @@
+[Unit]
+Description=GhostPort network throughput tuning (governor, NIC ring, RPS, wg txqueuelen)
+After=network-online.target ghostport-boot.service
+Wants=network-online.target
+# Re-tune whenever interfaces or mode change
+PartOf=ghostport-boot.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/gp-net-tune
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
