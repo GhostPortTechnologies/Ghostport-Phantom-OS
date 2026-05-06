@@ -159,7 +159,7 @@ def discover_system_apps():
 
 
 def discover_desktop_files():
-    """Files dropped in ~/Desktop — shown as launchable tiles."""
+    """Files dropped in ~/Desktop — every regular file becomes a launchable tile."""
     home_desktop = os.path.expanduser("~/Desktop")
     if not os.path.isdir(home_desktop):
         return []
@@ -168,12 +168,15 @@ def discover_desktop_files():
         if fname.startswith("."):
             continue
         path = os.path.join(home_desktop, fname)
+        if not os.path.isfile(path):
+            continue
         if fname.endswith(".desktop"):
             parsed = parse_desktop_file(path)
             if parsed:
-                out.append(parsed)
-        elif os.access(path, os.X_OK) and os.path.isfile(path):
-            out.append((fname, ["xdg-open", path], None, "Desktop file"))
+                out.append((parsed[0], parsed[1], parsed[2], parsed[3], fname))
+                continue
+        # Regular file (text, image, etc.) — open with xdg-open
+        out.append((fname, ["xdg-open", path], None, "Desktop file", fname))
     return out
 
 
@@ -264,27 +267,30 @@ class AppDrawer(GhostPortApp):
             pix = lookup_ghostport_icon(icon_file)
             hidden = is_hidden(self.positions, label)
             child = self._make_tile(label, subtitle, pix, command,
-                                    source="ghostport", hidden=hidden)
+                                    source="ghostport", hidden=hidden,
+                                    pos_key=label)
             self.flowbox.add(child)
 
-        # 2. ~/Desktop files
-        for name, exec_cmd, icon, comment in discover_desktop_files():
+        # 2. ~/Desktop files (visible + hidden — both are toggleable here)
+        for name, exec_cmd, icon, comment, fname in discover_desktop_files():
             pix = lookup_icon_pixbuf(icon) if icon else None
+            file_hidden = is_hidden(self.positions, f"file:{fname}")
             child = self._make_tile(name, comment or "Desktop", pix, exec_cmd,
-                                    source="desktop", hidden=False)
+                                    source="desktop", hidden=file_hidden,
+                                    pos_key=f"file:{fname}")
             self.flowbox.add(child)
 
         # 3. System .desktop apps
         for name, exec_cmd, icon, comment in discover_system_apps():
             pix = lookup_icon_pixbuf(icon) if icon else None
             child = self._make_tile(name, comment or "System", pix, exec_cmd,
-                                    source="system", hidden=False)
+                                    source="system", hidden=False, pos_key=None)
             self.flowbox.add(child)
 
         self.flowbox.show_all()
         self.set_status(f"{len(self.tiles)} apps")
 
-    def _make_tile(self, label, subtitle, pixbuf, command, *, source, hidden):
+    def _make_tile(self, label, subtitle, pixbuf, command, *, source, hidden, pos_key=None):
         child = Gtk.FlowBoxChild()
         child.set_size_request(TILE_WIDTH, TILE_HEIGHT)
 
@@ -328,7 +334,7 @@ class AppDrawer(GhostPortApp):
             box.pack_start(sub, False, False, 0)
 
         evt.connect("button-press-event", self._on_tile_click,
-                    label, command, source)
+                    label, command, source, pos_key)
 
         # Stash for filter + lookup
         child._gp_label = label.lower()
@@ -338,38 +344,38 @@ class AppDrawer(GhostPortApp):
         self.tiles.append((child, label, source))
         return child
 
-    def _on_tile_click(self, _w, event, label, command, source):
+    def _on_tile_click(self, _w, event, label, command, source, pos_key):
         if event.button == 1:
             self._launch(command)
             self.close()
             return True
         if event.button == 3:
-            if source == "ghostport":
-                self._show_tile_menu(event, label)
+            if pos_key:
+                self._show_tile_menu(event, pos_key)
             return True
         return False
 
-    def _show_tile_menu(self, event, label):
+    def _show_tile_menu(self, event, pos_key):
         menu = Gtk.Menu()
-        hidden = is_hidden(self.positions, label)
+        hidden = is_hidden(self.positions, pos_key)
         action_label = "Show on Desktop" if hidden else "Hide from Desktop"
         mi = Gtk.MenuItem(label=action_label)
-        mi.connect("activate", lambda _m: self._toggle_hide(label))
+        mi.connect("activate", lambda _m: self._toggle_hide(pos_key))
         menu.append(mi)
         menu.show_all()
         menu.popup_at_pointer(event)
         self._menu_ref = menu  # keep alive
 
-    def _toggle_hide(self, label):
+    def _toggle_hide(self, pos_key):
         self.positions = load_positions()
-        entry = self.positions.get(label)
+        entry = self.positions.get(pos_key)
         if not isinstance(entry, dict):
             entry = {"x": 0, "y": 0}
         if entry.get("hidden"):
             entry.pop("hidden", None)
         else:
             entry["hidden"] = True
-        self.positions[label] = entry
+        self.positions[pos_key] = entry
         save_positions(self.positions)
         signal_desktop_reload()
         # Refresh the visible drawer so the tile reflects new state

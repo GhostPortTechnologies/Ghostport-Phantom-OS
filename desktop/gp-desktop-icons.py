@@ -398,6 +398,9 @@ class DesktopCanvas:
             files = []
         self._desktop_files = files
         for idx, filename in enumerate(files):
+            saved = self.positions.get(f"file:{filename}")
+            if isinstance(saved, dict) and saved.get("hidden"):
+                continue
             self.sprites.append(self._make_file_sprite(idx, filename))
 
     # ── hit-test ───────────────────────────────────────────────────
@@ -579,6 +582,8 @@ class DesktopCanvas:
                 mi.connect("activate", lambda _m: self._pin_to_dock(sp))
             menu.append(mi)
 
+        # Hide from Desktop (apps + files; widgets manage themselves via Widget Library)
+        if sp.kind in ("app", "file"):
             mi = Gtk.MenuItem(label="Hide from Desktop")
             mi.connect("activate", lambda _m: self._hide_sprite_and_redraw(sp))
             menu.append(mi)
@@ -587,7 +592,7 @@ class DesktopCanvas:
         menu.popup_at_pointer(event)
 
     def _hide_sprite_and_redraw(self, sp):
-        if sp.kind != "app":
+        if sp.kind not in ("app", "file"):
             return
         entry = self.positions.setdefault(sp.name, {"x": sp.x, "y": sp.y})
         if not isinstance(entry, dict):
