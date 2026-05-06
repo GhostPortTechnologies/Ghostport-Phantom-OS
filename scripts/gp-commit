@@ -19,7 +19,6 @@ echo "[gp-commit] Syncing live files to repo..."
 cp /usr/local/bin/gp-mode "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-dns-switch "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-dns-upstream "$REPO/scripts/" 2>/dev/null || true
-cp /usr/local/bin/gp-dns-watchdog "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-dns-guard "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-health-guard "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-passcode "$REPO/scripts/" 2>/dev/null || true
