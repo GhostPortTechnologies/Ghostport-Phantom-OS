@@ -279,7 +279,40 @@ class SeadevilApp(GhostPortApp):
         else:
             w["status"].set_text("")
 
+    def _iface_is_active_ap(self, iface):
+        """True if iface is the running hostapd AP — randomizing kicks every LAN client."""
+        if iface != "wlan0":
+            return False
+        _, _, rc = run_cmd(["systemctl", "is-active", "--quiet", "hostapd"])
+        return rc == 0
+
+    def _confirm_ap_randomize(self, iface):
+        """Modal confirmation gate when about to disrupt the AP. Returns True to proceed."""
+        dialog = Gtk.MessageDialog(
+            parent=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f"Randomize {iface} MAC?",
+        )
+        dialog.format_secondary_text(
+            f"{iface} is the active access point. Changing its MAC will disconnect "
+            "every device on your LAN (laptops, phones, smart-home gear) until they "
+            "rejoin the WiFi.\n\nTailscale (remote management) is unaffected. "
+            "Continue?"
+        )
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Randomize anyway", Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.CANCEL)
+        response = dialog.run()
+        dialog.destroy()
+        return response == Gtk.ResponseType.OK
+
     def on_randomize(self, iface):
+        if self._iface_is_active_ap(iface):
+            if not self._confirm_ap_randomize(iface):
+                self.set_status(f"Randomize cancelled — {iface} is the AP")
+                return
         new_mac = generate_random_mac()
         self.set_status(f"Randomizing {iface} to {new_mac}...")
 

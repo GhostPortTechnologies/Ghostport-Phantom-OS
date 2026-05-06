@@ -40,13 +40,21 @@ def read_theme_color():
     try:
         with open(THEME_FILE) as f:
             data = json.load(f)
-            return data.get("color", "#39ff8f").lstrip("#")
+            raw = (data.get("color") or "#39ff8f").lstrip("#").strip()
+            if len(raw) == 6 and all(c in "0123456789abcdefABCDEF" for c in raw):
+                return raw.lower()
     except Exception:
-        return "39ff8f"
+        pass
+    return "39ff8f"
 
 def hex_to_rgb(h):
-    """Convert 6-char hex string to (r, g, b) tuple."""
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    """Convert 6-char hex string to (r, g, b) tuple. Falls back to ghost-green on bad input."""
+    try:
+        if not h or len(h) != 6:
+            raise ValueError("expected 6-char hex")
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    except (TypeError, ValueError):
+        return 0x39, 0xff, 0x8f
 
 def derive_colors(hex_color):
     """Derive a full color palette from a single accent hex color."""
@@ -565,12 +573,15 @@ class GhostPortApp(Gtk.Window):
 
     def _check_theme(self):
         """Poll theme.json for color changes."""
-        new_hex = read_theme_color()
-        if new_hex != self.theme_hex:
-            self.theme_hex = new_hex
-            self.colors = derive_colors(new_hex)
-            self._apply_css()
-            self.on_theme_changed()
+        try:
+            new_hex = read_theme_color()
+            if new_hex != self.theme_hex:
+                self.theme_hex = new_hex
+                self.colors = derive_colors(new_hex)
+                self._apply_css()
+                self.on_theme_changed()
+        except Exception:
+            pass
         return True
 
     def on_theme_changed(self):

@@ -188,9 +188,15 @@ class AetherBox(GhostPortApp):
         self.file_scroll.show()
         self.toggle_btn.set_sensitive(True)
 
-        # Ensure directories exist
-        os.makedirs(CIPHER_DIR, exist_ok=True)
-        os.makedirs(MOUNT_DIR, exist_ok=True)
+        # Ensure directories exist with restrictive perms (0700 — owner-only).
+        # exist_ok=True silently ignores mode= on already-existing dirs, so chmod after.
+        os.makedirs(CIPHER_DIR, exist_ok=True, mode=0o700)
+        os.makedirs(MOUNT_DIR, exist_ok=True, mode=0o700)
+        for d in (CIPHER_DIR, MOUNT_DIR):
+            try:
+                os.chmod(d, 0o700)
+            except OSError:
+                pass
 
         self.vault_initialized = self._is_initialized()
         mounted = self._is_mounted()
@@ -308,8 +314,8 @@ class AetherBox(GhostPortApp):
 
     def _do_init(self, password):
         self.set_status("Initializing vault...")
-        os.makedirs(CIPHER_DIR, exist_ok=True)
-        os.makedirs(MOUNT_DIR, exist_ok=True)
+        os.makedirs(CIPHER_DIR, exist_ok=True, mode=0o700)
+        os.makedirs(MOUNT_DIR, exist_ok=True, mode=0o700)
 
         def _init():
             proc = subprocess.run(
@@ -327,6 +333,15 @@ class AetherBox(GhostPortApp):
             if rc != 0:
                 self.set_status(f"Init failed: {err.strip()}")
                 return
+            # Tighten perms on the freshly-created cipher tree (gocryptfs writes 0644 by default).
+            try:
+                os.chmod(CIPHER_DIR, 0o700)
+                for entry in os.listdir(CIPHER_DIR):
+                    p = os.path.join(CIPHER_DIR, entry)
+                    if os.path.isfile(p):
+                        os.chmod(p, 0o600)
+            except OSError:
+                pass
             self.vault_initialized = True
             self.set_status("Vault initialized. Mounting...")
             self._do_unlock(password)

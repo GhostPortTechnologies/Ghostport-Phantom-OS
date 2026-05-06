@@ -1461,7 +1461,7 @@ class BulkheadApp(GhostPortApp):
         self.refresh_data()
 
     def _on_undo(self, button):
-        """Re-add the last batch of deleted rules."""
+        """Re-add the last batch of deleted rules with per-rule dry-run validation."""
         if not self.undo_stack:
             self._show_error("Nothing to undo.")
             return
@@ -1474,16 +1474,24 @@ class BulkheadApp(GhostPortApp):
         errors = []
         for family, table, chain, expr in batch:
             tokens = self._tokenize_rule(expr)
+            # Dry-run first — the table/chain may have changed shape since the delete,
+            # and we'd rather report a clear error than half-apply the batch.
+            check_cmd = ["nft", "-c", "add", "rule", family, table, chain] + tokens
+            _, c_stderr, c_rc = self.run_sudo(check_cmd, timeout=10)
+            if c_rc != 0:
+                errors.append(f"{chain} (validate): {c_stderr.strip()}")
+                continue
             cmd = ["nft", "add", "rule", family, table, chain] + tokens
-            stdout, stderr, rc = self.run_sudo(cmd, timeout=10)
+            _, stderr, rc = self.run_sudo(cmd, timeout=10)
             if rc == 0:
                 success += 1
             else:
-                errors.append(f"{chain}: {stderr}")
+                errors.append(f"{chain}: {stderr.strip()}")
 
         status = f"Undo: restored {success}/{len(batch)} rule(s)"
         if errors:
             status += f" ({len(errors)} failed)"
+            self._show_error("Undo errors:\n" + "\n".join(errors[:5]))
         self.set_status(status)
         self.refresh_data()
 
