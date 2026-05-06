@@ -598,3 +598,20 @@ sudo apt-mark hold linux-image-rpi-2712 linux-headers-rpi-2712
 | `probe with driver X failed with error -12` | DMA-coherent pool exhausted | Increase `coherent_pool` in cmdline |
 | `error -110` (timeout) | Hardware not responding / firmware load failed | Check `dmesg` for firmware-load errors |
 | `Unknown symbol mt76_*` at modprobe | Built against different mt76 version than loaded | Build all dependent helpers from same tree, install to `extra/`, depmod -a |
+
+## 10. Theme system & toggleable overlays
+
+The full engine doc lives in `/opt/ghostport/docs/THEME-ENGINE-SOP.md`. Fast facts:
+
+- `gp-theme <hex>` is the canonical retheme. Call it directly — never write `theme.json` from app code in isolation; only Python apps that poll the file will repaint, while waybar / foot / labwc / SVG icons stay stuck.
+- **Template-copy bomb:** `gp-theme`'s `apply_all` for-loop copies templates from `~/.config/phantom/theme-defaults/` over live desktop scripts on every color change. Theme-aware files (those that subscribe to theme polling via `gp_app_base.read_theme_color()`) MUST be excluded from the loop AND have their template deleted. Caused the 2026-05-06 Widget Library revert.
+- **Fixed-icon caching gotcha:** GTK apps with hardcoded buttons (logo, app drawer, power) load pixbufs at `_build_ui` time. When the theme rewrites the SVG file, those pixbufs do not refresh. Add a `_reload_fixed_icons()` step to the theme-poll handler — see `gp-dock.py:_poll_theme()` for the canonical fix.
+- **Sentinel-file pattern** for toggleable always-on overlays: `~/.config/ghostport/<widget>-disabled` checked by the labwc autostart line. Toggle UI removes/creates the file and starts/kills the process. Survives reboot. Live example: shortcuts overlay.
+- **Live-fire test** after editing `gp-theme` or any theme-aware file:
+  ```bash
+  BEFORE=$(sha256sum /opt/ghostport/desktop/<file>.py | awk '{print $1}')
+  gp-theme 00d4ff
+  AFTER=$(sha256sum /opt/ghostport/desktop/<file>.py | awk '{print $1}')
+  [[ "$BEFORE" == "$AFTER" ]] && echo PASS || echo FAIL
+  gp-theme reset
+  ```
