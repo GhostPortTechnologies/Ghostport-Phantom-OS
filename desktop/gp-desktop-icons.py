@@ -579,8 +579,25 @@ class DesktopCanvas:
                 mi.connect("activate", lambda _m: self._pin_to_dock(sp))
             menu.append(mi)
 
+            mi = Gtk.MenuItem(label="Hide from Desktop")
+            mi.connect("activate", lambda _m: self._hide_sprite_and_redraw(sp))
+            menu.append(mi)
+
         menu.show_all()
         menu.popup_at_pointer(event)
+
+    def _hide_sprite_and_redraw(self, sp):
+        if sp.kind != "app":
+            return
+        entry = self.positions.setdefault(sp.name, {"x": sp.x, "y": sp.y})
+        if not isinstance(entry, dict):
+            entry = {"x": sp.x, "y": sp.y}
+            self.positions[sp.name] = entry
+        entry["hidden"] = True
+        save_positions(self.positions)
+        if sp in self.sprites:
+            self.sprites.remove(sp)
+        self.area.queue_draw()
 
     def _show_desktop_menu(self, event):
         """Right-click on empty desktop — native GTK context menu at cursor.
@@ -607,6 +624,7 @@ class DesktopCanvas:
             ("Quick Settings", [f"{HOME}/.local/bin/gp-quick-settings"]),
             ("Switch Mode",    [f"{HOME}/.local/bin/gp-mode-menu"]),
             ("Dashboard",      ["brave-browser", "--app=https://localhost:4201"]),
+            ("All Apps…",      ["python3", f"{DESK}/gp-appdrawer.py"]),
             ("---",            None),
             ("Privacy Tools", [
                 ("Bulkhead (Firewall)",           ["python3", f"{DESK}/gp-bulkhead.py"]),
