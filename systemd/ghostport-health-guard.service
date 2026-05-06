@@ -1,6 +1,7 @@
 [Unit]
 Description=GhostPort System Health Guard
-After=network-online.target
+After=network-online.target ghostport-boot.service
+Wants=ghostport-boot.service
 
 [Service]
 Type=oneshot

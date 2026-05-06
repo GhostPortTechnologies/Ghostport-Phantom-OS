@@ -1,6 +1,7 @@
 [Unit]
 Description=GhostPort DNS Integrity Guard
-After=network-online.target pihole-FTL.service
+After=network-online.target pihole-FTL.service ghostport-boot.service
+Wants=ghostport-boot.service
 
 [Service]
 Type=oneshot
