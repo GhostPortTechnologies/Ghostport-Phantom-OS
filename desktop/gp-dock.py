@@ -409,7 +409,28 @@ class Dock(Gtk.Window):
             # by rebuilding the buttons. Fixes stuck accent on dock icons
             # when the theme changes. Added 2026-04-21.
             self._rebuild_items()
+            self._reload_fixed_icons()
         return True
+
+    def _reload_fixed_icons(self):
+        """Refresh pixbufs on the hardcoded left logo and right appdrawer
+        buttons — they live outside items_box and were missing from the
+        theme-poll rebuild."""
+        if os.path.isfile(LOGO_PATH):
+            try:
+                pix = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                    LOGO_PATH, ITEM_SIZE - 8, ITEM_SIZE - 8)
+                self.logo_btn.set_image(Gtk.Image.new_from_pixbuf(pix))
+            except Exception:
+                pass
+        appdrawer_icon = os.path.join(ICON_DIR, "gp-appdrawer.svg")
+        if os.path.isfile(appdrawer_icon):
+            try:
+                pix = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                    appdrawer_icon, ITEM_SIZE - 8, ITEM_SIZE - 8)
+                self.appdrawer_btn.set_image(Gtk.Image.new_from_pixbuf(pix))
+            except Exception:
+                pass
 
     def _shutdown(self):
         try:

@@ -2,11 +2,14 @@
 """
 GhostPort Widget Library — mission control for desktop layout & theme.
 
-Two functions only:
-  1. Theme picker — 8 presets + custom hex; writes /etc/phantom/theme.json
-     directly (instant in-app preview), then fires `pkexec gp-theme <hex>`
-     for full system propagation (waybar / foot / labwc / greeter / SVG icons).
-  2. Desktop icons — toggle which app icons appear on the desktop and launch
+Three functions:
+  1. Theme picker — 8 presets + custom hex; calls the gp-theme engine which
+     repaints waybar / foot / labwc / dock / shortcuts / SVG icons / Python
+     apps in one shot. The greeter (login screen) is skipped if no sudo —
+     run `sudo gp-theme <hex>` from a terminal to update that.
+  2. Widgets — toggle always-on overlays (e.g. keyboard shortcuts). State
+     survives reboot via per-widget sentinel file in ~/.config/ghostport/.
+  3. Desktop icons — toggle which app icons appear on the desktop and launch
      them on demand. Uses ~/.config/ghostport/icon-positions.json hidden flag
      and SIGUSR1s gp-desktop-icons to live-reload.
 """
@@ -32,6 +35,13 @@ ICON_DIR = "/opt/phantom/desktop/icons"
 ICON_POSITIONS_FILE = os.path.expanduser("~/.config/ghostport/icon-positions.json")
 THEME_FILE = "/etc/phantom/theme.json"
 DESKTOP_ICONS_PID_FILE = "/tmp/gp-desktop-icons.pid"
+
+# Toggleable always-on widgets. Each entry: (id, name, subtitle, glyph, command,
+# is_enabled_fn, set_enabled_fn). Enable state survives reboot via a sentinel
+# file; the labwc autostart respects it.
+SHORTCUTS_DISABLED_FLAG = os.path.expanduser("~/.config/ghostport/shortcuts-disabled")
+SHORTCUTS_LOCK_FILE = os.path.expanduser("~/.ghostport-shortcuts.lock")
+SHORTCUTS_CMD = "python3 /opt/phantom/desktop/ghostport-shortcuts.py"
 
 # Mirror of DESKTOP_APPS in gp-desktop-icons.py (excluding the library itself).
 # (label, icon, command, subtitle).
@@ -75,16 +85,21 @@ HELP_SECTIONS = [
     ("Theme picker",
      "Click any swatch to apply it instantly. Type a custom 6-digit hex (e.g. 00d4ff) "
      "and press Apply. Rainbow cycles hues over time.\n\n"
-     "All apps and widgets repaint within a few seconds. The full system retheme "
-     "(waybar, foot, window decorations, SVG icons, login screen) runs through "
-     "gp-theme via pkexec — you may see a one-time auth prompt."),
+     "Repaints waybar, foot terminal, window decorations, dock, shortcuts overlay, "
+     "SVG icons, and all Python apps. The LightDM login screen needs root and is "
+     "skipped — run `sudo gp-theme <hex>` from a terminal to update that too."),
     ("Desktop icons",
      "Each card represents an app. Toggle ON to show its icon on the desktop, "
      "OFF to hide it. Press Launch to open the app immediately without changing "
      "icon visibility."),
+    ("Widgets",
+     "Always-on overlays. ON starts the widget now and arms it for next boot; "
+     "OFF kills it now and skips it at boot. Toggle Visibility hides/shows the "
+     "overlay without disabling it (same as the waybar shortcuts button or Ctrl+?)."),
     ("Where things live",
      "Theme:           /etc/phantom/theme.json\n"
      "Icon visibility: ~/.config/ghostport/icon-positions.json (hidden flag)\n"
+     "Widget enable:   ~/.config/ghostport/<widget>-disabled sentinel\n"
      "Live reload:     SIGUSR1 to /tmp/gp-desktop-icons.pid"),
 ]
 
@@ -116,38 +131,91 @@ def signal_desktop_icons():
         pass
 
 
-def write_theme(value):
-    """Write {"color": "#<value>"} to /etc/phantom/theme.json. Falls back to
-    pkexec when the file is root-owned. Returns True on success."""
-    payload = json.dumps({"color": f"#{value}"}) + "\n"
+def is_shortcuts_running():
     try:
-        with open(THEME_FILE, "w") as f:
-            f.write(payload)
+        with open(SHORTCUTS_LOCK_FILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)
         return True
-    except PermissionError:
+    except (FileNotFoundError, ValueError, ProcessLookupError, OSError):
+        return False
+
+
+def is_shortcuts_enabled():
+    return not os.path.exists(SHORTCUTS_DISABLED_FLAG)
+
+
+def set_shortcuts_enabled(enabled):
+    """ON: clear sentinel + start now. OFF: place sentinel + kill now."""
+    if enabled:
         try:
-            subprocess.run(
-                ["pkexec", "tee", THEME_FILE],
-                input=payload, text=True, check=True,
+            os.unlink(SHORTCUTS_DISABLED_FLAG)
+        except FileNotFoundError:
+            pass
+        if not is_shortcuts_running():
+            subprocess.Popen(
+                SHORTCUTS_CMD, shell=True,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
-            return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
-
-
-def propagate_theme_async(hex_code):
-    """Fire-and-forget full system retheme. RAINBOW is in-app only."""
-    if hex_code == "RAINBOW":
-        return
-    try:
-        subprocess.Popen(
-            ["pkexec", "/usr/local/bin/gp-theme", hex_code],
+    else:
+        os.makedirs(os.path.dirname(SHORTCUTS_DISABLED_FLAG), exist_ok=True)
+        with open(SHORTCUTS_DISABLED_FLAG, "w"):
+            pass
+        subprocess.run(
+            ["pkill", "-f", "ghostport-shortcuts.py"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            check=False,
         )
-    except (FileNotFoundError, OSError):
-        pass
+
+
+def toggle_shortcuts_visibility():
+    """Re-running the script sends SIGUSR2 to the live instance (its single-instance
+    handler does this); if not running, starts it."""
+    subprocess.Popen(
+        SHORTCUTS_CMD, shell=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+# (id, name, subtitle, glyph, is_enabled_fn, set_enabled_fn, toggle_visibility_fn)
+WIDGETS = [
+    ("shortcuts",
+     "Keyboard Shortcuts",
+     "On-screen overlay  ·  Ctrl+?",
+     "\u2328",  # ⌨ keyboard symbol
+     is_shortcuts_enabled,
+     set_shortcuts_enabled,
+     toggle_shortcuts_visibility),
+]
+
+
+GP_THEME_BIN = os.path.expanduser("~/.local/bin/gp-theme")
+
+
+def apply_theme(value):
+    """Apply a theme via the gp-theme engine. Runs synchronously so the user sees
+    waybar/dock/icons/foot all repaint at once. RAINBOW writes theme.json
+    directly (gp-theme has no rainbow propagation logic). Returns True on
+    success, False on failure."""
+    if value == "RAINBOW":
+        try:
+            with open(THEME_FILE, "w") as f:
+                f.write(json.dumps({"color": "#RAINBOW"}) + "\n")
+            return True
+        except OSError:
+            return False
+    try:
+        subprocess.run(
+            [GP_THEME_BIN, value],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=20, check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, OSError):
+        return False
 
 
 def is_valid_hex(s):
@@ -213,6 +281,7 @@ class WidgetLibrary(GhostPortApp):
         scroll.add(body)
 
         body.pack_start(self._build_theme_section(), False, False, 0)
+        body.pack_start(self._build_widgets_section(), False, False, 0)
         body.pack_start(self._build_icons_section(), True, True, 0)
 
     def _section_title(self, text):
@@ -359,14 +428,13 @@ class WidgetLibrary(GhostPortApp):
         self._apply_theme(text.lstrip("#").lower())
 
     def _apply_theme(self, hex_code):
-        if not write_theme(hex_code):
+        if not apply_theme(hex_code):
             self.show_error(
-                "Theme write failed",
-                f"Could not write {THEME_FILE}.",
-                f"Try `gp-theme {hex_code}` from a terminal.",
+                "Theme apply failed",
+                "Could not run gp-theme to retheme the system.",
+                f"Try `gp-theme {hex_code}` from a terminal for details.",
             )
             return
-        propagate_theme_async(hex_code)
         self._refresh_current_label()
         for _, area in self.swatch_areas:
             area.queue_draw()
@@ -375,6 +443,83 @@ class WidgetLibrary(GhostPortApp):
         cur = read_theme_color()
         text = "Current: Rainbow" if cur.upper() == "RAINBOW" else f"Current: #{cur}"
         self.current_lbl.set_text(text)
+
+    # ── Widgets section ──
+
+    def _build_widgets_section(self):
+        section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        section.pack_start(self._section_title("WIDGETS"), False, False, 0)
+        section.pack_start(
+            self._section_sub("Always-on overlays. ON arms it for next boot; OFF skips it."),
+            False, False, 0,
+        )
+
+        flow = Gtk.FlowBox()
+        flow.set_valign(Gtk.Align.START)
+        flow.set_max_children_per_line(4)
+        flow.set_min_children_per_line(1)
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_column_spacing(12)
+        flow.set_row_spacing(12)
+        flow.set_homogeneous(True)
+        flow.set_margin_top(6)
+
+        for entry in WIDGETS:
+            flow.add(self._make_widget_card(entry))
+        section.pack_start(flow, False, False, 0)
+        return section
+
+    def _make_widget_card(self, entry):
+        wid, name, subtitle, glyph, is_enabled, set_enabled, toggle_vis = entry
+
+        frame = Gtk.Frame()
+        frame.get_style_context().add_class("gp-card")
+        frame.set_size_request(210, -1)
+
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        inner.set_margin_start(8)
+        inner.set_margin_end(8)
+        inner.set_margin_top(10)
+        inner.set_margin_bottom(10)
+        frame.add(inner)
+
+        glyph_lbl = Gtk.Label()
+        glyph_lbl.set_markup(f'<span size="32000">{glyph}</span>')
+        glyph_lbl.set_halign(Gtk.Align.CENTER)
+        glyph_lbl.get_style_context().add_class("gp-accent")
+        inner.pack_start(glyph_lbl, False, False, 0)
+
+        name_lbl = Gtk.Label(label=name)
+        name_lbl.set_halign(Gtk.Align.CENTER)
+        name_lbl.get_style_context().add_class("gp-accent")
+        inner.pack_start(name_lbl, False, False, 0)
+
+        sub_lbl = Gtk.Label(label=subtitle)
+        sub_lbl.set_halign(Gtk.Align.CENTER)
+        sub_lbl.get_style_context().add_class("gp-dim")
+        sub_lbl.set_max_width_chars(24)
+        sub_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        inner.pack_start(sub_lbl, False, False, 0)
+
+        toggle_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        toggle_row.set_halign(Gtk.Align.CENTER)
+        toggle_row.set_margin_top(6)
+        sw = Gtk.Switch()
+        sw.set_active(is_enabled())
+        sw.connect("notify::active",
+                   lambda s, _g, fn=set_enabled: fn(s.get_active()))
+        toggle_row.pack_start(sw, False, False, 0)
+        on_lbl = Gtk.Label(label="Enabled")
+        on_lbl.get_style_context().add_class("gp-dim")
+        toggle_row.pack_start(on_lbl, False, False, 0)
+        inner.pack_start(toggle_row, False, False, 0)
+
+        vis_btn = Gtk.Button(label="Toggle Visibility")
+        vis_btn.get_style_context().add_class("gp-btn")
+        vis_btn.connect("clicked", lambda _b, fn=toggle_vis: fn())
+        inner.pack_start(vis_btn, False, False, 0)
+
+        return frame
 
     # ── Icons section ──
 
