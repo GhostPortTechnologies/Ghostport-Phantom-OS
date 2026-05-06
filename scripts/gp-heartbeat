@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+# gp-heartbeat — Fleet heartbeat / check-in
+# Sends device status to fleet server, processes commands and subscription info.
+# HMAC command verification added 2026-03-31
+
+set -uo pipefail
+
+FLEET_CONFIG="/etc/ghostport/fleet.json"
+FLEET_AUTH="/etc/ghostport/fleet-auth.json"
+SUBSCRIPTION_FILE="/etc/ghostport/subscription.json"
+
+log() { logger -t gp-heartbeat "$*"; }
+
+# Exit silently if not registered
+if [ ! -f "$FLEET_CONFIG" ]; then
+    exit 0
+fi
+
+# Read fleet token from config
+FLEET_TOKEN=$(jq -r '.fleet_token // empty' "$FLEET_CONFIG" 2>/dev/null)
+if [ -z "$FLEET_TOKEN" ]; then
+    echo "[heartbeat] No fleet_token in config — aborting"; exit 1
+fi
+
+# Parse fleet.json
+device_id=$(jq -r '.device_id // empty' "$FLEET_CONFIG" 2>/dev/null)
+fleet_server=$(jq -r '.fleet_server // "http://10.66.66.1:8080"' "$FLEET_CONFIG" 2>/dev/null)
+hmac_secret=$(jq -r '.hmac_secret // empty' "$FLEET_CONFIG" 2>/dev/null)
+
+if [ -z "$device_id" ]; then
+    log "ERROR: no device_id in $FLEET_CONFIG"
+    exit 0
+fi
+
+# Collect telemetry
+if [ -f /etc/ghostport/version.json ]; then
+    firmware_version=$(python3 -c "import json;print(json.load(open('/etc/ghostport/version.json')).get('version','0.1.0'))" 2>/dev/null || echo "0.1.0")
+else
+    firmware_version="0.1.0"
+fi
+
+uptime_seconds=$(awk '{printf "%d", $1}' /proc/uptime)
+
+if [ -f /etc/ghostport/current-mode ]; then
+    current_mode=$(cat /etc/ghostport/current-mode)
+else
+    current_mode="isp"
+fi
+
+# Build JSON payload
+payload=$(jq -n \
+    --arg fw "$firmware_version" \
+    --argjson up "$uptime_seconds" \
+    --arg mode "$current_mode" \
+    '{firmware_version: $fw, uptime: $up, mode: $mode}')
+
+# POST check-in
+response=$(curl -s --max-time 15 \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $FLEET_TOKEN" \
+    -d "$payload" \
+    "${fleet_server}/fleet/devices/${device_id}/checkin" 2>&1) || {
+    log "WARN: checkin failed (curl error)"
+    exit 0
+}
+
+# Validate response is JSON
+if ! echo "$response" | jq empty 2>/dev/null; then
+    log "WARN: checkin returned invalid JSON"
+    exit 0
+fi
+
+ack=$(echo "$response" | jq -r '.ack // empty')
+if [ -z "$ack" ]; then
+    log "WARN: checkin response missing ack"
+    exit 0
+fi
+
+log "checkin OK (ack=$ack)"
+
+# ── HMAC command verification helper ──
+verify_hmac() {
+    local cmd_id="$1" cmd_type="$2" cmd_payload="$3" created_at="$4" signature="$5"
+    if [ -z "$hmac_secret" ]; then
+        # No secret — reject all commands for security
+        log "SECURITY: No hmac_secret configured — rejecting command"; return 1
+    fi
+    if [ -z "$signature" ]; then
+        log "SECURITY: unsigned command $cmd_id (type=$cmd_type) — REJECTING"
+        return 1
+    fi
+    local message="${cmd_id}|${cmd_type}|${cmd_payload}|${created_at}"
+    local expected
+    expected=$(printf '%s' "$message" | openssl dgst -sha256 -hmac "$hmac_secret" -hex 2>/dev/null | awk '{print $NF}')
+    if [ "$expected" = "$signature" ]; then
+        return 0
+    else
+        log "SECURITY: HMAC mismatch for command $cmd_id (type=$cmd_type) — REJECTING"
+        return 1
+    fi
+}
+
+# Process pending commands
+cmd_count=$(echo "$response" | jq '(.pending_commands | length) // 0' 2>/dev/null)
+cmd_count=${cmd_count:-0}
+if [ "$cmd_count" -gt 0 ]; then
+    log "received $cmd_count pending command(s)"
+    for i in $(seq 0 $((cmd_count - 1))); do
+        cmd_id=$(echo "$response" | jq -r ".pending_commands[$i].id // empty")
+        cmd_type=$(echo "$response" | jq -r ".pending_commands[$i].type // empty")
+        cmd_payload=$(echo "$response" | jq -r ".pending_commands[$i].payload // .pending_commands[$i].value // empty")
+        cmd_created=$(echo "$response" | jq -r ".pending_commands[$i].created_at // empty")
+        cmd_sig=$(echo "$response" | jq -r ".pending_commands[$i].signature // empty")
+
+        log "command: id=$cmd_id type=$cmd_type"
+
+        # Verify HMAC signature before executing
+        if ! verify_hmac "$cmd_id" "$cmd_type" "$cmd_payload" "$cmd_created" "$cmd_sig"; then
+            continue
+        fi
+
+        # Strict command whitelist — no arbitrary shell execution
+        case "$cmd_type" in
+            mode)
+                case "$cmd_payload" in
+                    isp|zerotrust|doublehop|zhop)
+                        log "executing: gp-mode $cmd_payload"
+                        sudo /usr/local/bin/gp-mode "$cmd_payload" 2>&1 | while read -r line; do
+                            log "gp-mode: $line"
+                        done
+                        ;;
+                    *)
+                        log "ERROR: rejected invalid mode value: $cmd_payload"
+                        ;;
+                esac
+                ;;
+            totp-reset)
+                log "executing: TOTP reset"
+                if [ -f /etc/ghostport/auth.json ]; then
+                    sudo python3 -c "
+import json
+with open('/etc/ghostport/auth.json') as f:
+    auth = json.load(f)
+if 'totp' in auth:
+    del auth['totp']
+    with open('/etc/ghostport/auth.json', 'w') as f:
+        json.dump(auth, f, indent=2)
+    print('TOTP config cleared')
+else:
+    print('No TOTP config to clear')
+"
+                    log "TOTP reset complete"
+                fi
+                ;;
+            totp-regen-backup)
+                log "executing: TOTP backup code regeneration"
+                if [ -f /etc/ghostport/auth.json ]; then
+                    sudo python3 -c "
+import json, secrets
+with open('/etc/ghostport/auth.json') as f:
+    auth = json.load(f)
+if 'totp' in auth and auth['totp'].get('setupComplete'):
+    codes = [secrets.token_hex(4) for _ in range(8)]
+    auth['totp']['backupCodes'] = codes
+    with open('/etc/ghostport/auth.json', 'w') as f:
+        json.dump(auth, f, indent=2)
+    print(f'Generated {len(codes)} new backup codes')
+else:
+    print('TOTP not configured — skipping')
+"
+                    log "backup code regen complete"
+                fi
+                ;;
+            update)
+                log "update command received — triggering gp-update"
+                sudo /usr/local/bin/gp-update apply 2>&1 | while read -r line; do
+                    log "gp-update: $line"
+                done
+                ;;
+            reboot)
+                log "reboot command received — rebooting in 5s"
+                sleep 5
+                sudo reboot
+                ;;
+            *)
+                log "WARN: unknown command type '$cmd_type' — ignoring"
+                ;;
+        esac
+    done
+fi
+
+# Check for updates
+update_available=$(echo "$response" | jq -r '.update_available // false')
+if [ "$update_available" = "true" ]; then
+    log "firmware update available"
+fi
+
+# Save subscription state
+sub_active=$(echo "$response" | jq '.subscription_active // false')
+sub_tier=$(echo "$response" | jq -r '.tier // "free"')
+sub_status=$(echo "$response" | jq -r '.subscription_status // "unknown"')
+
+mkdir -p "$(dirname "$SUBSCRIPTION_FILE")"
+jq -n \
+    --argjson active "$sub_active" \
+    --arg tier "$sub_tier" \
+    --arg status "$sub_status" \
+    '{subscription_active: $active, tier: $tier, status: $status}' \
+    > "$SUBSCRIPTION_FILE"
+chmod 600 "$SUBSCRIPTION_FILE" 2>/dev/null
+
+log "subscription: active=$sub_active tier=$sub_tier"

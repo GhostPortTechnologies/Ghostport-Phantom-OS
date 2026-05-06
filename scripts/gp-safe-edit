@@ -7,7 +7,7 @@ set -euo pipefail
 FILE=""
 SERVICE=""
 SOURCE=""
-CHANGELOG="/etc/phantom/changelog.json"
+CHANGELOG="/etc/ghostport/changelog.json"
 
 # Parse args
 while [[ $# -gt 0 ]]; do
@@ -75,17 +75,23 @@ if [ ! -f "$CHANGELOG" ]; then
     echo "[]" > "$CHANGELOG"
 fi
 
-ENTRY="{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"file\":\"$FILE\",\"backup\":\"$BACKUP\",\"service\":\"${SERVICE:-none}\",\"result\":\"success\"}"
-
-# Append entry to JSON array
+# Append entry to JSON array (stdin to avoid injection)
 python3 -c "
-import json, sys
+import json, sys, os
+changelog = sys.argv[1]
+entry = {
+    'timestamp': sys.argv[2],
+    'file': sys.argv[3],
+    'backup': sys.argv[4],
+    'service': sys.argv[5],
+    'result': 'success'
+}
 try:
-    with open('$CHANGELOG') as f: log = json.load(f)
+    with open(changelog) as f: log = json.load(f)
 except: log = []
-log.append(json.loads('$ENTRY'))
-log = log[-100:]  # keep last 100 entries
-with open('$CHANGELOG', 'w') as f: json.dump(log, f, indent=2)
-" 2>/dev/null || true
+log.append(entry)
+log = log[-100:]
+with open(changelog, 'w') as f: json.dump(log, f, indent=2)
+" "$CHANGELOG" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$FILE" "$BACKUP" "${SERVICE:-none}" 2>/dev/null || true
 
 echo "[safe-edit] SUCCESS — change logged"

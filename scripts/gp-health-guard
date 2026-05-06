@@ -12,17 +12,17 @@ mkdir -p /run/ghostport 2>/dev/null || true
 exec 9>"$LOCK"
 flock -n 9 || { echo "Already running"; exit 0; }
 TAG="gp-health-guard"
-MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
 SKIP_TUNNEL=false
 FIXES=0
 WARNINGS=0
-STATE_DIR="/etc/phantom"
+STATE_DIR="/etc/ghostport"
 HEALTH_STATE="$STATE_DIR/health-state.json"
 
 # Detect WAN interface: wlan0 if WiFi WAN configured, else eth0
 wan_if() {
   local wtype
-  wtype=$(jq -r '.type // "ethernet"' /etc/phantom/wan.json 2>/dev/null)
+  wtype=$(jq -r '.type // "ethernet"' /etc/ghostport/wan.json 2>/dev/null)
   if [[ "$wtype" == "wireless" ]]; then echo "wlan1"; else echo "eth0"; fi
 }
 

@@ -1,6 +1,7 @@
 define WAN_IF = "eth0"
 define LAN_IF = "wlan0"
 define WG_IF  = "wg0"
+define WG_DATA = "wg1"
 define TS_IF  = "tailscale0"
 define LAN_SUBNET = "192.168.50.0/24"
 
@@ -23,7 +24,7 @@ table inet management {
         iifname $TS_IF tcp dport { 53, 80 } accept
         iifname $TS_IF udp dport 53 accept
         # WireGuard tunnel traffic (when doublehop/zhop active)
-        iifname $WG_IF accept
+        iifname { $WG_IF, $WG_DATA } accept
         # ICMP (ping, path MTU discovery)
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept

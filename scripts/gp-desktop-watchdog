@@ -1,0 +1,29 @@
+#!/bin/bash
+# GhostPort Desktop Watchdog
+# Monitors labwc compositor and restarts lightdm if it crashes
+# This prevents the "black screen on rpi-connect" problem
+
+[[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: gp-desktop-watchdog (run by systemd; no args)"; exit 0; }
+
+SLEEP=5
+
+while true; do
+    sleep "$SLEEP"
+    
+    # Only act if lightdm is running (desktop mode is expected)
+    if ! systemctl is-active --quiet lightdm; then
+        continue
+    fi
+    
+    # Check if labwc is running
+    if ! pgrep -x labwc > /dev/null; then
+        logger -t gp-desktop-watchdog "labwc not running, restarting lightdm in 3s..."
+        sleep 3
+        
+        # Double-check it's still dead (avoid race condition)
+        if ! pgrep -x labwc > /dev/null; then
+            logger -t gp-desktop-watchdog "Confirmed labwc dead, restarting lightdm"
+            systemctl restart lightdm
+        fi
+    fi
+done

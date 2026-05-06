@@ -1,0 +1,23 @@
+[Unit]
+Description=GhostPort CPU Watchdog — catches runaway gp-* scripts
+After=network.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+Group=ghostport-admin
+ExecStart=/home/ghostport-admin/.local/bin/gp-cpu-watchdog
+Restart=on-failure
+RestartSec=10
+
+# Keep this tiny — the watchdog must not itself become a problem
+MemoryMax=32M
+CPUQuota=5%
+TasksMax=16
+Nice=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

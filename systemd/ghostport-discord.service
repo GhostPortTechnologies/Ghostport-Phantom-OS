@@ -6,9 +6,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ghostport-admin
-WorkingDirectory=/opt/phantom/discord-bot
-ExecStart=/opt/phantom/discord-bot/venv/bin/python3 /opt/phantom/discord-bot/ghostport-discord-bot.py
-EnvironmentFile=/etc/phantom/discord-bot.env
+WorkingDirectory=/opt/ghostport/discord-bot
+ExecStart=/opt/ghostport/discord-bot/venv/bin/python3 /opt/ghostport/discord-bot/ghostport-discord-bot.py
+EnvironmentFile=/etc/ghostport/discord-bot.env
 Restart=always
 RestartSec=10
 

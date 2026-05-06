@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# gp-noise — Cover traffic generator for Phantom OS
+# gp-noise — Cover traffic generator for GhostPort OS
 # Generates random DNS queries and HTTPS HEAD requests to mask real user activity
 # Only active in doublehop or zhop modes
 
 set -uo pipefail
+[[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: gp-noise (run by systemd; no args)"; exit 0; }
+
 
 DOMAINS=(
   google.com wikipedia.org amazon.com reddit.com github.com
@@ -12,7 +14,7 @@ DOMAINS=(
   archlinux.org fedoraproject.org kernel.org gnu.org
 )
 
-MODE_FILE="/etc/phantom/current-mode"
+MODE_FILE="/etc/ghostport/current-mode"
 RUNNING=true
 
 cleanup() {
@@ -30,7 +32,7 @@ check_mode() {
 
 random_sleep() {
   local mean=$(( (RANDOM % 8) + 3 ))
-  sleep $(awk "BEGIN { d=-${mean}*log((${RANDOM}+1)/32768.0); if(d<1)d=1; if(d>30)d=30; printf \"%.1f\",d }")
+  sleep $(awk "BEGIN { srand(); d=-${mean}*log((rand()*32767+1)/32768.0); if(d<1)d=1; if(d>30)d=30; printf \"%.1f\",d }")
 }
 
 random_domain() {

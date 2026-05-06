@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""gp-pihole — Pi-hole v6 API helper with sid lifecycle.
+
+Centralizes auth + endpoint mapping so the 5 callers (gp-lookout,
+gp-first-boot-check, gp-digest, gp-quick-settings, gp-crewmanifest)
+don't each reimplement the v6 sid handshake.
+
+Reads the regenerated-on-FTL-restart cli_pw via passwordless sudo.
+Caches the sid at /tmp/gp-pihole-sid (0600) for the 30-min server-side
+TTL minus a margin. On 401 (sid expired or FTL restarted), re-auths once.
+
+Subcommands:
+  summary                 stats summary (queries.total etc.)
+  blocking                "enabled" | "disabled"
+  client-queries <ip>     int — queries for that client (from top_clients)
+  client-history          per-client timeseries (history/clients)
+  raw <endpoint>          GET /api/<endpoint> raw JSON
+  -h | --help
+
+All output is JSON to stdout (or a single integer for client-queries).
+Exit codes: 0 ok; 2 cli_pw read failed; 3 auth failed; 4 endpoint failed.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+CLI_PW_FILE = "/etc/pihole/cli_pw"
+SID_CACHE = "/tmp/gp-pihole-sid"
+SID_TTL = 1500
+HTTP_TIMEOUT = 5
+BASE_URL = "http://localhost/api"
+
+
+def _read_cli_pw():
+    r = subprocess.run(
+        ["sudo", "-n", "cat", CLI_PW_FILE],
+        capture_output=True, text=True, timeout=5,
+    )
+    if r.returncode != 0 or not r.stdout.strip():
+        sys.stderr.write("gp-pihole: cannot read cli_pw\n")
+        sys.exit(2)
+    return r.stdout.strip()
+
+
+def _write_sid(sid):
+    fd = os.open(SID_CACHE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.write(fd, sid.encode())
+    os.close(fd)
+
+
+def _read_sid():
+    if not os.path.isfile(SID_CACHE):
+        return None
+    try:
+        if time.time() - os.path.getmtime(SID_CACHE) >= SID_TTL:
+            return None
+        with open(SID_CACHE) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def _auth():
+    pw = _read_cli_pw()
+    body = json.dumps({"password": pw}).encode()
+    req = urllib.request.Request(
+        f"{BASE_URL}/auth", data=body,
+        headers={"Content-Type": "application/json"}, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            d = json.loads(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"gp-pihole: auth failed: {e}\n")
+        sys.exit(3)
+    sid = (d.get("session") or {}).get("sid")
+    if not sid:
+        sys.stderr.write("gp-pihole: auth returned no sid\n")
+        sys.exit(3)
+    _write_sid(sid)
+    return sid
+
+
+def _get_sid(force=False):
+    if not force:
+        cached = _read_sid()
+        if cached:
+            return cached
+    return _auth()
+
+
+def _call(endpoint, retried=False):
+    sid = _get_sid(force=retried)
+    req = urllib.request.Request(
+        f"{BASE_URL}/{endpoint.lstrip('/')}",
+        headers={"X-FTL-SID": sid},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and not retried:
+            return _call(endpoint, retried=True)
+        sys.stderr.write(f"gp-pihole: {endpoint} HTTP {e.code}\n")
+        sys.exit(4)
+    except (urllib.error.URLError, json.JSONDecodeError) as e:
+        sys.stderr.write(f"gp-pihole: {endpoint} error: {e}\n")
+        sys.exit(4)
+
+
+def _client_queries(ip):
+    d = _call("stats/top_clients?count=200")
+    for c in d.get("clients", []) or []:
+        if c.get("ip") == ip or c.get("name") == ip:
+            return int(c.get("count", 0))
+    return 0
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        sys.stdout.write(__doc__)
+        return
+    cmd = args[0]
+    if cmd == "summary":
+        print(json.dumps(_call("stats/summary")))
+    elif cmd == "blocking":
+        print(json.dumps(_call("dns/blocking")))
+    elif cmd == "client-queries":
+        if len(args) < 2:
+            sys.stderr.write("usage: gp-pihole client-queries <ip>\n")
+            sys.exit(1)
+        print(_client_queries(args[1]))
+    elif cmd == "client-history":
+        print(json.dumps(_call("history/clients")))
+    elif cmd == "raw":
+        if len(args) < 2:
+            sys.stderr.write("usage: gp-pihole raw <endpoint>\n")
+            sys.exit(1)
+        print(json.dumps(_call(args[1])))
+    else:
+        sys.stderr.write(f"gp-pihole: unknown subcommand {cmd!r}\n")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

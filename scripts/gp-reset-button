@@ -1,56 +1,44 @@
 #!/bin/bash
-# gp-reset-button — GPIO 17 reset button daemon
+# gp-reset-button — GPIO 17 reset button daemon (Pi 5 libgpiod)
 # 10s hold: passcode reset
 # 30s hold: factory reset
 # GPIO 17 with internal pull-up, button connects to GND (active low)
 
 set -euo pipefail
+[[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: gp-reset-button (run by systemd; no args)"; exit 0; }
 
+
+GPIO_CHIP=gpiochip0
 GPIO_PIN=17
-GPIO_PATH="/sys/class/gpio/gpio${GPIO_PIN}"
-DEBOUNCE_MS=100
 LOG_TAG="gp-reset-button"
 
 log() { logger -t "$LOG_TAG" "$1"; echo "[$LOG_TAG] $1"; }
 
-# Export GPIO if not already
-if [ ! -d "$GPIO_PATH" ]; then
-  echo "$GPIO_PIN" > /sys/class/gpio/export
-  sleep 0.1
-fi
-
-# Configure as input with pull-up
-echo "in" > "${GPIO_PATH}/direction"
-# Active low (button press = 0)
-echo "1" > "${GPIO_PATH}/active_low" 2>/dev/null || true
-
-log "Monitoring GPIO ${GPIO_PIN} for reset button..."
-
 read_gpio() {
-  cat "${GPIO_PATH}/value"
+  # gpioget returns 0 (pressed, active low) or 1 (released)
+  gpioget --bias=pull-up "$GPIO_CHIP" "$GPIO_PIN"
 }
 
+log "Monitoring GPIO ${GPIO_PIN} on ${GPIO_CHIP} for reset button..."
+
 while true; do
-  # Wait for button press (value = 1 when active_low and pressed)
   VAL=$(read_gpio)
-  if [ "$VAL" = "1" ]; then
-    # Button is pressed — start timing
+  if [ "$VAL" = "0" ]; then
+    # Button is pressed (active low) — start timing
     PRESS_START=$(date +%s)
     HOLD_SECONDS=0
     TRIGGERED=""
 
-    while [ "$(read_gpio)" = "1" ]; do
+    while [ "$(read_gpio)" = "0" ]; do
       sleep 0.5
       NOW=$(date +%s)
       HOLD_SECONDS=$(( NOW - PRESS_START ))
 
-      # Visual feedback: log hold duration at thresholds
       if [ "$HOLD_SECONDS" -ge 30 ] && [ -z "$TRIGGERED" ]; then
         TRIGGERED="factory"
         log "30s hold detected — FACTORY RESET triggered"
         break
       elif [ "$HOLD_SECONDS" -ge 10 ] && [ -z "$TRIGGERED" ]; then
-        # Don't break yet — keep counting for 30s
         log "10s hold reached — release for PASSCODE RESET, keep holding for FACTORY RESET"
         TRIGGERED="passcode"
       fi
@@ -63,15 +51,14 @@ while true; do
     elif [ "$TRIGGERED" = "passcode" ]; then
       log "Executing passcode reset..."
       NEW_PASS=$(gp-passcode reset 2>&1 | grep -oP 'GP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}' || echo "unknown")
-      # Write passcode to file for physical recovery (auto-deletes after 5 min)
-      echo "$NEW_PASS" > /etc/phantom/last-reset-passcode.txt
-      chmod 600 /etc/phantom/last-reset-passcode.txt
-      ( sleep 300 && rm -f /etc/phantom/last-reset-passcode.txt ) &
+      echo "$NEW_PASS" > /etc/ghostport/last-reset-passcode.txt
+      chmod 600 /etc/ghostport/last-reset-passcode.txt
+      ( sleep 300 && rm -f /etc/ghostport/last-reset-passcode.txt ) &
       log "Passcode reset complete. Recovery file expires in 5 minutes."
       systemctl restart ghostport 2>/dev/null || true
     fi
 
-    # Debounce — wait before monitoring again
+    # Debounce
     sleep 2
   fi
 

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 LOG_TAG="gp-auto-update"
-STATE_FILE="/etc/phantom/auto-update-state.json"
+STATE_FILE="/etc/ghostport/auto-update-state.json"
 LOCK_FILE="/tmp/gp-auto-update.lock"
 
 log() { logger -t "$LOG_TAG" "$1"; echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"; }
@@ -72,12 +72,13 @@ add_error() {
     local msg="$1"
     local now
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    python3 -c "
-import json
-with open('$STATE_FILE') as f: state = json.load(f)
+    GP_STATE="$STATE_FILE" GP_TS="$now" GP_MSG="$msg" python3 -c "
+import json, os
+sf = os.environ['GP_STATE']
+with open(sf) as f: state = json.load(f)
 state['errors'] = state.get('errors', [])[-9:]
-state['errors'].append({'ts': '$now', 'msg': $(python3 -c "import json; print(json.dumps('$msg'[:200]))")})
-with open('$STATE_FILE','w') as f: json.dump(state, f, indent=2)
+state['errors'].append({'ts': os.environ['GP_TS'], 'msg': os.environ['GP_MSG'][:200]})
+with open(sf,'w') as f: json.dump(state, f, indent=2)
 "
 }
 

@@ -2,8 +2,8 @@
 # Applied on boot — restores WAN type and saved mode (no rollback needed)
 set -euo pipefail
 
-MODEFILE="/etc/phantom/current-mode"
-WAN_CONF="/etc/phantom/wan.json"
+MODEFILE="/etc/ghostport/current-mode"
+WAN_CONF="/etc/ghostport/wan.json"
 
 # ── Restore WiFi WAN if configured ──────────────────────
 if [[ -f "$WAN_CONF" ]]; then
@@ -30,7 +30,7 @@ echo "[ghostport-boot] Applying saved mode: $MODE"
 if ! timeout 30 /usr/local/bin/gp-mode "$MODE" --no-rollback; then
   echo "[ghostport-boot] ERROR: Mode $MODE failed — falling back to ISP"
   /usr/local/bin/gp-mode isp --no-rollback || true
-  echo "isp" > /etc/phantom/current-mode 2>/dev/null || true
+  echo "isp" > /etc/ghostport/current-mode 2>/dev/null || true
   echo "[ghostport-boot] ISP fallback applied"
 else
   echo "[ghostport-boot] Mode $MODE applied successfully"

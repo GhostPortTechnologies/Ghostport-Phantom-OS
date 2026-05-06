@@ -1,0 +1,13 @@
+[Unit]
+Description=GhostPort rogue-block auto-expire (sweep stale entries)
+After=network-online.target pihole-FTL.service
+Wants=pihole-FTL.service
+
+[Service]
+Type=oneshot
+User=ghostport-admin
+Group=ghostport-admin
+ExecStart=/usr/local/bin/gp-rogue-block expire-stale
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ghostport-rogue-expire

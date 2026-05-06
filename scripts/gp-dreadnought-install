@@ -1,0 +1,129 @@
+#!/bin/bash
+set -euo pipefail
+[[ $(id -u) -eq 0 ]] || exec sudo "$0" "$@"
+# gp-dreadnought-install — installs + configures local unbound for recursive-to-roots DNS.
+# Idempotent. Required before `gp-dns-switch dreadnought` works.
+# Usage: gp-dreadnought-install [--status|--uninstall]
+
+case "${1:-}" in
+  --help|-h)
+    cat <<EOF
+gp-dreadnought-install — prepare unbound for Dreadnought Mode
+Usage:
+  gp-dreadnought-install              install + configure + start
+  gp-dreadnought-install --status     ready|missing|failed
+  gp-dreadnought-install --uninstall  stop + disable unbound (keeps package)
+EOF
+    exit 0 ;;
+esac
+
+CONF_DIR="/etc/unbound/unbound.conf.d"
+CONF_FILE="${CONF_DIR}/gp-dreadnought.conf"
+ROOT_HINTS="/var/lib/unbound/root.hints"
+
+write_config() {
+  mkdir -p "$CONF_DIR" /var/lib/unbound
+  # Recursive-to-roots resolver. No forwarders — queries go to roots/TLDs/auths directly.
+  # QNAME minimisation + DNSSEC + harden-glue enabled (privacy + integrity).
+  # Binds only to loopback:5335 so it can coexist with Pi-hole on :53.
+  cat > "$CONF_FILE" <<'EOF'
+# Dreadnought Mode — written by gp-dreadnought-install. Do not edit by hand.
+server:
+    verbosity: 0
+    interface: 127.0.0.1@5335
+    port: 5335
+    do-ip4: yes
+    do-ip6: no
+    do-udp: yes
+    do-tcp: yes
+    access-control: 127.0.0.0/8 allow
+    access-control: 0.0.0.0/0 refuse
+    root-hints: "/var/lib/unbound/root.hints"
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-referral-path: yes
+    use-caps-for-id: yes
+    qname-minimisation: yes
+    aggressive-nsec: yes
+    prefetch: yes
+    prefetch-key: yes
+    cache-min-ttl: 60
+    cache-max-ttl: 86400
+    edns-buffer-size: 1232
+    num-threads: 2
+    so-reuseport: yes
+    rrset-cache-size: 32m
+    msg-cache-size: 16m
+    hide-identity: yes
+    hide-version: yes
+    private-address: 10.0.0.0/8
+    private-address: 172.16.0.0/12
+    private-address: 192.168.0.0/16
+    private-address: 169.254.0.0/16
+    private-address: fd00::/8
+    private-address: fe80::/10
+EOF
+  chmod 0644 "$CONF_FILE"
+}
+
+fetch_root_hints() {
+  if [[ ! -s "$ROOT_HINTS" ]] || find "$ROOT_HINTS" -mtime +30 2>/dev/null | grep -q .; then
+    curl -fsSL --max-time 15 -o "${ROOT_HINTS}.tmp" https://www.internic.net/domain/named.root || {
+      echo "[dreadnought] WARN: could not fetch root.hints — unbound will use built-ins" >&2
+      return 0
+    }
+    mv "${ROOT_HINTS}.tmp" "$ROOT_HINTS"
+    chown unbound:unbound "$ROOT_HINTS" 2>/dev/null || true
+  fi
+}
+
+ensure_package() {
+  if ! command -v unbound >/dev/null 2>&1; then
+    echo "[dreadnought] Installing unbound…"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq unbound
+  fi
+}
+
+service_up() {
+  systemctl enable --now unbound.service >/dev/null 2>&1 || {
+    echo "[dreadnought] ERROR: unbound failed to start" >&2
+    systemctl status unbound --no-pager -l | head -20 >&2 || true
+    return 1
+  }
+  # Quick resolution smoke test
+  sleep 1
+  if ! dig +short +time=3 +tries=1 example.com @127.0.0.1 -p 5335 >/dev/null 2>&1; then
+    echo "[dreadnought] ERROR: unbound up but not resolving" >&2
+    return 1
+  fi
+}
+
+case "${1:-install}" in
+  --status)
+    if ! command -v unbound >/dev/null 2>&1; then
+      echo "missing"
+    elif [[ ! -f "$CONF_FILE" ]]; then
+      echo "missing"
+    elif systemctl is-active --quiet unbound 2>/dev/null; then
+      echo "ready"
+    else
+      echo "failed"
+    fi
+    ;;
+  --uninstall)
+    systemctl disable --now unbound.service 2>/dev/null || true
+    rm -f "$CONF_FILE"
+    echo "ok"
+    ;;
+  install|"")
+    ensure_package
+    write_config
+    fetch_root_hints
+    service_up
+    echo "ok"
+    ;;
+  *)
+    echo "Usage: gp-dreadnought-install [--status|--uninstall]" >&2
+    exit 1 ;;
+esac

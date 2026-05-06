@@ -1,0 +1,218 @@
+#!/bin/bash
+# gp-smoke-test — Launch every GhostPort desktop app, verify it renders,
+# screenshot it, kill it. Catches the "white button / lost icon / jittery
+# drag / haunting widget / broken right-click" regression class that
+# static analysis can't touch.
+#
+# This script runs against the LIVE wayland session (your logged-in
+# desktop). Expect 16 windows to flash up and close over ~90 seconds.
+# Don't run it mid-demo.
+#
+# Usage:
+#   gp-smoke-test                Run full smoke against all apps
+#   gp-smoke-test --app NAME     Run against one app (e.g. "Anchor")
+#   gp-smoke-test --dwell SECS   Override the default 3s render wait
+#   gp-smoke-test --keep         Don't delete the report dir on exit
+#   gp-smoke-test --help
+#
+# Exit codes: 0 = all pass, 1 = one or more apps failed
+
+set -u
+
+# ── flags ─────────────────────────────────────────────────────────────
+
+DWELL=3
+TARGET_APP=""
+KEEP_REPORT=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --app)    TARGET_APP="$2"; shift 2 ;;
+        --dwell)  DWELL="$2";      shift 2 ;;
+        --keep)   KEEP_REPORT=1;   shift ;;
+        --help|-h) sed -n '2,16p' "$0" | sed 's|^# ||; s|^#||'; exit 0 ;;
+        *) echo "gp-smoke-test: unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+# ── app catalog (mirror of DESKTOP_APPS in gp-desktop-icons.py) ──────
+
+declare -a APPS=(
+    "Crow's Nest|python3 /opt/ghostport/desktop/gp-crowsnest.py"
+    "Bulkhead|python3 /opt/ghostport/desktop/gp-bulkhead.py"
+    "Dragnet|python3 /opt/ghostport/desktop/gp-dragnet.py"
+    "Anchor|python3 /opt/ghostport/desktop/gp-anchor.py"
+    "Aether Box|python3 /opt/ghostport/desktop/gp-aetherbox.py"
+    "Tide Chart|python3 /opt/ghostport/desktop/gp-tidechart.py"
+    "Sonar|python3 /opt/ghostport/desktop/gp-sonar.py"
+    "Crew Manifest|python3 /opt/ghostport/desktop/gp-crewmanifest.py"
+    "Atlas|python3 /opt/ghostport/desktop/gp-atlas.py"
+    "Stonefish|python3 /opt/ghostport/desktop/gp-stonefish.py"
+    "Phantom|python3 /opt/ghostport/desktop/gp-phantom.py"
+    "Gangplank|python3 /opt/ghostport/desktop/gp-gangplank.py"
+    "Sea Urchin|python3 /opt/ghostport/desktop/gp-seaurchin.py"
+    "Logbook|python3 /opt/ghostport/desktop/gp-logbook.py"
+    "Quartermaster|python3 /opt/ghostport/desktop/gp-quartermaster.py"
+    "Treasure Chest|python3 /opt/ghostport/desktop/gp-treasurechest.py"
+)
+
+# ── report dir ───────────────────────────────────────────────────────
+
+TS="$(date +%Y%m%d-%H%M%S)"
+REPORT="/tmp/gp-smoke-${TS}"
+mkdir -p "$REPORT"
+trap '[[ $KEEP_REPORT -eq 0 ]] && rm -rf "$REPORT" || echo "(report kept at $REPORT)"' EXIT
+
+echo "gp-smoke-test: running against live Wayland session"
+echo "  report: $REPORT"
+echo "  dwell:  ${DWELL}s per app"
+echo
+
+# ── per-app smoke ────────────────────────────────────────────────────
+
+PASS=0
+FAIL=0
+FAILED_APPS=()
+
+# Detect if we have a Wayland display to screenshot
+SCREENSHOT_OK=0
+if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v grim >/dev/null 2>&1; then
+    SCREENSHOT_OK=1
+fi
+
+smoke_one() {
+    local name="$1"
+    local cmd="$2"
+    local slug
+    slug=$(echo "$name" | tr ' ' '_' | tr -cd '[:alnum:]_')
+    local app_dir="$REPORT/$slug"
+    mkdir -p "$app_dir"
+
+    echo -n "  [${name}] launching... "
+
+    # Launch in background, capture stderr + stdout separately
+    # shellcheck disable=SC2086
+    setsid $cmd > "$app_dir/stdout.log" 2> "$app_dir/stderr.log" &
+    local pid=$!
+    echo "$pid" > "$app_dir/pid.txt"
+
+    # Wait for render
+    sleep "$DWELL"
+
+    # Check 1: process alive?
+    local alive=0
+    if kill -0 "$pid" 2>/dev/null; then
+        alive=1
+    fi
+
+    # Check 2: stderr has a Python traceback?
+    local traceback=0
+    if grep -q "Traceback (most recent call last)" "$app_dir/stderr.log" 2>/dev/null; then
+        traceback=1
+    fi
+
+    # Check 3: screenshot non-trivial?
+    local screenshot_ok=0
+    if [[ $SCREENSHOT_OK -eq 1 ]] && [[ $alive -eq 1 ]]; then
+        if grim "$app_dir/screenshot.png" 2>>"$app_dir/stderr.log"; then
+            # Screenshot is considered "ok" if it's larger than 10KB
+            # (empty/all-black PNGs compress tiny).
+            local size
+            size=$(stat -c '%s' "$app_dir/screenshot.png" 2>/dev/null || echo 0)
+            [[ $size -gt 10000 ]] && screenshot_ok=1
+        fi
+    fi
+
+    # Kill the app (graceful first, then hard)
+    if [[ $alive -eq 1 ]]; then
+        kill -TERM "$pid" 2>/dev/null
+        sleep 0.5
+        kill -KILL "$pid" 2>/dev/null
+    fi
+    # Kill any orphaned children
+    pkill -KILL -P "$pid" 2>/dev/null || true
+
+    # Verdict
+    local verdict="PASS"
+    local reasons=()
+    if [[ $alive -eq 0 ]]; then
+        verdict="FAIL"
+        reasons+=("process died before dwell")
+    fi
+    if [[ $traceback -eq 1 ]]; then
+        verdict="FAIL"
+        reasons+=("python traceback in stderr")
+    fi
+    if [[ $SCREENSHOT_OK -eq 1 ]] && [[ $screenshot_ok -eq 0 ]] && [[ $alive -eq 1 ]]; then
+        verdict="FAIL"
+        reasons+=("screenshot blank/tiny")
+    fi
+
+    if [[ "$verdict" == "PASS" ]]; then
+        echo "✓ PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "✗ FAIL (${reasons[*]})"
+        FAIL=$((FAIL + 1))
+        FAILED_APPS+=("$name")
+        # Drop the last 20 stderr lines into the report for quick diagnosis
+        tail -n 20 "$app_dir/stderr.log" > "$app_dir/stderr-tail.txt" 2>/dev/null
+    fi
+
+    # Record verdict
+    cat > "$app_dir/verdict.txt" <<EOF
+name: $name
+command: $cmd
+alive_after_dwell: $alive
+python_traceback: $traceback
+screenshot_ok: $screenshot_ok
+verdict: $verdict
+reasons: ${reasons[*]}
+EOF
+}
+
+# ── run ──────────────────────────────────────────────────────────────
+
+for entry in "${APPS[@]}"; do
+    name="${entry%%|*}"
+    cmd="${entry#*|}"
+    if [[ -n "$TARGET_APP" ]] && [[ "$name" != "$TARGET_APP" ]]; then
+        continue
+    fi
+    smoke_one "$name" "$cmd"
+done
+
+# ── summary ──────────────────────────────────────────────────────────
+
+TOTAL=$((PASS + FAIL))
+echo
+echo "gp-smoke-test: $PASS/$TOTAL passed"
+if [[ $FAIL -gt 0 ]]; then
+    echo "  failed apps:"
+    for a in "${FAILED_APPS[@]}"; do
+        echo "    - $a"
+    done
+fi
+
+# Write aggregate report
+cat > "$REPORT/summary.txt" <<EOF
+GhostPort OS Smoke Test Summary
+================================
+Run:       $TS
+Dwell:     ${DWELL}s
+Total:     $TOTAL
+Passed:    $PASS
+Failed:    $FAIL
+Screenshots: $([ $SCREENSHOT_OK -eq 1 ] && echo "enabled" || echo "disabled (no WAYLAND_DISPLAY or grim)")
+
+Failed apps:
+$(for a in "${FAILED_APPS[@]}"; do echo "  - $a"; done)
+EOF
+
+# Keep report if there were failures, regardless of --keep
+if [[ $FAIL -gt 0 ]]; then
+    KEEP_REPORT=1
+    echo "  report: $REPORT"
+fi
+
+[[ $FAIL -eq 0 ]] && exit 0 || exit 1

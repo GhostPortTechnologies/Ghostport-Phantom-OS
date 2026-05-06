@@ -2,7 +2,7 @@
 # GhostPort Git Sync — syncs live files to repo and commits
 set -uo pipefail
 
-REPO="/opt/phantom"
+REPO="/opt/ghostport"
 PUSH=false
 MSG=""
 
@@ -36,6 +36,16 @@ cp /usr/local/bin/gp-safe-edit "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-noise "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-security-loop "$REPO/scripts/" 2>/dev/null || true
 cp /usr/local/bin/gp-commit "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-ssl-inspect "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-blog-pipeline "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-blog-generate "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-blog-deploy "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-bridge "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-new "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-desktop-watchdog "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-notify-daemon "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-privacy-report "$REPO/scripts/" 2>/dev/null || true
+cp /usr/local/bin/gp-first-boot "$REPO/scripts/" 2>/dev/null || true
 
 # nftables
 cp /etc/gpmodes/*.nft "$REPO/etc/gpmodes/" 2>/dev/null || true
@@ -57,7 +67,7 @@ fi
 # Generate commit message from diff
 if [ -z "$MSG" ]; then
   CHANGED=$(git diff --name-only; git ls-files --others --exclude-standard)
-  COUNT=$(echo "$CHANGED" | wc -l)
+  COUNT=$(printf "%s" "$CHANGED" | grep -c . 2>/dev/null || echo 0)
   MSG="[auto] sync $COUNT files from live system ($(date +%Y-%m-%d))"
 fi
 

@@ -17,7 +17,7 @@ import secrets
 import urllib.request
 import urllib.error
 
-CONFIG_FILE = "/etc/phantom/fleet-auth.json"
+CONFIG_FILE = "/etc/ghostport/fleet-auth.json"
 
 def load_config():
     with open(CONFIG_FILE) as f:
@@ -51,7 +51,7 @@ def verify_message(secret, msg):
 def send_message(config, msg_type, body):
     secret = get_bridge_secret(config)
     server = config.get("fleet_server", "http://10.66.66.1:8080")
-    token = config.get("bridge_token", "MISSING_BRIDGE_TOKEN")
+    token = config.get("bridge_token", "")
     timestamp = int(time.time())
     nonce = secrets.token_hex(16)
     signature = sign_message(secret, "pi", "server", msg_type, body, timestamp)
@@ -86,7 +86,7 @@ def send_message(config, msg_type, body):
 def read_messages(config):
     secret = get_bridge_secret(config)
     server = config.get("fleet_server", "http://10.66.66.1:8080")
-    token = config.get("bridge_token", "MISSING_BRIDGE_TOKEN")
+    token = config.get("bridge_token", "")
 
     req = urllib.request.Request(
         f"{server}/messages?for=pi",
@@ -106,7 +106,7 @@ def read_messages(config):
 
 def ack_message(config, msg_id):
     server = config.get("fleet_server", "http://10.66.66.1:8080")
-    token = config.get("bridge_token", "MISSING_BRIDGE_TOKEN")
+    token = config.get("bridge_token", "")
 
     payload = json.dumps({"ids": [msg_id]}).encode()
     req = urllib.request.Request(
@@ -126,7 +126,7 @@ def ack_message(config, msg_id):
 
 def ack_all(config):
     server = config.get("fleet_server", "http://10.66.66.1:8080")
-    token = config.get("bridge_token", "MISSING_BRIDGE_TOKEN")
+    token = config.get("bridge_token", "")
 
     # First get all messages
     req = urllib.request.Request(

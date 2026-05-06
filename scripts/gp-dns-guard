@@ -26,7 +26,7 @@ guard_mode_switch() {
   return 0
 }
 TAG="gp-dns-guard"
-MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
 DNSMASQ_CONF="/etc/dnsmasq.d/10-ghostport-core.conf"
 PIHOLE_CONF="/etc/pihole/pihole.toml"
 FIXES=0

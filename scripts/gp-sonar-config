@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# gp-sonar-config — atomic config writer for /etc/ghostport/sonar.json
+#
+# T-0059 — adds the probe_capture three-tier setting alongside the existing
+# monitor_radio key. Designed for sudo-NOPASSWD invocation by the Sonar UI;
+# input is whitelisted to known keys + values so a compromised UI process
+# can't write arbitrary content into a root-owned config file.
+#
+# Usage:
+#   gp-sonar-config get <key>
+#   gp-sonar-config set <key> <value>
+#
+# Allowed keys + values:
+#   monitor_radio  : off | auto | wlan<N>
+#   probe_capture  : off | mac-only | full
+#
+# On set: also restarts ghostport-sonar-sniffer.service so the new mode
+# takes effect immediately. The restart is best-effort — the script always
+# exits 0 on a successful write even if the service is masked / inactive.
+
+set -euo pipefail
+
+CONFIG_FILE="/etc/ghostport/sonar.json"
+TMP_FILE="${CONFIG_FILE}.tmp.$$"
+
+usage() {
+  echo "usage: $(basename "$0") get <key>" >&2
+  echo "       $(basename "$0") set <key> <value>" >&2
+  exit 2
+}
+
+[ "$#" -ge 2 ] || usage
+op="$1"; shift
+
+# Whitelist validators — every accepted key has an explicit value matcher.
+# An unrecognized key is rejected, not silently written, so a future-malformed
+# call site can't introduce typos that the sniffer ignores.
+validate_value() {
+  local key="$1" val="$2"
+  case "$key" in
+    monitor_radio)
+      [[ "$val" == "off" || "$val" == "auto" || "$val" =~ ^wlan[0-9]+$ ]] || return 1
+      ;;
+    probe_capture)
+      [[ "$val" == "off" || "$val" == "mac-only" || "$val" == "full" ]] || return 1
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+  return 0
+}
+
+read_json() {
+  if [ -f "$CONFIG_FILE" ]; then
+    cat "$CONFIG_FILE"
+  else
+    echo '{}'
+  fi
+}
+
+case "$op" in
+  get)
+    [ "$#" -eq 1 ] || usage
+    key="$1"
+    case "$key" in
+      monitor_radio|probe_capture) ;;
+      *) echo "unknown key: $key" >&2; exit 2 ;;
+    esac
+    read_json | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    data = {}
+print(data.get('$key', ''))
+"
+    ;;
+
+  set)
+    [ "$#" -eq 2 ] || usage
+    key="$1"; val="$2"
+    if ! validate_value "$key" "$val"; then
+      echo "rejected: key=$key value=$val (whitelist mismatch)" >&2
+      exit 2
+    fi
+    # Build new JSON via Python (preserves other keys, validates JSON parses
+    # before write — never overwrite a valid file with a corrupt one).
+    new_json=$(read_json | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    if not isinstance(data, dict):
+        data = {}
+except Exception:
+    data = {}
+data['$key'] = '$val'
+print(json.dumps(data, indent=2))
+")
+    if [ -z "$new_json" ]; then
+      echo "internal: failed to build new JSON" >&2
+      exit 1
+    fi
+    umask 022
+    printf '%s\n' "$new_json" > "$TMP_FILE"
+    chmod 644 "$TMP_FILE"
+    chown root:root "$TMP_FILE" 2>/dev/null || true
+    mv -f "$TMP_FILE" "$CONFIG_FILE"
+    # Restart sniffer so the new mode takes effect. Best-effort — if the unit
+    # is disabled, the next boot picks up the new config anyway.
+    systemctl restart ghostport-sonar-sniffer.service 2>/dev/null || true
+    echo "set $key=$val"
+    ;;
+
+  *)
+    usage
+    ;;
+esac

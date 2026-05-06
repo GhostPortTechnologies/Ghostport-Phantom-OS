@@ -9,11 +9,14 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
-PROVISION_FILE="/etc/phantom/provision.json"
+if [ -r /usr/local/lib/gp-theme-colors.sh ]; then
+    # shellcheck disable=SC1091
+    source /usr/local/lib/gp-theme-colors.sh
+    RED="$DANGER"; GREEN="$SUCCESS"; YELLOW="$WARNING"; NC="$RESET"
+else
+    RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+fi
+PROVISION_FILE="/etc/ghostport/provision.json"
 
 log() { echo -e "${GREEN}[PROVISION]${NC} $1"; }
 warn() { echo -e "${YELLOW}[PROVISION]${NC} $1"; }
@@ -60,8 +63,8 @@ WARNINGS=()
 
 # Step 1: Deploy latest code
 log "Step 1/6: Deploying latest code..."
-if [ -f /opt/phantom/scripts/gp-deploy ]; then
-  bash /opt/phantom/scripts/gp-deploy --update 2>&1 | tail -5
+if [ -f /opt/ghostport/scripts/gp-deploy ]; then
+  bash /opt/ghostport/scripts/gp-deploy --update 2>&1 | tail -5
 else
   warn "gp-deploy not found — skipping code deploy"
   WARNINGS+=("gp-deploy not found")
@@ -88,15 +91,15 @@ log "Tailscale enrolled as $HOSTNAME_BASE"
 
 # Step 4: Write fleet-auth.json (provisioning token for first activation)
 log "Step 4/6: Writing fleet provisioning config..."
-mkdir -p /etc/phantom
+mkdir -p /etc/ghostport
 if [ -n "$FLEET_TOKEN" ]; then
   python3 -c "
 import json
 conf = {'fleet_token': '$FLEET_TOKEN', 'fleet_server': '$FLEET_SERVER', 'license_key': '$LICENSE_KEY'}
-with open('/etc/phantom/fleet-auth.json', 'w') as f:
+with open('/etc/ghostport/fleet-auth.json', 'w') as f:
     json.dump(conf, f, indent=2)
 "
-  chmod 600 /etc/phantom/fleet-auth.json
+  chmod 600 /etc/ghostport/fleet-auth.json
   log "Fleet auth written"
 else
   warn "No --fleet-token provided — device will need manual fleet registration"
@@ -105,14 +108,14 @@ fi
 
 # Step 5: Write initial version.json
 log "Step 5/6: Writing version info..."
-CURRENT_VERSION=$(python3 -c "import json; print(json.load(open('/etc/phantom/version.json'))['version'])" 2>/dev/null || echo "0.1.0")
+CURRENT_VERSION=$(python3 -c "import json; print(json.load(open('/etc/ghostport/version.json'))['version'])" 2>/dev/null || echo "0.1.0")
 python3 -c "
 import json, datetime
 v = {'version': '$CURRENT_VERSION', 'buildDate': datetime.datetime.utcnow().isoformat() + 'Z', 'updateAvailable': None}
-with open('/etc/phantom/version.json', 'w') as f:
+with open('/etc/ghostport/version.json', 'w') as f:
     json.dump(v, f, indent=2)
 "
-chmod 600 /etc/phantom/version.json
+chmod 600 /etc/ghostport/version.json
 
 # Step 6: Verify services
 log "Step 6/6: Running connectivity smoke test..."
@@ -157,21 +160,28 @@ else
   ERRORS+=("nftables not loaded")
 fi
 
-# Write provision report
+# Write provision report (safe: passes values via env vars, not interpolation)
+PROV_STATUS="$( [ ${#ERRORS[@]} -eq 0 ] && echo "pass" || echo "fail" )"
+PROV_ERRORS="$(printf '%s\n' "${ERRORS[@]}" 2>/dev/null || true)"
+PROV_WARNINGS="$(printf '%s\n' "${WARNINGS[@]}" 2>/dev/null || true)"
+PROV_TS_IP="$(tailscale ip -4 2>/dev/null || echo "unknown")"
+GP_SERIAL="$SERIAL" GP_HOSTNAME="$HOSTNAME_BASE" GP_LICENSE="$LICENSE_KEY" \
+GP_TS_IP="$PROV_TS_IP" GP_VERSION="$CURRENT_VERSION" GP_STATUS="$PROV_STATUS" \
+GP_ERRORS="$PROV_ERRORS" GP_WARNINGS="$PROV_WARNINGS" GP_OUTFILE="$PROVISION_FILE" \
 python3 -c "
-import json, datetime
+import json, datetime, os
 report = {
-  'serial': '$SERIAL',
-  'hostname': '$HOSTNAME_BASE',
-  'license_key': '$LICENSE_KEY',
-  'tailscale_ip': '$(tailscale ip -4 2>/dev/null || echo "unknown")',
+  'serial': os.environ['GP_SERIAL'],
+  'hostname': os.environ['GP_HOSTNAME'],
+  'license_key': os.environ['GP_LICENSE'],
+  'tailscale_ip': os.environ['GP_TS_IP'],
   'provisioned_at': datetime.datetime.utcnow().isoformat() + 'Z',
-  'version': '$CURRENT_VERSION',
-  'errors': $(python3 -c "import json; print(json.dumps([$(printf '"%s",' "${ERRORS[@]}" 2>/dev/null || echo "")]))" 2>/dev/null || echo '[]'),
-  'warnings': $(python3 -c "import json; print(json.dumps([$(printf '"%s",' "${WARNINGS[@]}" 2>/dev/null || echo "")]))" 2>/dev/null || echo '[]'),
-  'status': '$( [ ${#ERRORS[@]} -eq 0 ] && echo "pass" || echo "fail" )'
+  'version': os.environ['GP_VERSION'],
+  'errors': [e for e in os.environ.get('GP_ERRORS','').split(chr(10)) if e],
+  'warnings': [w for w in os.environ.get('GP_WARNINGS','').split(chr(10)) if w],
+  'status': os.environ['GP_STATUS']
 }
-with open('$PROVISION_FILE', 'w') as f:
+with open(os.environ['GP_OUTFILE'], 'w') as f:
     json.dump(report, f, indent=2)
 "
 chmod 600 "$PROVISION_FILE"

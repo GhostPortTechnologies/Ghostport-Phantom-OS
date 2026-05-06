@@ -2,15 +2,18 @@
 # gp-clients — Show connected clients on GhostPort WiFi AP
 set -uo pipefail
 
-# Colors
-G='\033[38;2;57;255;143m'  # GhostPort green
-R='\033[38;2;255;80;80m'   # Red
-Y='\033[38;2;255;200;60m'  # Yellow
-D='\033[38;2;100;100;100m' # Dim gray
-B='\033[1m'                # Bold
-RST='\033[0m'
+# Theme colors
+if [[ -f /usr/local/lib/gp-theme-colors.sh ]]; then
+    source /usr/local/lib/gp-theme-colors.sh
+fi
 
-LEASES="/var/lib/misc/dnsmasq.leases"
+G="$AC"
+R="$DANGER"
+Y="$WARNING"
+D="$TEXT_DIM"
+B="$BOLD"
+RST="$RESET"
+
 WIDTH=58
 
 draw_box_top()  { echo -e "${G}╔$(printf '═%.0s' $(seq 1 $WIDTH))╗${RST}"; }
@@ -53,7 +56,7 @@ gather_clients() {
         local sort_key
         sort_key=$(printf "%d%03d" "$online" "$last_octet")
         CLIENT_DATA+=("${sort_key}|${online}|${name}|${ip}|${mac}|${remaining}")
-    done < "$LEASES"
+    done < <(sudo -n gp-leases 2>/dev/null)
 
     if [ ${#CLIENT_DATA[@]} -gt 0 ]; then
         IFS=$'\n' CLIENT_DATA=($(printf '%s\n' "${CLIENT_DATA[@]}" | sort -t'|' -k1 -rn)); unset IFS
@@ -61,7 +64,7 @@ gather_clients() {
 }
 
 render() {
-    local mode; mode=$(cat /etc/phantom/current-mode 2>/dev/null || echo "unknown")
+    local mode; mode=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "unknown")
     local count=${#CLIENT_DATA[@]}
     local online_count=0 stale_count=0 rand_count=0
 
@@ -117,7 +120,7 @@ render() {
 }
 
 json_output() {
-    local mode; mode=$(cat /etc/phantom/current-mode 2>/dev/null || echo "unknown")
+    local mode; mode=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "unknown")
     echo "{"
     echo "  \"mode\": \"$mode\","
     echo "  \"timestamp\": \"$(date -Is)\","
@@ -129,10 +132,11 @@ json_output() {
         local status="stale"; [ "$is_online" = "1" ] && status="online"
         $first || echo ","
         first=false
-        # Escape special JSON characters in hostname (handles newlines, tabs, control chars)
-        name=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1])[1:-1])" "$name" 2>/dev/null || echo "$name")
-        printf '    {"hostname":"%s","ip":"%s","mac":"%s","status":"%s","randomized":%s,"lease_remaining":%d}' \
-            "$name" "$ip" "$mac" "$status" "$rand" "$remaining"
+        # Escape hostname for safe JSON output
+        local safe_name
+        safe_name=$(printf '%s' "$name" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()),end="")' 2>/dev/null || printf '"%s"' "$name")
+        printf '    {"hostname":%s,"ip":"%s","mac":"%s","status":"%s","randomized":%s,"lease_remaining":%d}' \
+            "$safe_name" "$ip" "$mac" "$status" "$rand" "$remaining"
     done
     echo ""
     echo "  ]"

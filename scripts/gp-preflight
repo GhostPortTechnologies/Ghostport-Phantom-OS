@@ -1,5 +1,5 @@
 #!/bin/bash
-# Phantom OS Pre-Flight Health Check
+# GhostPort OS Pre-Flight Health Check
 # Returns exit 0 (healthy) or 1 (unhealthy) with JSON output
 # Usage: gp-preflight [--quiet] [--json]
 
@@ -19,7 +19,7 @@ done
 # Detect WAN interface: wlan0 if WiFi WAN configured, else eth0
 wan_if() {
   local wtype
-  wtype=$(jq -r ".type // \"ethernet\"" /etc/phantom/wan.json 2>/dev/null)
+  wtype=$(jq -r ".type // \"ethernet\"" /etc/ghostport/wan.json 2>/dev/null)
   if [[ "$wtype" == "wireless" ]]; then echo "wlan1"; else echo "eth0"; fi
 }
 WAN_IF=$(wan_if)
@@ -89,7 +89,7 @@ check "dhcp-leases" \
 
 # --- Mode Consistency ---
 check "mode-consistency" \
-    "test -f /etc/phantom/current-mode && cat /etc/phantom/current-mode"
+    "test -f /etc/ghostport/current-mode && cat /etc/ghostport/current-mode"
 
 # --- nftables ---
 check "nftables-loaded" \
@@ -105,7 +105,7 @@ check "wan-interface" \
     "false"
 
 # --- WireGuard (only check if in tunnel mode) ---
-CURRENT_MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+CURRENT_MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
 if [ "$CURRENT_MODE" = "doublehop" ] || [ "$CURRENT_MODE" = "zhop" ]; then
     check "wg0-control" \
         "ip link show wg0 2>/dev/null | grep -q 'state UNKNOWN' && echo up"
@@ -150,6 +150,6 @@ elif [ "$QUIET" = "false" ]; then
 fi
 
 # Write state file
-echo "$JSON" > /etc/phantom/preflight-state.json 2>/dev/null || true
+echo "$JSON" > /etc/ghostport/preflight-state.json 2>/dev/null || true
 
 exit $FAILURES

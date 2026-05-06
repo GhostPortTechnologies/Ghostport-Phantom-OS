@@ -1,0 +1,13 @@
+[Unit]
+Description=GhostPort Desktop Watchdog
+After=lightdm.service
+Wants=lightdm.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/gp-desktop-watchdog
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

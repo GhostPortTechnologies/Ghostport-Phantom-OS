@@ -1,0 +1,21 @@
+[Unit]
+Description=GhostPort Correlator — cross-app event-bus correlation engine
+After=network-online.target ghostport.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+Group=ghostport-admin
+ExecStart=/usr/bin/python3 /opt/ghostport/desktop/gp-correlator
+Restart=on-failure
+RestartSec=10
+MemoryMax=64M
+Nice=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ghostport-correlator
+
+[Install]
+WantedBy=multi-user.target

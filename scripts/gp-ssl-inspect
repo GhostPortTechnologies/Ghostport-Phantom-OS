@@ -9,22 +9,9 @@ NFT_CHAIN="sni_redirect"
 LISTEN_PORT=8443
 PID_FILE="/run/ghostport-sni.pid"
 SERVICE="ghostport-sni"
-STATE_FILE="/etc/phantom/sni-devices.json"
+STATE_FILE="/etc/ghostport/sni-devices.json"
 
 log() { echo "[gp-ssl-inspect] $*"; }
-
-# Validate IP is 192.168.50.1-254 (strict octet check)
-validate_ip() {
-    local ip="$1"
-    if ! [[ "$ip" =~ ^192\.168\.50\.([0-9]{1,3})$ ]]; then
-        return 1
-    fi
-    local octet="${BASH_REMATCH[1]}"
-    if [ "$octet" -lt 1 ] || [ "$octet" -gt 254 ]; then
-        return 1
-    fi
-    return 0
-}
 
 ensure_nft_table() {
     nft add table $NFT_TABLE 2>/dev/null || true
@@ -58,14 +45,14 @@ status() {
 
 add_device() {
     local ip="$1"
-    if ! validate_ip "$ip"; then
-        log "ERROR: Invalid IP — must be 192.168.50.1-254"
+    if ! [[ "$ip" =~ ^192\.168\.50\.[0-9]{1,3}$ ]]; then
+        log "ERROR: Invalid IP — must be 192.168.50.x"
         return 1
     fi
 
     ensure_nft_table
 
-    if nft list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null | grep -q "sni_inspect_${ip}\""; then
+    if nft list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null | grep -q "ip saddr $ip"; then
         log "Rule already exists for $ip"
         return 0
     fi
@@ -80,14 +67,9 @@ add_device() {
 
 remove_device() {
     local ip="$1"
-    if ! validate_ip "$ip"; then
-        log "ERROR: Invalid IP"
-        return 1
-    fi
-
     local handle
     handle=$(nft -a list chain $NFT_TABLE $NFT_CHAIN 2>/dev/null \
-        | grep "sni_inspect_${ip}\"" \
+        | grep "sni_inspect_${ip}" \
         | awk '{print $NF}' | tail -1)
 
     if [ -n "$handle" ]; then
@@ -110,16 +92,15 @@ restore() {
         return 0
     fi
     ensure_nft_table
-    # Safe: pass file path as argument, not interpolated into code
     local devices
     devices=$(python3 -c "
 import json, sys
 try:
-    d = json.load(open(sys.argv[1]))
+    d = json.load(open('$STATE_FILE'))
     for ip in d.get('devices', []):
         print(ip)
 except: pass
-" "$STATE_FILE" 2>/dev/null)
+" 2>/dev/null)
 
     for ip in $devices; do
         add_device "$ip" 2>/dev/null || true
@@ -128,30 +109,29 @@ except: pass
 
 _save_device() {
     local ip="$1"
-    # Safe: pass IP and file path as arguments, not interpolated into code
     python3 -c "
-import json, sys
-ip, f = sys.argv[1], sys.argv[2]
+import json
+f = '$STATE_FILE'
 try:
     d = json.load(open(f))
 except: d = {'devices': []}
-if ip not in d['devices']:
-    d['devices'].append(ip)
+if '$ip' not in d['devices']:
+    d['devices'].append('$ip')
 json.dump(d, open(f, 'w'))
-" "$ip" "$STATE_FILE" 2>/dev/null || true
+" 2>/dev/null || true
 }
 
 _unsave_device() {
     local ip="$1"
     python3 -c "
-import json, sys
-ip, f = sys.argv[1], sys.argv[2]
+import json
+f = '$STATE_FILE'
 try:
     d = json.load(open(f))
 except: d = {'devices': []}
-d['devices'] = [x for x in d['devices'] if x != ip]
+d['devices'] = [x for x in d['devices'] if x != '$ip']
 json.dump(d, open(f, 'w'))
-" "$ip" "$STATE_FILE" 2>/dev/null || true
+" 2>/dev/null || true
 }
 
 case "${1:-}" in

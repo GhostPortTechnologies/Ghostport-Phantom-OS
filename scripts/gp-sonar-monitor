@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""gp-sonar-monitor — manage Sonar's monitor-mode adapter (T-0028 Phase A).
+
+Phase A scope: detect, configure, and bring up/down a USB monitor-mode adapter.
+Phase B (live deauth/EAPOL/PMKID sniffing via Scapy) is not yet shipped — the
+'sniff' subcommand prints what's missing instead of pretending to work.
+
+Usage:
+    gp-sonar-monitor --help
+    gp-sonar-monitor status
+    gp-sonar-monitor list
+    gp-sonar-monitor auto
+    gp-sonar-monitor pin <wlanX|phyN>
+    gp-sonar-monitor off
+    gp-sonar-monitor sniff           # Phase B placeholder
+"""
+import json
+import os
+import sys
+
+# --help guard BEFORE any heavier work (per OPERATOR-SOP rule #6).
+if "--help" in sys.argv or "-h" in sys.argv or len(sys.argv) < 2:
+    print(__doc__)
+    sys.exit(0)
+
+sys.path.insert(0, "/opt/ghostport/desktop")
+import gp_sonar_monitor as gsm  # noqa: E402
+
+CMD = sys.argv[1]
+
+
+def _write_config(monitor_radio):
+    """Persist /etc/ghostport/sonar.json atomically. Requires root."""
+    cfg = {}
+    if os.path.exists(gsm.CONFIG_FILE):
+        try:
+            with open(gsm.CONFIG_FILE) as f:
+                cfg = json.load(f)
+                if not isinstance(cfg, dict):
+                    cfg = {}
+        except (json.JSONDecodeError, OSError):
+            cfg = {}
+    cfg["monitor_radio"] = monitor_radio
+    tmp = gsm.CONFIG_FILE + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, gsm.CONFIG_FILE)
+    except OSError as e:
+        print(f"ERROR: cannot write {gsm.CONFIG_FILE}: {e}", file=sys.stderr)
+        print("Hint: run with sudo, or pre-create the file with mode 0644 owned by ghostport-admin.",
+              file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_status():
+    snap = gsm.status_summary()
+    print(f"config:           {snap['config_file']}")
+    print(f"monitor_radio:    {snap['monitor_radio']}")
+    print()
+    print("Inventory:")
+    if not snap["inventory"]:
+        print("  (no 802.11 phys present)")
+    else:
+        for entry in snap["inventory"]:
+            ifaces = ", ".join(f"{i['name']}({i['type']})" for i in entry["interfaces"]) or "(no interfaces)"
+            mon = "monitor-capable" if entry["supports_monitor"] else "no monitor support"
+            ap = ", hosts AP" if entry["hosts_ap"] else ""
+            print(f"  {entry['phy']:8s} {mon}{ap}")
+            print(f"           interfaces: {ifaces}")
+    print()
+    sel = snap["selection"]
+    if sel["phy"]:
+        print(f"Selected:         {sel['phy']} ({sel['reason']})")
+    else:
+        print(f"Selected:         (none) — {sel['reason']}")
+
+
+def cmd_list():
+    inventory = gsm.find_monitor_capable_adapters()
+    if not inventory:
+        print("(no 802.11 phys present)")
+        return
+    for entry in inventory:
+        if entry["supports_monitor"] and not entry["hosts_ap"]:
+            print(entry["phy"])
+
+
+def cmd_auto():
+    _write_config("auto")
+    sel = gsm.select_adapter("auto")
+    if not sel["phy"]:
+        print(f"Saved monitor_radio=auto. No adapter currently qualifies: {sel['reason']}")
+        print("Plug in a monitor-capable USB dongle (Atheros AR9271 / Realtek RTL8812AU /")
+        print("MediaTek MT76 chipset families work) and re-run 'gp-sonar-monitor status'.")
+        return
+    print(f"Saved monitor_radio=auto. Picked {sel['phy']} ({sel['reason']}).")
+    ok, msg = gsm.setup_monitor_mode(sel["phy"])
+    print(("OK: " if ok else "FAIL: ") + msg)
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_pin():
+    if len(sys.argv) < 3:
+        print("Usage: gp-sonar-monitor pin <wlanX|phyN>", file=sys.stderr)
+        sys.exit(2)
+    target = sys.argv[2]
+    sel = gsm.select_adapter(target)
+    if not sel["phy"]:
+        print(f"Cannot pin to {target!r}: {sel['reason']}", file=sys.stderr)
+        sys.exit(1)
+    _write_config(target)
+    print(f"Saved monitor_radio={target}. Resolved to {sel['phy']}.")
+    ok, msg = gsm.setup_monitor_mode(sel["phy"])
+    print(("OK: " if ok else "FAIL: ") + msg)
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_off():
+    _write_config("off")
+    gsm.teardown_monitor_mode()
+    print("Saved monitor_radio=off. mon0 (if present) torn down.")
+
+
+def cmd_sniff():
+    print("Sniff mode is Phase B (deferred) — not yet shipped.")
+    print()
+    print("Required to enable: install python3-scapy and ship gp-sonar-monitor-daemon")
+    print("with Dot11Deauth + EAPOL + Dot11Beacon handlers wired into the gp_events bus.")
+    print()
+    print("Track in: /opt/ghostport/data/ai-tickets.json — file a follow-up ticket once")
+    print("a monitor-capable USB adapter is on the test bench.")
+    sys.exit(2)
+
+
+HANDLERS = {
+    "status": cmd_status,
+    "list": cmd_list,
+    "auto": cmd_auto,
+    "pin": cmd_pin,
+    "off": cmd_off,
+    "sniff": cmd_sniff,
+}
+
+handler = HANDLERS.get(CMD)
+if not handler:
+    print(f"Unknown command: {CMD!r}", file=sys.stderr)
+    print(__doc__, file=sys.stderr)
+    sys.exit(2)
+handler()

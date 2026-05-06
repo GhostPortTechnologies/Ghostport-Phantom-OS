@@ -2,7 +2,7 @@
 # GhostPort Security Scan Loop — automated security validation
 set -uo pipefail
 
-RESULT_FILE="/etc/phantom/security-scan.json"
+RESULT_FILE="/etc/ghostport/security-scan.json"
 EXPECTED_PORTS="22 25 53 80 443 4200 4201 5053 8443 41641"
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ISSUES=0
@@ -35,7 +35,7 @@ if ! echo "$NFT_OUT" | grep -q "chain input"; then
 fi
 
 # 4. Mode-specific checks
-MODE=$(cat /etc/phantom/current-mode 2>/dev/null || echo "isp")
+MODE=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "isp")
 MODE_OK=true
 if [ "$MODE" = "doublehop" ] || [ "$MODE" = "zhop" ]; then
   if ! ip link show wg1 2>/dev/null | grep -q "UNKNOWN\|UP"; then

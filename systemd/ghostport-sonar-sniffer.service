@@ -1,0 +1,28 @@
+[Unit]
+Description=GhostPort Sonar Sniffer — live monitor-mode capture (Dot11Deauth + EAPOL + Beacon)
+Documentation=file:///opt/ghostport/docs/T-0048-sonar-sniffer.md
+After=network-online.target ghostport.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostport-admin
+Group=ghostport-admin
+ExecStart=/usr/bin/python3 /opt/ghostport/desktop/gp_sonar_sniffer.py
+# CAP_NET_RAW for raw socket access (scapy sniff); CAP_NET_ADMIN to bring up
+# the monitor interface (iw operations done via sudo from gp_sonar_monitor).
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=15
+# Mitigate scapy's documented memory growth on long sessions.
+RuntimeMaxSec=3600
+MemoryMax=128M
+Nice=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ghostport-sonar-sniffer
+
+[Install]
+WantedBy=multi-user.target

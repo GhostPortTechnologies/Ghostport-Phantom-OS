@@ -1,0 +1,345 @@
+#!/bin/bash
+# shellcheck disable=SC2024
+# SC2024 (sudo + redirect): every redirect target in this script lives inside
+# $WORK (a user-owned mktemp dir) or another user-writable /tmp path. The
+# shell performs the redirect with the invoking user's permissions; sudo only
+# elevates the command reading from privileged sources. No root-owned
+# destination is written to, so the common SC2024 foot-gun doesn't apply.
+#
+# gp-diag — GhostPort OS diagnostic bundle generator.
+#
+# Collects logs, configs (redacted), service states, network state, and
+# hardware info into a single .tar.gz so a customer can email it to support
+# instead of getting an SSH session.
+#
+# Usage:
+#   gp-diag                    Create bundle in /tmp
+#   gp-diag --out PATH         Write to specified path
+#   gp-diag --encrypt KEY      Encrypt to gpg key (recipient ID or file path)
+#   gp-diag --quick            Skip slow steps (journals trimmed, no nft)
+#   gp-diag --help
+
+set -u
+umask 077  # bundle defaults to user-only readable
+
+# When invoked via sudo, resolve the real user's home so we capture the
+# desktop state from ~/.config/ghostport/ (dock.json, icon-positions.json,
+# widget-layout.json, etc.) instead of /root. Root mode otherwise silently
+# drops user-specific config from the bundle.
+REAL_USER="${SUDO_USER:-$USER}"
+REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+[[ -z "$REAL_HOME" ]] && REAL_HOME="$HOME"
+
+# ── flags ─────────────────────────────────────────────────────────────
+
+OUT_DIR="/tmp"
+OUT_PATH=""
+ENCRYPT_KEY=""
+QUICK=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --out)     OUT_PATH="$2"; shift 2 ;;
+        --encrypt) ENCRYPT_KEY="$2"; shift 2 ;;
+        --quick)   QUICK=1; shift ;;
+        --help|-h) sed -n '2,11p' "$0" | sed 's|^# ||; s|^#||'; exit 0 ;;
+        *) echo "gp-diag: unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+TS="$(date +%Y%m%d-%H%M%S)"
+BUNDLE_NAME="gp-diag-${TS}"
+WORK="$(mktemp -d -t gp-diag-XXXXXX)"
+ROOT="${WORK}/${BUNDLE_NAME}"
+mkdir -p "$ROOT"/{system,network,ghostport,services,desktop,qa,hardware,desktop-logs}
+
+trap 'rm -rf "$WORK"' EXIT
+
+JOURNAL_LINES=1000
+DMESG_LINES=500
+[[ $QUICK -eq 1 ]] && JOURNAL_LINES=200 && DMESG_LINES=100
+
+# ── helpers ───────────────────────────────────────────────────────────
+
+# Run a command, capture stdout+stderr to a file, never fail the script.
+cap() {
+    local out="$1"; shift
+    "$@" >"$out" 2>&1 || echo "(command exited non-zero: $*)" >> "$out"
+}
+
+# Redact a JSON file: replace common secret-looking values with <REDACTED>.
+# Conservative: keys whose name suggests a secret get blanked; long base64/hex
+# strings that aren't keys still get included so log analysis stays useful.
+redact_json() {
+    local src="$1" dst="$2"
+    local input="$src" tmp=""
+    if [[ ! -r "$src" ]]; then
+        # Root-owned 600 configs: try sudo cat into a temp, feed that.
+        tmp="$(mktemp)"
+        if sudo -n cat "$src" > "$tmp" 2>/dev/null || sudo cat "$src" > "$tmp" 2>/dev/null; then
+            input="$tmp"
+        else
+            echo "(file not readable: $src)" > "$dst"
+            rm -f "$tmp"
+            return
+        fi
+    fi
+    # python is on every GhostPort install — use it for proper JSON redaction.
+    python3 - "$input" "$dst" <<'PY'
+import json, re, sys
+src, dst = sys.argv[1], sys.argv[2]
+SECRET_KEY_RE = re.compile(
+    r'(token|secret|password|passphrase|passcode|api[_-]?key|webhook|'
+    r'private[_-]?key|client[_-]?secret|signing[_-]?key|auth[_-]?code|'
+    r'session|cookie|bearer|salt|nonce|hash)',
+    re.IGNORECASE)
+def redact(obj):
+    if isinstance(obj, dict):
+        return {k: ("<REDACTED>" if SECRET_KEY_RE.search(k) and obj[k] else redact(v))
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [redact(x) for x in obj]
+    return obj
+try:
+    with open(src) as fh:
+        data = json.load(fh)
+    with open(dst, 'w') as fh:
+        json.dump(redact(data), fh, indent=2, sort_keys=True)
+except (OSError, json.JSONDecodeError) as e:
+    with open(dst, 'w') as fh:
+        fh.write(f"(redaction failed: {e})\n")
+PY
+    [[ -n "$tmp" ]] && rm -f "$tmp"
+}
+
+# Redact a text/conf file: blank lines matching common secret patterns.
+redact_text() {
+    local src="$1" dst="$2"
+    local input="$src" tmp=""
+    if [[ ! -r "$src" ]]; then
+        tmp="$(mktemp)"
+        if sudo -n cat "$src" > "$tmp" 2>/dev/null || sudo cat "$src" > "$tmp" 2>/dev/null; then
+            input="$tmp"
+        else
+            echo "(file not readable: $src)" > "$dst"
+            rm -f "$tmp"
+            return
+        fi
+    fi
+    sed -E '
+        s/(PrivateKey[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(PresharedKey[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(token[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(secret[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(password[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(api[_-]?key[[:space:]]*=[[:space:]]*).*/\1<REDACTED>/I
+        s/(DISCORD_[A-Z_]*=).*/\1<REDACTED>/
+        s/(STRIPE_[A-Z_]*=).*/\1<REDACTED>/
+        s/(sk_(live|test)_)[A-Za-z0-9]+/\1<REDACTED>/g
+        s/(pk_(live|test)_)[A-Za-z0-9]+/\1<REDACTED>/g
+    ' "$input" > "$dst"
+    [[ -n "$tmp" ]] && rm -f "$tmp"
+}
+
+# Mask MAC addresses in a file (PII reduction): keep OUI, mask host bits.
+mask_macs() {
+    local src="$1" dst="$2"
+    sed -E 's/([0-9a-fA-F]{2}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}):[0-9a-fA-F]{2}:[0-9a-fA-F]{2}:([0-9a-fA-F]{2})/\1:xx:xx:\2/g' \
+        "$src" > "$dst"
+}
+
+# ── manifest ──────────────────────────────────────────────────────────
+
+cat > "$ROOT/manifest.txt" <<EOF
+GhostPort OS Diagnostic Bundle
+==============================
+Generated:    $(date -Iseconds)
+Hostname:     $(hostname)
+OS:           $(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+Kernel:       $(uname -r)
+Architecture: $(uname -m)
+Bundle:       ${BUNDLE_NAME}
+Quick mode:   $([ $QUICK -eq 1 ] && echo "yes" || echo "no")
+
+Contents:
+  system/        — uname, uptime, mem, disk, dmesg, loadavg
+  network/       — interfaces, routes, wg, tailscale, nft, listening ports
+  ghostport/    — mode, version, redacted configs
+  services/     — systemctl status + last ${JOURNAL_LINES} journal lines per gp-* service
+  desktop/      — icon-positions, widget-layout, dock config, theme
+  desktop-logs/  — gp-icons, gp-dock, canvas pids
+  qa/            — gp-qa --summary if available
+  hardware/      — lspci, lsusb, iw, temp, USB serial
+
+Redactions applied:
+  - JSON keys matching secret patterns blanked
+  - WireGuard PrivateKey / PresharedKey lines blanked
+  - Stripe sk_/pk_ keys masked
+  - Discord/env tokens blanked
+  - MAC addresses partially masked (OUI preserved)
+  - WireGuard private key files NOT included (only public state)
+EOF
+
+# ── system ────────────────────────────────────────────────────────────
+
+cap "$ROOT/system/uname.txt"      uname -a
+cap "$ROOT/system/uptime.txt"     uptime
+cap "$ROOT/system/loadavg.txt"    cat /proc/loadavg
+cap "$ROOT/system/meminfo.txt"    free -h
+cap "$ROOT/system/df.txt"         df -h
+cap "$ROOT/system/ps.txt"         ps -ef --sort=-pcpu
+sudo dmesg 2>/dev/null | tail -n "$DMESG_LINES" > "$ROOT/system/dmesg-tail.txt" \
+    || echo "(dmesg unavailable)" > "$ROOT/system/dmesg-tail.txt"
+cap "$ROOT/system/version.txt"    cat /etc/os-release
+systemctl status --no-pager > "$ROOT/system/systemd-status.txt" 2>&1 || true
+cap "$ROOT/system/who.txt"        who
+
+# ── network ───────────────────────────────────────────────────────────
+
+cap "$ROOT/network/ip-addr.txt"      ip -brief addr
+cap "$ROOT/network/ip-route.txt"     ip route
+cap "$ROOT/network/ip-link.txt"      ip -brief link
+cap "$ROOT/network/ss-listening.txt" ss -tunlp
+sudo wg show > "$ROOT/network/wg-show.txt" 2>&1 || echo "(wg unavailable)" > "$ROOT/network/wg-show.txt"
+sudo tailscale status > "$ROOT/network/tailscale.txt" 2>&1 || echo "(tailscale unavailable)" > "$ROOT/network/tailscale.txt"
+cap "$ROOT/network/resolv-conf.txt"  cat /etc/resolv.conf
+
+if [[ $QUICK -eq 0 ]]; then
+    sudo nft list ruleset > "$ROOT/network/nft-ruleset.txt" 2>&1 \
+        || echo "(nft unavailable)" > "$ROOT/network/nft-ruleset.txt"
+fi
+
+# Mask MACs in interface lists
+mask_macs "$ROOT/network/ip-addr.txt" "$ROOT/network/ip-addr-masked.txt"
+mv "$ROOT/network/ip-addr-masked.txt" "$ROOT/network/ip-addr.txt"
+mask_macs "$ROOT/network/ip-link.txt" "$ROOT/network/ip-link-masked.txt"
+mv "$ROOT/network/ip-link-masked.txt" "$ROOT/network/ip-link.txt"
+
+# ── ghostport state ───────────────────────────────────────────────────
+
+sudo gp-mode status > "$ROOT/ghostport/mode-status.txt" 2>&1 \
+    || echo "(gp-mode unavailable)" > "$ROOT/ghostport/mode-status.txt"
+sudo gp-dns-switch status > "$ROOT/ghostport/dns-status.txt" 2>&1 \
+    || echo "(gp-dns-switch unavailable)" > "$ROOT/ghostport/dns-status.txt"
+sudo gp-wan status > "$ROOT/ghostport/wan-status.txt" 2>&1 \
+    || echo "(gp-wan unavailable)" > "$ROOT/ghostport/wan-status.txt"
+
+[[ -f /etc/ghostport/current-mode ]] && \
+    cp /etc/ghostport/current-mode "$ROOT/ghostport/current-mode.txt"
+[[ -f /etc/ghostport/version.json ]] && \
+    redact_json /etc/ghostport/version.json "$ROOT/ghostport/version.json"
+
+# Redact every JSON config in /etc/ghostport
+for f in /etc/ghostport/*.json; do
+    [[ -f "$f" ]] || continue
+    redact_json "$f" "$ROOT/ghostport/$(basename "$f")"
+done
+
+# Redact every .env / .conf
+for f in /etc/ghostport/*.env /etc/ghostport/*.conf; do
+    [[ -f "$f" ]] || continue
+    redact_text "$f" "$ROOT/ghostport/$(basename "$f").redacted"
+done
+
+# nftables profile filenames (just list, not contents — they're public templates)
+cap "$ROOT/ghostport/gpmodes-list.txt" ls -la /etc/gpmodes/
+
+# ── services ──────────────────────────────────────────────────────────
+
+GP_SERVICES=(
+    ghostport ghostport-boot ghostport-discord ghostport-sni
+    ghostport-reset ghostport-update ghostport-auto-update
+    ghostport-dns-guard ghostport-health-guard ghostport-cpu-watchdog
+    ghostport-desktop-watchdog ghostport-alerter ghostport-security-loop
+    ghostport-lookout
+)
+
+for svc in "${GP_SERVICES[@]}"; do
+    sudo systemctl status --no-pager -l "$svc" > "$ROOT/services/${svc}-status.txt" 2>&1 || true
+    sudo journalctl -u "$svc" --no-pager -n "$JOURNAL_LINES" > "$ROOT/services/${svc}-journal.log" 2>&1 || true
+done
+
+cap "$ROOT/services/timers.txt" systemctl list-timers 'ghostport*' --no-pager
+cap "$ROOT/services/failed.txt" systemctl --failed --no-pager
+cap "$ROOT/services/user-units.txt" \
+    systemctl --user list-units 'gp-*' --no-pager
+
+# ── desktop ───────────────────────────────────────────────────────────
+
+for f in icon-positions.json widget-layout.json dock.json theme.json; do
+    src="$REAL_HOME/.config/ghostport/$f"
+    [[ -f "$src" ]] && redact_json "$src" "$ROOT/desktop/$f"
+done
+[[ -f /etc/ghostport/theme.json ]] && \
+    redact_json /etc/ghostport/theme.json "$ROOT/desktop/system-theme.json"
+
+# Canvas + dock pids and recent stderr
+for pidf in /tmp/gp-desktop-icons.pid /tmp/gp-dock.pid /tmp/gp-widgets.pid; do
+    [[ -f "$pidf" ]] && cp "$pidf" "$ROOT/desktop-logs/$(basename "$pidf")"
+done
+
+# ── qa ────────────────────────────────────────────────────────────────
+
+if command -v gp-qa >/dev/null 2>&1; then
+    gp-qa --summary > "$ROOT/qa/gp-qa-summary.txt" 2>&1 || true
+fi
+
+# ── hardware ──────────────────────────────────────────────────────────
+
+cap "$ROOT/hardware/lspci.txt" lspci
+cap "$ROOT/hardware/lsusb.txt" lsusb
+sudo iw dev wlan0 info > "$ROOT/hardware/iw-info.txt" 2>&1 || echo "(iw unavailable)" > "$ROOT/hardware/iw-info.txt"
+sudo iw reg get > "$ROOT/hardware/iw-reg.txt" 2>&1 || echo "(iw unavailable)" > "$ROOT/hardware/iw-reg.txt"
+[[ -f /sys/class/thermal/thermal_zone0/temp ]] && \
+    awk '{printf "%.1f°C\n", $1/1000}' /sys/class/thermal/thermal_zone0/temp \
+    > "$ROOT/hardware/cpu-temp.txt"
+cap "$ROOT/hardware/lscpu.txt" lscpu
+cap "$ROOT/hardware/lsblk.txt" lsblk
+
+# ── pack ──────────────────────────────────────────────────────────────
+
+[[ -z "$OUT_PATH" ]] && OUT_PATH="${OUT_DIR}/${BUNDLE_NAME}.tar.gz"
+
+tar -czf "$OUT_PATH" -C "$WORK" "$BUNDLE_NAME"
+chmod 600 "$OUT_PATH"
+# Under `sudo gp-diag`, chown the output to the real user so they can
+# read/email their own bundle without a second sudo.
+if [[ -n "${SUDO_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+    chown "$REAL_USER:$REAL_USER" "$OUT_PATH" 2>/dev/null || true
+fi
+
+echo "gp-diag: bundle written to $OUT_PATH"
+echo "        size: $(du -h "$OUT_PATH" | cut -f1)"
+
+# ── encrypt ───────────────────────────────────────────────────────────
+
+if [[ -n "$ENCRYPT_KEY" ]]; then
+    if command -v gpg >/dev/null 2>&1; then
+        ENC_OUT="${OUT_PATH}.gpg"
+        if [[ -f "$ENCRYPT_KEY" ]]; then
+            gpg --yes --trust-model always --output "$ENC_OUT" \
+                --encrypt --recipient-file "$ENCRYPT_KEY" "$OUT_PATH"
+        else
+            gpg --yes --trust-model always --output "$ENC_OUT" \
+                --encrypt --recipient "$ENCRYPT_KEY" "$OUT_PATH"
+        fi
+        if [[ -f "$ENC_OUT" ]]; then
+            shred -u "$OUT_PATH" 2>/dev/null || rm -f "$OUT_PATH"
+            chmod 600 "$ENC_OUT"
+            if [[ -n "${SUDO_USER:-}" ]] && [[ "$(id -u)" -eq 0 ]]; then
+                chown "$REAL_USER:$REAL_USER" "$ENC_OUT" 2>/dev/null || true
+            fi
+            echo "        encrypted to: $ENC_OUT"
+        else
+            echo "gp-diag: encryption FAILED — plaintext bundle left at $OUT_PATH" >&2
+            exit 1
+        fi
+    else
+        echo "gp-diag: --encrypt requested but gpg not installed" >&2
+        exit 1
+    fi
+fi
+
+echo
+echo "Email this file to support@ghostporttechnologies.com"
+echo "or attach it in your support ticket. Contains no private keys."

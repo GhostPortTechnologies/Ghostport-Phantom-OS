@@ -2,13 +2,13 @@
 set -euo pipefail
 
 CMD="${1:-}"
-WAN_CONF="/etc/phantom/wan.json"
+WAN_CONF="/etc/ghostport/wan.json"
 COMMON_NFT="/etc/gpmodes/common.nft"
 HOSTAPD_CONF="/etc/hostapd/hostapd.conf"
 HOSTAPD_BACKUP="/etc/hostapd/hostapd.conf.pre-wan"
 WPA_CONF="/run/ghostport/gp-wlan1-wpa.conf"
 WPA_PID="/run/ghostport/gp-wlan1-wpa.pid"
-MODEFILE="/etc/phantom/current-mode"
+MODEFILE="/etc/ghostport/current-mode"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
@@ -137,7 +137,7 @@ do_scan() {
 
   local tmpfile
   tmpfile=$(mktemp /tmp/gp-scan.XXXXXX)
-  iw dev "$scan_if" scan 2>/dev/null > "$tmpfile" || true
+  timeout --kill-after=5 15 iw dev "$scan_if" scan 2>/dev/null > "$tmpfile" || true
 
   if [[ ! -s "$tmpfile" ]]; then
     rm -f "$tmpfile"
@@ -230,7 +230,7 @@ do_wireless() {
   # Step 1: Scan for the target network to find its channel/frequency
   echo "Scanning for upstream network..."
   local scan_output target_freq target_channel target_band
-  scan_output=$(iw dev wlan0 scan 2>/dev/null || true)
+  scan_output=$(timeout --kill-after=5 15 iw dev wlan0 scan 2>/dev/null || true)
 
   target_freq=$(GP_SSID="$ssid" python3 -c "
 import sys, os
@@ -393,7 +393,7 @@ case "$CMD" in
     mkdir -p /run/ghostport 2>/dev/null || true
     sudo python3 -c "
 import json, sys
-conf = '/etc/phantom/wan.json'
+conf = '/etc/ghostport/wan.json'
 try:
     data = json.load(open(conf))
 except:

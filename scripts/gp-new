@@ -1,15 +1,21 @@
 #!/bin/bash
-# gp-new — Generate a unique device passcode (requires GP-DA authentication)
-# Usage: sudo gp-new [--license-key=XXXX-XXXX-XXXX]
+# gp-new — Provision a new GhostPort device
+# Usage: sudo gp-new [--license-key=XXXX-XXXX-XXXX-XXXX] [--auto]
+#
+# --auto: Skip GP-DA setup, use default admin password (for factory provisioning)
+# --license-key: Register with fleet server using this Stripe license key
 
 set -euo pipefail
 
 LICENSE_KEY=""
-FLEET_SERVER="http://10.66.66.1:8080"
+AUTO_MODE=false
+FLEET_SERVER=$(python3 -c "import json;print(json.load(open('/etc/ghostport/fleet-auth.json')).get('fleet_server','http://10.66.66.1:8080'))" 2>/dev/null)
+FLEET_TOKEN=$(python3 -c "import json;print(json.load(open('/etc/ghostport/fleet-auth.json')).get('fleet_token',''))" 2>/dev/null)
 
 for arg in "$@"; do
   case "$arg" in
     --license-key=*) LICENSE_KEY="${arg#*=}" ;;
+    --auto) AUTO_MODE=true ;;
   esac
 done
 
@@ -18,8 +24,8 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-ADMIN_AUTH="/etc/phantom/admin-auth.json"
-AUTH_DIR="/etc/phantom"
+ADMIN_AUTH="/etc/ghostport/admin-auth.json"
+AUTH_DIR="/etc/ghostport"
 AUTH_FILE="${AUTH_DIR}/auth.json"
 PIHOLE_FILE="${AUTH_DIR}/pihole.json"
 
@@ -27,24 +33,35 @@ mkdir -p "$AUTH_DIR"
 
 # ── GP-DA Setup (first run) ──────────────────────────────
 if [ ! -f "$ADMIN_AUTH" ]; then
-  echo ""
-  echo "  ╔═══════════════════════════════════════════╗"
-  echo "  ║   GP-DA — Domain Admin Setup              ║"
-  echo "  ╚═══════════════════════════════════════════╝"
-  echo ""
-  read -s -p "  Create GP-DA password: " PASS1
-  echo ""
-  read -s -p "  Confirm password: " PASS2
-  echo ""
+  if [ "$AUTO_MODE" = true ]; then
+    # Auto mode: create GP-DA with a random password, print it
+    PASS1=$(node -e "
+      const crypto = require('crypto');
+      const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#';
+      let pw = '';
+      for (let i = 0; i < 20; i++) pw += chars[crypto.randomInt(chars.length)];
+      console.log(pw);
+    ")
+  else
+    echo ""
+    echo "  ╔═══════════════════════════════════════════╗"
+    echo "  ║   GP-DA — Domain Admin Setup              ║"
+    echo "  ╚═══════════════════════════════════════════╝"
+    echo ""
+    read -s -p "  Create GP-DA password: " PASS1
+    echo ""
+    read -s -p "  Confirm password: " PASS2
+    echo ""
 
-  if [ "$PASS1" != "$PASS2" ]; then
-    echo "  Passwords do not match."
-    exit 1
-  fi
+    if [ "$PASS1" != "$PASS2" ]; then
+      echo "  Passwords do not match."
+      exit 1
+    fi
 
-  if [ ${#PASS1} -lt 8 ]; then
-    echo "  Password must be at least 8 characters."
-    exit 1
+    if [ ${#PASS1} -lt 8 ]; then
+      echo "  Password must be at least 8 characters."
+      exit 1
+    fi
   fi
 
   node -e "
@@ -57,28 +74,32 @@ if [ ! -f "$ADMIN_AUTH" ]; then
     fs.chmodSync('${ADMIN_AUTH}', 0o600);
   " "$PASS1"
 
-  echo ""
-  echo "  GP-DA account created. Run sudo gp-new again to generate a device passcode."
-  echo ""
-  exit 0
+  if [ "$AUTO_MODE" = false ]; then
+    echo ""
+    echo "  GP-DA account created. Run sudo gp-new again to generate a device passcode."
+    echo ""
+    exit 0
+  fi
 fi
 
 # ── GP-DA Authentication ─────────────────────────────────
-echo ""
-read -s -p "  GP-DA Password: " INPUT_PASS
-echo ""
+if [ "$AUTO_MODE" = false ]; then
+  echo ""
+  read -s -p "  GP-DA Password: " INPUT_PASS
+  echo ""
 
-VALID=$(node -e "
-  const crypto = require('crypto');
-  const fs = require('fs');
-  const admin = JSON.parse(fs.readFileSync('${ADMIN_AUTH}', 'utf8'));
-  const hash = crypto.scryptSync(process.argv[1], admin.salt, 64).toString('hex');
-  console.log(hash === admin.hash ? 'yes' : 'no');
-" "$INPUT_PASS")
+  VALID=$(node -e "
+    const crypto = require('crypto');
+    const fs = require('fs');
+    const admin = JSON.parse(fs.readFileSync('${ADMIN_AUTH}', 'utf8'));
+    const hash = crypto.scryptSync(process.argv[1], admin.salt, 64).toString('hex');
+    console.log(hash === admin.hash ? 'yes' : 'no');
+  " "$INPUT_PASS")
 
-if [ "$VALID" != "yes" ]; then
-  echo "  Access denied."
-  exit 1
+  if [ "$VALID" != "yes" ]; then
+    echo "  Access denied."
+    exit 1
+  fi
 fi
 
 # ── Generate Device Passcode ─────────────────────────────
@@ -113,12 +134,10 @@ PIHOLE_PW=$(node -e "
   console.log(pw);
 ")
 
-# Set Pi-hole password and save it for the Command Deck
 pihole setpassword "$PIHOLE_PW" > /dev/null 2>&1 || true
-echo "{\"password\":\"$PIHOLE_PW\"}" > "$PIHOLE_FILE"
+jq -n --arg pw "$PIHOLE_PW" '{password: $pw}' > "$PIHOLE_FILE"
 chmod 600 "$PIHOLE_FILE"
 chown ghostport-admin:ghostport-admin "$PIHOLE_FILE"
-
 
 # ── Randomize WiFi password ─────────────────────────────
 WIFI_PW=$(node -e "
@@ -137,40 +156,33 @@ if [ -f "$HOSTAPD_CONF" ]; then
   systemctl restart hostapd 2>/dev/null || true
 fi
 
-
 # ── Fleet Registration ───────────────────────────────────
 FLEET_STATUS="not registered (no license key)"
 DEVICE_ID=""
 
 if [ -n "$LICENSE_KEY" ]; then
-  SERIAL=$(cat /proc/cpuinfo | grep Serial | awk '{print $3}')
+  SERIAL=$(awk '/^Serial/ {print $3}' /proc/cpuinfo)
   HOSTNAME=$(hostname)
 
   echo "  Registering with fleet server..."
 
-  # First activate the license key
-  ACTIVATE=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/activate"     -H "Content-Type: application/json"     -d "{\"license_key\":\"$LICENSE_KEY\",\"serial\":\"$SERIAL\"}" 2>/dev/null || echo '{"error":"unreachable"}')
-
-  # Check if activation returned a token or if we should register directly
-  REG_TOKEN=$(echo "$ACTIVATE" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.token||'')}catch{console.log('')}" 2>/dev/null)
-
-  if [ -n "$REG_TOKEN" ]; then
-    # Register with activation token
-    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer $REG_TOKEN"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
-  else
-    # Try direct registration with license key as auth
-    REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register"       -H "Authorization: Bearer MISSING_BRIDGE_TOKEN"       -H "Content-Type: application/json"       -d "{\"serial\":\"$SERIAL\",\"name\":\"$HOSTNAME\",\"firmware_version\":\"0.1.0\",\"hardware\":\"pi5\",\"license_key\":\"$LICENSE_KEY\"}" 2>/dev/null || echo '{"error":"failed"}')
-  fi
+  REG_BODY=$(jq -n --arg ser "$SERIAL" --arg name "$HOSTNAME" --arg lk "$LICENSE_KEY" \
+    '{serial: $ser, name: $name, firmware_version: "0.1.0", hardware: "pi5", license_key: $lk}')
+  REG=$(curl -s --max-time 15 -X POST "$FLEET_SERVER/fleet/devices/register" \
+    -H "Authorization: Bearer $FLEET_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$REG_BODY" 2>/dev/null || echo '{"error":"unreachable"}')
 
   DEVICE_ID=$(echo "$REG" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.device?.id||'')}catch{console.log('')}" 2>/dev/null)
 
   if [ -n "$DEVICE_ID" ]; then
-    # Save fleet config
-    echo "{\"device_id\":\"$DEVICE_ID\",\"serial\":\"$SERIAL\",\"license_key\":\"$LICENSE_KEY\",\"fleet_server\":\"$FLEET_SERVER\"}" > /etc/phantom/fleet.json
-    chmod 600 /etc/phantom/fleet.json
+    jq -n --arg did "$DEVICE_ID" --arg ser "$SERIAL" --arg lk "$LICENSE_KEY" --arg fs "$FLEET_SERVER" \
+      '{device_id: $did, serial: $ser, license_key: $lk, fleet_server: $fs}' > /etc/ghostport/fleet.json
+    chmod 600 /etc/ghostport/fleet.json
     FLEET_STATUS="registered (ID: $DEVICE_ID)"
   else
-    FLEET_STATUS="registration failed — check tunnel"
+    ERROR=$(echo "$REG" | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));console.log(d.error||'unknown')}catch{console.log('parse error')}" 2>/dev/null)
+    FLEET_STATUS="registration failed: $ERROR"
   fi
 fi
 
@@ -188,9 +200,10 @@ echo "  ║   SSID: GhostPort Router                  ║"
 echo "  ║   PASS: ${WIFI_PW}                ║"
 echo "  ╚═══════════════════════════════════════════╝"
 echo ""
+FLEET_LINE=$(printf "%-39s" "$FLEET_STATUS")
 echo "  ╔═══════════════════════════════════════════╗"
 echo "  ║   FLEET                                   ║"
-echo "  ║   ${FLEET_STATUS}"
+echo "  ║   ${FLEET_LINE}║"
 echo "  ╚═══════════════════════════════════════════╝"
 echo ""
 echo "  Device is ready to ship."

@@ -12,7 +12,7 @@ REMOTE_DIR="/var/www/blog"
 [[ -f "$BLOG_FILE" ]] || { echo "ERROR: Blog file not found: $BLOG_FILE" >&2; exit 1; }
 [[ -f "$SSH_KEY" ]] || { echo "ERROR: SSH key not found: $SSH_KEY" >&2; exit 1; }
 
-SSH_OPTS="-i $SSH_KEY -o ConnectTimeout=10 -o StrictHostKeyChecking=no"
+SSH_OPTS="-i $SSH_KEY -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
 
 # Check WireGuard tunnel
 if ! ip link show wg0 2>/dev/null | grep -q "UP"; then

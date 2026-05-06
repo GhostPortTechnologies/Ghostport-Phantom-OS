@@ -2,16 +2,9 @@ flush ruleset
 include "/etc/gpmodes/common.nft"
 
 table inet filter {
-    chain input {
-        type filter hook input priority 0; policy accept;
-        ct state established,related accept
-        iifname "lo" accept
-        iifname $LAN_IF accept
-        iifname $WAN_IF ct state established,related accept
-    }
-
     chain forward {
-        type filter hook forward priority 0; policy accept;
+        type filter hook forward priority 0; policy drop;
+        ct state invalid drop
         ct state established,related accept
         # Drop IPv6 forwarding — prevent bypass via IPv6 tunnels
         meta nfproto ipv6 counter drop
@@ -23,17 +16,33 @@ table inet filter {
         # Block known DoH servers by IP
         iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } tcp dport 443 drop
 
-
         # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
-        # which can be inspected and filtered by Pi-hole/DNS rules
         iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
         # Allow everything else
         iifname $LAN_IF oifname $WAN_IF accept
         iifname $WAN_IF oifname $LAN_IF ct state established,related accept
     }
+
+    chain output {
+        type filter hook output priority 0; policy accept;
+        # Block IPv6 output to WAN — prevent router IPv6 leaks
+        oifname $WAN_IF meta nfproto ipv6 counter drop
+        # Allow DNS to localhost (Pi-hole / cloudflared)
+        ip daddr 127.0.0.1 udp dport 53 accept
+        ip daddr 127.0.0.1 tcp dport 53 accept
+        # Allow DNS to Tailscale MagicDNS
+        ip daddr 100.100.100.100 udp dport 53 accept
+        ip daddr 100.100.100.100 tcp dport 53 accept
+        # Block all other DNS from the Pi itself — prevent cleartext leak
+        udp dport 53 drop
+        tcp dport 53 drop
+        # Block DoT from the Pi — force all DNS through cloudflared
+        tcp dport 853 drop
+        udp dport 853 drop
+    }
 }
 
-table ip nat {
+table inet nat {
     chain prerouting {
         type nat hook prerouting priority -100;
         # Force all LAN DNS to Pi-hole — prevents clients from using hardcoded DNS

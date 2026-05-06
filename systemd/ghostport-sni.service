@@ -5,9 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/phantom/sni-inspector.py
+ExecStart=/usr/bin/python3 /opt/ghostport/sni-inspector.py
 ExecStartPost=/usr/local/bin/gp-ssl-inspect restore
-PIDFile=/run/ghostport-sni.pid
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

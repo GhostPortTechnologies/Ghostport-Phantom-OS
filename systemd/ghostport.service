@@ -1,15 +1,21 @@
 [Unit]
-Description=GhostPort Command Deck
-After=network.target
+Description=GhostPort Privacy Router
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=ghostport-admin
-WorkingDirectory=/opt/phantom
-ExecStart=/usr/bin/node /opt/phantom/ghostport-server.js
+WorkingDirectory=/opt/ghostport
+ExecStart=/usr/bin/node /opt/ghostport/ghostport-server.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+
+# Security sandboxing (compatible with sudo gp-* commands)
+NoNewPrivileges=false
+ProtectHome=read-only
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
