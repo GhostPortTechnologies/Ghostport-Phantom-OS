@@ -184,7 +184,7 @@ For users who prefer the terminal — full parity with the dashboard.
 The router ships with a full labwc/Wayland desktop for users who plug in a monitor.
 - Waybar privacy bar (mode, privacy score, ads blocked, tunnel, DNS, clients, traffic rate, journal)
 - Mission Menu — 30 items across 5 categories (Protect, Monitor, Configure, System, Power)
-- Pirate-themed GTK3 tools: gp-anchor, gp-atlas, gp-crowsnest, gp-sonar, gp-crewmanifest, gp-tidechart, gp-treasurechest, gp-logbook, and more
+- Pirate-themed GTK3 tools: gp-anchor, gp-atlas, gp-crowsnest, gp-sonar, gp-crewmanifest, gp-tidechart, gp-logbook, and more
 - Plymouth boot splash, custom cursor theme, green-on-black retro terminal aesthetic
 
 ---

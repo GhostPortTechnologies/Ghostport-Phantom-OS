@@ -10,7 +10,7 @@ Compatibility contracts preserved from the previous one-window-per-icon
 implementation:
   - icon-positions.json schema (name → {x, y, hidden?})
   - widget-layout.json schema
-  - SIGUSR1 reloads positions (used by Treasure Chest restore)
+  - SIGUSR1 reloads positions
   - Dock pin via ~/.config/phantom/dock.json + signal to /tmp/gp-dock.pid
   - PID file at /tmp/gp-desktop-icons.pid + flock at /tmp/gp-desktop-icons.lock
 """
@@ -71,11 +71,8 @@ DESKTOP_APPS = [
     ("Dashboard",      "gp-dashboard.png",   "brave-browser --app=https://localhost:4201",         "Web UI"),
     ("Brave",          "gp-brave.png",       "brave-browser",                                      "Web Browser"),
     ("Widget Library", "gp-widget-library.svg", "python3 /opt/phantom/desktop/gp-widget-library.py", "Desktop Widgets"),
-    ("Treasure Chest", "gp-treasurebox.svg", "python3 /opt/phantom/desktop/gp-treasurechest.py", "Stowed Apps"),
     ("Chamber",        "gp-chamber.svg",     "brave-browser --app=http://127.0.0.1:4242",          "AI Coordination"),
 ]
-
-UNSTOWABLE = {"Treasure Chest"}
 
 WIDGET_TILES = [
     ("score",   "Score"),
@@ -101,12 +98,6 @@ DRAG_THRESHOLD = 5
 DOCK_HEIGHT = 72
 DOCK_CONFIG = os.path.expanduser("~/.config/phantom/dock.json")
 DOCK_PID_FILE = "/tmp/gp-dock.pid"
-
-# Treasure Chest drop zone (rendered on canvas during drag)
-DROP_ZONE_W = 140
-DROP_ZONE_H = 140
-DROP_ZONE_MARGIN_BOTTOM = 96  # above the dock
-DROP_ZONE_ICON_FILE = "gp-treasurebox-open.svg"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -234,7 +225,6 @@ class DesktopCanvas:
         self.positions = load_positions()
         self.sprites = []                    # all sprites in z-order (last = top)
         self.status_data = read_status_cache() or {}
-        self._chest_pixbuf = load_icon_pixbuf(DROP_ZONE_ICON_FILE, 96)
         self._desktop_files = []
 
         # Drag state
@@ -384,7 +374,7 @@ class DesktopCanvas:
             name, icon_file, command = entry[0], entry[1], entry[2]
             subtitle = entry[3] if len(entry) > 3 else ""
             saved = self.positions.get(name)
-            if isinstance(saved, dict) and saved.get("hidden") and name not in UNSTOWABLE:
+            if isinstance(saved, dict) and saved.get("hidden"):
                 continue
             self.sprites.append(
                 self._make_app_sprite(idx, name, icon_file, command, subtitle))
@@ -512,12 +502,6 @@ class DesktopCanvas:
 
         cx, cy = sp.center()
 
-        # Treasure chest stow
-        if sp.name not in UNSTOWABLE and self._in_chest_zone(cx, cy):
-            if self._stow_sprite(sp):
-                self.area.queue_draw()
-                return True
-
         # Pin to dock — keep on desktop, snap back to origin
         if cy >= self.screen_h - DOCK_HEIGHT:
             if self._pin_to_dock(sp):
@@ -595,18 +579,8 @@ class DesktopCanvas:
                 mi.connect("activate", lambda _m: self._pin_to_dock(sp))
             menu.append(mi)
 
-            # Stow to chest (apps only, never the chest itself)
-            if sp.name not in UNSTOWABLE:
-                mi = Gtk.MenuItem(label="Stow to Treasure Chest")
-                mi.connect("activate", lambda _m: self._stow_and_redraw(sp))
-                menu.append(mi)
-
         menu.show_all()
         menu.popup_at_pointer(event)
-
-    def _stow_and_redraw(self, sp):
-        if self._stow_sprite(sp):
-            self.area.queue_draw()
 
     def _show_desktop_menu(self, event):
         """Right-click on empty desktop — native GTK context menu at cursor.
@@ -788,29 +762,7 @@ class DesktopCanvas:
                         return cx, cy
         return sx, sy
 
-    # ── chest / dock zones ─────────────────────────────────────────
-
-    def _chest_bounds(self):
-        zx = (self.screen_w - DROP_ZONE_W) // 2
-        zy = self.screen_h - DROP_ZONE_H - DROP_ZONE_MARGIN_BOTTOM
-        return zx, zy, DROP_ZONE_W, DROP_ZONE_H
-
-    def _in_chest_zone(self, px, py):
-        zx, zy, zw, zh = self._chest_bounds()
-        return zx <= px <= zx + zw and zy <= py <= zy + zh
-
-    def _stow_sprite(self, sp):
-        if sp.name in UNSTOWABLE or sp.kind != "app":
-            return False
-        entry = self.positions.setdefault(sp.name, {"x": sp.x, "y": sp.y})
-        if not isinstance(entry, dict):
-            entry = {"x": sp.x, "y": sp.y}
-            self.positions[sp.name] = entry
-        entry["hidden"] = True
-        save_positions(self.positions)
-        if sp in self.sprites:
-            self.sprites.remove(sp)
-        return True
+    # ── dock zone ──────────────────────────────────────────────────
 
     def _pin_to_dock(self, sp):
         if sp.kind != "app":
@@ -900,7 +852,7 @@ class DesktopCanvas:
         return True
 
     def _reload(self):
-        """SIGUSR1 — Treasure Chest restored (or hid) something."""
+        """SIGUSR1 — reload positions/layout from disk."""
         self.positions = load_positions()
         self._rebuild_app_sprites()
         self._rebuild_widget_sprites()
@@ -920,11 +872,6 @@ class DesktopCanvas:
 
         for sp in self.sprites:
             self._draw_sprite(cr, sp)
-
-        # Chest drop zone — only visible during an active drag
-        if self.dragged is not None and self.dragged.drag_started \
-                and self.dragged.name not in UNSTOWABLE:
-            self._draw_chest_zone(cr)
 
         return False
 
@@ -1152,28 +1099,6 @@ class DesktopCanvas:
         ext2 = cr.text_extents(lbl)
         cr.move_to(cx - ext2.width / 2, sp.y + 56)
         cr.show_text(lbl)
-
-    # ── chest drop-zone visual ─────────────────────────────────────
-
-    def _draw_chest_zone(self, cr):
-        zx, zy, zw, zh = self._chest_bounds()
-        r, g, b = hex_to_rgb(self.accent)
-        rf, gf, bf = r / 255, g / 255, b / 255
-        cx = zx + zw / 2
-        cy = zy + zh / 2
-        cr.set_source_rgba(rf, gf, bf, 0.15)
-        cr.arc(cx, cy + 10, 60, 0, 2 * math.pi)
-        cr.fill()
-        cr.set_source_rgba(rf, gf, bf, 0.6)
-        cr.arc(cx, cy + 10, 60, 0, 2 * math.pi)
-        cr.set_line_width(2)
-        cr.stroke()
-        if self._chest_pixbuf is not None:
-            iw = self._chest_pixbuf.get_width()
-            ih = self._chest_pixbuf.get_height()
-            Gdk.cairo_set_source_pixbuf(cr, self._chest_pixbuf,
-                                        cx - iw / 2, cy - ih / 2 - 4)
-            cr.paint()
 
     # ── shapes ─────────────────────────────────────────────────────
 
