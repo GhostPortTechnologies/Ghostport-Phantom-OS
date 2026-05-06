@@ -53,7 +53,6 @@ declare -a APPS=(
     "Sea Urchin|python3 /opt/ghostport/desktop/gp-seaurchin.py"
     "Logbook|python3 /opt/ghostport/desktop/gp-logbook.py"
     "Quartermaster|python3 /opt/ghostport/desktop/gp-quartermaster.py"
-    "Treasure Chest|python3 /opt/ghostport/desktop/gp-treasurechest.py"
 )
 
 # ── report dir ───────────────────────────────────────────────────────
