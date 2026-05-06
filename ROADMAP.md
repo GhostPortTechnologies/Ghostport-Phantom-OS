@@ -99,7 +99,6 @@
 - [x] Sales playbook (affiliates.ghostporttechnologies.com/sales-playbook.html)
 - [x] Cross-site navigation (5 properties: blog, affiliates, investors, demo, tools)
 - [x] Mobile responsive on all web properties
-- [x] CMMC compliance blog article (Level 1 met, ~75% toward Level 2)
 - [x] User guide (guide.html, 10 sections)
 - [x] 12+ blog articles published
 - [x] Content kit v2 (80 JPG + 80 MP4 fact cards)

@@ -24,10 +24,12 @@ class QuartermasterApp(GhostPortApp):
     # Per-region contextual help. Dialog logic lives in GhostPortApp.show_help_dialog.
     HELP_SECTIONS = [
         ("What is Quartermaster?",
-         "Quartermaster runs the ship's security audit. It checks your device "
-         "against a standard security benchmark — looking at file permissions, "
-         "service configuration, password policies, kernel hardening flags, and "
-         "known weak spots — and gives you a single score out of 100.\n\n"
+         "Quartermaster runs the ship's security audit. It checks 15 things "
+         "about your device — firewall state, SSH config, encrypted DNS, "
+         "VPN tunnel, Pi-hole, auto-updates, passcode set, vault initialized, "
+         "intrusion detection, kill switch, DNS health, interface errors, "
+         "Wi-Fi encryption (WPA3 / MFP / WPS) — and gives you a single score "
+         "out of 100.\n\n"
          "Think of it like an annual physical: most people don't run it often, "
          "but it catches silent drift before it becomes a problem."),
 
@@ -52,7 +54,7 @@ class QuartermasterApp(GhostPortApp):
          "timestamped file in your home folder. Useful when:\n\n"
          "• You want a before/after comparison across hardening changes.\n"
          "• Someone technical is remote-helping you and needs to see the details.\n"
-         "• You need an audit trail for compliance (CMMC, etc.).\n\n"
+         "• You want a record of your device's security posture over time.\n\n"
          "The export includes both pass and fail items so you have the full picture, "
          "not just the warnings."),
 
@@ -63,7 +65,7 @@ class QuartermasterApp(GhostPortApp):
          "• Sudden drop — something regressed. Look at the most recent check list "
          "to see what newly failed.\n"
          "• Gradual rise — hardening work is landing.\n\n"
-         "History is kept in /etc/phantom/quartermaster-history.json. Delete that "
+         "History is kept in /etc/phantom/audit-history.json. Delete that "
          "file to start the chart fresh."),
 
         ("Check items list",
@@ -73,12 +75,13 @@ class QuartermasterApp(GhostPortApp):
          "Focus on the red items first. Amber warnings are often \"by design for "
          "this environment\" false positives — read the detail before worrying."),
 
-        ("What a good score looks like after today's work",
-         "GhostPort's own hardening efforts (sudo scoping, auditd, SSH pubkey-only, "
-         "kernel module blacklist, fail2ban, dashboard lockout) generally push the "
-         "score into the 85-95 range.\n\n"
-         "If you're below 80 on a GhostPort device, something's regressed — check "
-         "the recent OTA updates, confirm auditd is running, and re-run the scan."),
+        ("What a good score looks like",
+         "A factory-default GhostPort device with the firewall, encrypted DNS, "
+         "Pi-hole, auto-update timer, and SSH key-only auth all running typically "
+         "scores in the 80-95 range. The kill switch and tunnel checks add points "
+         "in DoubleHop / ZHop modes.\n\n"
+         "If you're below 80, scan results show which checks failed — start "
+         "with the highest-weight FAILs first."),
     ]
 
     def _on_help(self, _btn):

@@ -33,9 +33,9 @@ sudo gp-mode zhop
 - 4 privacy modes — switch in seconds from any browser
 - Pi-hole integration — blocks ads, trackers, and malware domains network-wide
 - DoH/DoT blocking — phones cannot bypass DNS filtering
-- WireGuard VPN — fastest VPN protocol available
+- WireGuard VPN — one of the fastest VPN protocols available
 - Web dashboard — pirate-themed command deck on port 4200
-- Mobile app — iOS & Android (coming soon)
+- Mobile-friendly PWA — installable from Safari (iOS) or Chrome (Android) via "Add to Home Screen"
 - Auto-starts on boot — fully managed by systemd
 - nftables firewall — modern, fast, battle-tested
 - Always-on remote access — SSH & VNC never locked out regardless of mode

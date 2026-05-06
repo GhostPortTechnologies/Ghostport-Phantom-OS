@@ -689,7 +689,7 @@ class SonarApp(GhostPortApp):
          "   - 5 random decoys (gp-decoy-<random hex>) — no real network would\n"
          "     ever advertise these. Any responder is busted.\n"
          "   - 10 popular wordlist SSIDs (xfinitywifi, Starbucks WiFi, linksys,\n"
-         "     NETGEAR, ATT-WIFI, Free Public WiFi, AmazonConnect, Boingo,\n"
+         "     NETGEAR, ATT-WIFI, Free Public WiFi, AmazonConnect, Boingo Hotspot,\n"
          "     T-Mobile Wi-Fi, GoogleGuest) — common Karma targets.\n"
          "3. Compares the two scans:\n"
          "   - BSSID claims a decoy SSID -> Karma rig (zero false-positive).\n"
@@ -783,10 +783,295 @@ class SonarApp(GhostPortApp):
          "is a known offensive-tool fingerprint. Either is enough.\n\n"
          "When at least one block is armed, the top of the Sonar window shows "
          "an amber banner reminding you which BSSIDs are currently poisoned."),
+
+        ("Probe-Request Capture (button bar)",
+         "WHAT: Wi-Fi clients (phones, laptops) constantly broadcast \"probe "
+         "requests\" — short frames asking \"is this network nearby?\" — for "
+         "every SSID they remember. A Wi-Fi Pineapple / Karma rig listens for "
+         "these and replies \"yes I'm that network\" to lure the device into "
+         "connecting. Probe-Request Capture lets Sonar see the probes too, so "
+         "we can spot devices being targeted and rigs that respond to anything.\n\n"
+         "PRIVACY: probes leak. They reveal which networks a device has joined "
+         "before — \"home-WiFi\", \"airport-lounge-2024\", \"Bob's iPhone hotspot\". "
+         "That's neighbors' personal data, not just yours. Sonar will not "
+         "capture probe-requests by default. Three modes:\n\n"
+         "  OFF (default) — no probe-request capture. Sonar still sees beacons, "
+         "deauth, and EAPOL.\n"
+         "  MAC-ONLY — captures source-MAC + signal + channel, redacts the "
+         "requested SSID at the parser. Lets you detect \"someone is probing "
+         "near my Pi\" without recording which networks they remember. Privacy-"
+         "preserving for the use case of presence detection.\n"
+         "  FULL — captures source-MAC + signal + channel + the requested SSID. "
+         "Active threat-hunt mode; surfaces Pineapple-style targeting in real "
+         "time. Use only when you actively suspect rogue activity. Other "
+         "people's probe SSIDs end up in your event database.\n\n"
+         "MECHANICS: setting takes effect immediately — the sniffer service "
+         "restarts on save. Off-by-default is enforced by the daemon, not just "
+         "the UI: a missing or corrupt config file is treated as Off. The "
+         "privacy-disclosure modal fires every time you promote to Full, not "
+         "just the first time, so the consent is renewed on every change."),
     ]
 
     def _on_help(self, _btn):
         self.show_help_dialog(self.HELP_SECTIONS)
+
+    # ── T-0059 Probe-request capture settings ──────────────────────────
+    # Three-tier toggle (off / mac-only / full) for Wi-Fi Pineapple and
+    # Karma detection. Default off; a separate disclosure modal fires
+    # every time the user promotes to Full so the privacy-sensitive mode
+    # can't be enabled by accident. State persists in /etc/ghostport/sonar.json
+    # and the sniffer service restarts on save.
+
+    # (value, icon, label, badge_text, badge_css_class, description, frame_css_class)
+    # badge_text + badge_css_class identify the privacy stance at a glance:
+    #   off → "RECOMMENDED" green tag; mac → no badge; full → "PRIVACY-SENSITIVE" amber.
+    PROBE_CAPTURE_TIERS = [
+        ("off", "🟢", "Off",
+         "RECOMMENDED", "probe-tier-recommended",
+         "Probe-requests aren't captured. Sonar still sees beacons, deauth, and EAPOL.",
+         "probe-tier-off"),
+        ("mac-only", "🔵", "MAC-Only",
+         "PRIVACY-PRESERVING", "probe-tier-info",
+         "See who's probing near your Pi without recording which networks they remember. SSID is redacted at the parser before it reaches the bus, database, or logs.",
+         "probe-tier-mac"),
+        ("full", "🟠", "Full",
+         "PRIVACY-SENSITIVE", "probe-tier-warning-badge",
+         "Active threat-hunt. Records the network names every nearby device has previously connected to. Use only when you actively suspect a rogue rig.",
+         "probe-tier-full"),
+    ]
+
+    def _read_probe_mode(self):
+        """Read current probe_capture mode via the sudo helper.
+        Falls back to 'off' on any error — privacy-safe default."""
+        try:
+            out, _err, rc = self.run_sudo(["/usr/local/bin/gp-sonar-config", "get", "probe_capture"], timeout=5)
+            v = (out or "").strip()
+            if v in ("off", "mac-only", "full"):
+                return v
+        except Exception:
+            pass
+        return "off"
+
+    def _write_probe_mode(self, mode):
+        """Write new probe_capture mode via the sudo helper. Returns
+        (success, error_message). Helper restarts the sniffer service on
+        successful write so the new mode takes effect immediately."""
+        if mode not in ("off", "mac-only", "full"):
+            return False, f"Invalid mode: {mode!r}"
+        try:
+            out, err, rc = self.run_sudo(
+                ["/usr/local/bin/gp-sonar-config", "set", "probe_capture", mode],
+                timeout=10,
+            )
+            if rc == 0:
+                return True, ""
+            return False, (err or out or "Unknown error").strip()
+        except Exception as e:
+            return False, str(e)
+
+    def _confirm_full_capture(self):
+        """Privacy disclosure shown every time the user picks Full mode.
+        Tighter than a generic GtkMessageDialog so the ask reads quickly:
+        what the mode logs, whose data it logs, retention window."""
+        dlg = Gtk.MessageDialog(
+            transient_for=self.window,
+            modal=True,
+            destroy_with_parent=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Enable Full probe capture?",
+        )
+        dlg.format_secondary_markup(
+            "Full mode logs the <b>previously-joined network names</b> of every "
+            "nearby phone, laptop, and Wi-Fi device. Those devices broadcast that "
+            "information in cleartext — but their owners did not consent to your "
+            "Pi recording it.\n\n"
+            "Use only when you actively suspect rogue Wi-Fi activity. "
+            "For routine awareness, <b>MAC-Only</b> gives you presence detection "
+            "without recording anyone's network history.\n\n"
+            "<small>Captured SSIDs are kept in <tt>/opt/phantom/data/events.db</tt> "
+            "for 7 days, then auto-pruned.</small>"
+        )
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        btn_ok = dlg.add_button("Yes, enable Full", Gtk.ResponseType.OK)
+        try:
+            btn_ok.get_style_context().add_class("destructive-action")
+        except Exception:
+            pass
+        resp = dlg.run()
+        dlg.destroy()
+        return resp == Gtk.ResponseType.OK
+
+    def _on_probe_capture_settings(self, _btn):
+        # Re-styled 2026-05-01 — replaced stacked radio+label rows with framed
+        # tier-cards (icon + title + privacy badge + description, full-card
+        # click selects). Color-coded borders signal privacy stance at a
+        # glance. Currently-active tier is highlighted up top so the user
+        # always knows what the system is doing.
+        current = self._read_probe_mode()
+        current_label = next(
+            (label for v, _i, label, *_ in self.PROBE_CAPTURE_TIERS if v == current),
+            "Off",
+        )
+
+        dlg = Gtk.Dialog(
+            title="Probe-Request Capture",
+            transient_for=self.window,
+            modal=True,
+        )
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        save_btn = dlg.add_button("Save", Gtk.ResponseType.OK)
+        try:
+            save_btn.get_style_context().add_class("suggested-action")
+        except Exception:
+            pass
+        dlg.set_default_size(580, -1)
+
+        content = dlg.get_content_area()
+        content.set_spacing(10)
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        content.set_margin_top(16)
+        content.set_margin_bottom(12)
+
+        # Header — title + one-line summary + current state badge.
+        header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        title_lbl = Gtk.Label()
+        title_lbl.set_markup(
+            "<span size='large' weight='bold'>Probe-Request Capture</span>"
+        )
+        title_lbl.set_xalign(0)
+        header_box.pack_start(title_lbl, False, False, 0)
+
+        subtitle_lbl = Gtk.Label(
+            label="Detect Wi-Fi Pineapple / Karma rigs by listening to what "
+                  "networks nearby devices are looking for."
+        )
+        subtitle_lbl.set_line_wrap(True)
+        subtitle_lbl.set_xalign(0)
+        subtitle_lbl.get_style_context().add_class("dim-label")
+        header_box.pack_start(subtitle_lbl, False, False, 0)
+
+        current_lbl = Gtk.Label()
+        current_lbl.set_markup(
+            f"<span size='small'>Currently active: <b>{current_label}</b></span>"
+        )
+        current_lbl.set_xalign(0)
+        current_lbl.set_margin_top(4)
+        header_box.pack_start(current_lbl, False, False, 0)
+
+        content.pack_start(header_box, False, False, 0)
+
+        # Spacer.
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_margin_top(8)
+        sep.set_margin_bottom(4)
+        content.pack_start(sep, False, False, 0)
+
+        # Tier cards — each row is a clickable frame containing radio + icon +
+        # title + privacy badge + description. Whole frame is the click target
+        # via Gtk.EventBox so the user doesn't have to hit the tiny radio dot.
+        radios = []
+        first_radio = None
+        for value, icon, label, badge_text, badge_class, desc, frame_class in self.PROBE_CAPTURE_TIERS:
+            frame = Gtk.Frame()
+            ctx = frame.get_style_context()
+            ctx.add_class("probe-tier-frame")
+            ctx.add_class(frame_class)
+            if value == current:
+                ctx.add_class("probe-tier-active")
+
+            inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            inner.set_margin_start(12)
+            inner.set_margin_end(12)
+            inner.set_margin_top(10)
+            inner.set_margin_bottom(10)
+
+            radio = Gtk.RadioButton.new_from_widget(first_radio)
+            if first_radio is None:
+                first_radio = radio
+            radio._gp_value = value
+            if value == current:
+                radio.set_active(True)
+            radios.append(radio)
+            inner.pack_start(radio, False, False, 0)
+
+            # Big emoji icon — quickly differentiates the three tiers visually.
+            icon_lbl = Gtk.Label()
+            icon_lbl.set_markup(f"<span size='x-large'>{icon}</span>")
+            inner.pack_start(icon_lbl, False, False, 0)
+
+            text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+
+            title_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            tier_title = Gtk.Label()
+            tier_title.set_markup(f"<b>{label}</b>")
+            tier_title.set_xalign(0)
+            title_row.pack_start(tier_title, False, False, 0)
+
+            badge = Gtk.Label(label=badge_text)
+            badge.get_style_context().add_class(badge_class)
+            badge.set_xalign(0)
+            title_row.pack_start(badge, False, False, 0)
+            text_box.pack_start(title_row, False, False, 0)
+
+            desc_lbl = Gtk.Label(label=desc)
+            desc_lbl.set_line_wrap(True)
+            desc_lbl.set_xalign(0)
+            desc_lbl.get_style_context().add_class("dim-label")
+            text_box.pack_start(desc_lbl, False, False, 0)
+
+            inner.pack_start(text_box, True, True, 0)
+            frame.add(inner)
+
+            # Whole-card click selects the tier — Gtk.EventBox wraps the frame
+            # so press events anywhere inside activate the radio.
+            eb = Gtk.EventBox()
+            eb.add(frame)
+            eb.connect(
+                "button-press-event",
+                lambda _w, _e, r=radio: (r.set_active(True), False)[1],
+            )
+            content.pack_start(eb, False, False, 0)
+
+        dlg.show_all()
+
+        # Apply the dialog-specific CSS once on first show.
+        try:
+            self._apply_css(extra_css=self._extra_css())
+        except Exception:
+            pass
+
+        while True:
+            resp = dlg.run()
+            if resp != Gtk.ResponseType.OK:
+                dlg.destroy()
+                return
+            chosen = next((r._gp_value for r in radios if r.get_active()), "off")
+            if chosen == current:
+                dlg.destroy()
+                return
+            # Stronger gate when promoting to Full from anything else.
+            if chosen == "full" and not self._confirm_full_capture():
+                # User backed out of the disclosure — leave dialog open so
+                # they can pick a different tier instead.
+                continue
+            ok, errmsg = self._write_probe_mode(chosen)
+            dlg.destroy()
+            if ok:
+                self.set_status(f"Probe capture: {chosen.upper()} (sniffer restarted)")
+            else:
+                err_dlg = Gtk.MessageDialog(
+                    transient_for=self.window,
+                    modal=True,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Could not save probe-capture setting",
+                )
+                err_dlg.format_secondary_text(errmsg or "Unknown error")
+                err_dlg.run()
+                err_dlg.destroy()
+            return
 
     # T-0021 item 2: 4-tier severity color scheme. Base class only ships
     # gp-card-danger / gp-card-warning, so suspicious + warning rendered
@@ -820,6 +1105,52 @@ class SonarApp(GhostPortApp):
     font-family: monospace;
     font-size: 11px;
     font-style: italic;
+}
+
+/* T-0059 Probe-Capture dialog — color-coded tier cards. The frame border
+   signals privacy stance; the active tier gets a brighter green border so
+   the user immediately sees what's currently saved. */
+.probe-tier-frame {
+    border-radius: 8px;
+    margin: 4px 0;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(140, 140, 140, 0.20);
+}
+.probe-tier-frame:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+.probe-tier-off {
+    border-color: rgba(140, 140, 140, 0.30);
+}
+.probe-tier-mac {
+    border-color: rgba(80, 180, 255, 0.35);
+}
+.probe-tier-full {
+    border-color: rgba(255, 140, 50, 0.45);
+}
+.probe-tier-active {
+    border-width: 2px;
+    border-color: rgb(120, 220, 140);
+    background-color: rgba(120, 220, 140, 0.06);
+}
+/* Tier-badge labels — small uppercase tags next to each tier name. */
+.probe-tier-recommended {
+    color: rgb(120, 220, 140);
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+.probe-tier-info {
+    color: rgb(80, 180, 255);
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+.probe-tier-warning-badge {
+    color: rgb(255, 165, 70);
+    font-size: 9px;
+    font-weight: bold;
+    letter-spacing: 1px;
 }
 """
 
@@ -1346,6 +1677,13 @@ class SonarApp(GhostPortApp):
         btn_bar.pack_end(btn_snapshot, False, False, 0)
 
         btn_bar.pack_start(self.make_help_button(sections=self.HELP_SECTIONS), False, False, 0)
+
+        # T-0059 — probe-request capture toggle. Gear-prefix label signals
+        # "settings", not "action button" so it doesn't compete visually with
+        # Trust/Untrust/Snapshot/Export. Opens the redesigned tier-card dialog.
+        btn_probe = self.make_button("⚙ Probe Capture", self._on_probe_capture_settings, "gp-btn")
+        btn_probe.set_tooltip_text("Configure Wi-Fi probe-request capture for Pineapple / Karma detection")
+        btn_bar.pack_start(btn_probe, False, False, 0)
 
         root.pack_start(btn_bar, False, False, 0)
 

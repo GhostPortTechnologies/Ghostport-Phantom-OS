@@ -133,19 +133,16 @@ class AnchorApp(GhostPortApp):
          "The large button at the top is the master switch. Two states:\n\n"
          "• DISARMED (grey) — normal operation. Traffic flows whether the VPN is "
          "up or not. If the tunnel drops, your real IP is exposed until it reconnects.\n\n"
-         "• ARMED (accent color) — kill switch active. If the tunnel handshake is "
-         "stale or the interface goes down, nftables blocks all forwarded traffic "
-         "until it recovers. Your LAN devices will see internet outages as long as "
-         "the tunnel is unhealthy.\n\n"
-         "Click the button to toggle. There's a brief confirmation dialog if arming "
-         "would immediately interrupt traffic."),
+         "• ARMED (accent color) — an nftables chain is installed that only allows "
+         "forwarded traffic in/out of the wg1 tunnel. If wg1 is down or unreachable, "
+         "your LAN devices see no internet — that's the point: no leak path to eth0.\n\n"
+         "Click the button to toggle."),
 
         ("Auto-arm suggestion banner",
-         "If tunnel quality degrades (high latency, missed handshakes, packet loss) "
-         "a warning banner appears offering to arm the switch for you.\n\n"
-         "The banner only shows up when there's a real reason — it doesn't nag. "
+         "If wg1 quality drops to grade D or F (high latency or packet loss) a "
+         "warning banner appears offering to arm the switch for you.\n\n"
          "Click \"Arm Now\" to activate, or ignore it and the banner dismisses "
-         "when quality recovers."),
+         "when quality recovers to grade C or better."),
 
         ("Current Mode",
          "Shows which firewall profile is active (ISP / ZeroTrust / DoubleHop / ZHop).\n\n"
@@ -165,12 +162,13 @@ class AnchorApp(GhostPortApp):
          "handshake time. \"Last handshake\" > 3 minutes is usually a problem."),
 
         ("Tunnel Quality",
-         "Per-tunnel quality score based on latency, packet loss, and handshake "
-         "freshness. Ranges from 0 (broken) to 100 (perfect).\n\n"
-         "• 80+ — everything's fine, normal to see minor dips.\n"
-         "• 50-80 — degraded but usable; check ISP / signal.\n"
-         "• < 50 — poor; this is where Auto-arm fires.\n\n"
-         "Grades are a rolling 60-second window, so they lag slightly behind reality."),
+         "Per-tunnel letter grade (A best, F worst) based on the most recent "
+         "3-ping sample of latency and packet loss to the tunnel peer.\n\n"
+         "• A / B — fine; minor dips normal.\n"
+         "• C — degraded but usable; check ISP / signal.\n"
+         "• D / F — poor; this is where Auto-arm fires.\n\n"
+         "Grades update on each refresh, so they reflect the latest sample, "
+         "not a rolling window."),
 
         ("Uptime sparklines",
          "The little squiggly graphs show each tunnel's up/down state over the last hour.\n\n"
@@ -188,7 +186,8 @@ class AnchorApp(GhostPortApp):
          "• You're troubleshooting connectivity — it's one more moving part\n"
          "• The device is running background updates that can't survive outages\n\n"
          "The safe fallback if you ever get stuck: `sudo gp-mode isp` in a terminal "
-         "drops back to passthrough mode, which the kill switch allows through."),
+         "switches to passthrough mode, which flushes the firewall and removes the "
+         "kill switch chain entirely."),
     ]
 
     def _on_help(self, _btn):

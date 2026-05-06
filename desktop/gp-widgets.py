@@ -1414,7 +1414,7 @@ class ClientsWidget(WidgetWindow):
         self.timer_id = GLib.timeout_add_seconds(15, self._fetch_clients)
 
     def _fetch_clients(self):
-        threaded_fetch(f"{API_BASE}/api/clients", self._update_clients)
+        threaded_fetch(f"{API_BASE}/api/arsenal/clients", self._update_clients)
         return True
 
     def _update_clients(self, data):

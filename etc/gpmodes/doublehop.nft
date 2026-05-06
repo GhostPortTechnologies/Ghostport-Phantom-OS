@@ -2,30 +2,56 @@ flush ruleset
 include "/etc/gpmodes/common.nft"
 
 table inet filter {
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-        # Drop all IPv6 forwarded traffic to prevent tunnel bypass
-        meta nfproto ipv6 counter drop
-        ct state established,related accept
-        # LAN exits only through WireGuard
-        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
-        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
-        iifname $LAN_IF oifname $WG_IF accept
-        iifname $WG_IF oifname $LAN_IF ct state established,related accept
+    # Kill-switch chain — pre-installed default-active in tunnel mode.
+    # Hooks forward at priority -10 so it fires before the main forward chain.
+    # Policy drop with explicit wg1-only accepts: any non-tunnel forward path
+    # (e.g. LAN→eth0 if wg1 drops and a stale route appears) is dropped here
+    # before the main forward chain ever sees it. Quartermaster greps the live
+    # ruleset for "killswitch" to verify presence (see gp-quartermaster.py
+    # Kill Switch Armed check). gp-anchor.py disarm/arm tears down/rebuilds.
+    chain killswitch {
+        type filter hook forward priority -10; policy drop;
+        oifname $WG_DATA accept
+        iifname $WG_DATA ct state established,related accept
     }
 
-    chain input {
-        type filter hook input priority 0; policy accept;
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+        # MSS clamping — prevent fragmentation/stalls through WireGuard tunnel
+        tcp flags syn tcp option maxseg size set rt mtu
+        # Drop all IPv6 forwarded traffic to prevent tunnel bypass
+        meta nfproto ipv6 counter drop
+        ct state invalid drop
         ct state established,related accept
-        iifname $LAN_IF accept
-        iifname $WG_IF accept
-        iifname $TS_IF accept
+        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
+        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
+        # Block DoT (853) — forces DNS through Pi-hole
+        iifname $LAN_IF tcp dport 853 drop comment "gp-dot-block"
+        iifname $LAN_IF udp dport 853 drop comment "gp-dot-block"
+        # LAN exits only through WireGuard
+        iifname $LAN_IF oifname $WG_DATA accept
+        iifname $WG_DATA oifname $LAN_IF ct state established,related accept
     }
 
     chain output {
         type filter hook output priority 0; policy accept;
         # Block Pi's own IPv6 on WAN — prevents tunnel bypass
         oifname $WAN_IF meta nfproto ipv6 counter drop
+        # Allow DNS to localhost (Pi-hole)
+        ip daddr 127.0.0.1 udp dport 53 accept
+        ip daddr 127.0.0.1 tcp dport 53 accept
+        # Allow DNS to Tailscale MagicDNS
+        ip daddr 100.100.100.100 udp dport 53 accept
+        ip daddr 100.100.100.100 tcp dport 53 accept
+        # Allow DNS out through WireGuard tunnel (Pi-hole upstream)
+        oifname $WG_DATA udp dport 53 accept
+        oifname $WG_DATA tcp dport 53 accept
+        # Block DNS over any other interface to prevent leaks
+        udp dport 53 drop
+        tcp dport 53 drop
+        # Block DoT from the Pi — prevent encrypted DNS bypass
+        tcp dport 853 drop
+        udp dport 853 drop
     }
 }
 
@@ -39,6 +65,6 @@ table inet nat {
 
     chain postrouting {
         type nat hook postrouting priority srcnat; policy accept;
-        oifname $WG_IF masquerade
+        oifname $WG_DATA masquerade
     }
 }

@@ -40,7 +40,10 @@ STORING A FILE (passport, recovery codes, tax docs, seed phrase…)
 1. UNLOCK with your password
 2. Click + Add File → pick the file
 3. CHECK "Securely shred original after encrypting"
-4. Click Add — original is wiped, encrypted copy goes in vault
+4. Click Add — original is overwritten with `shred -u -n 3`, encrypted
+   copy goes in vault. Note: on SD/flash storage, wear-leveling can
+   preserve fragments at the hardware layer; for the highest assurance,
+   create the original directly inside the unlocked vault.
 
 RETRIEVING A FILE
 1. UNLOCK

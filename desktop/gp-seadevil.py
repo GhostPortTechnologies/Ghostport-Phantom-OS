@@ -119,8 +119,10 @@ class SeadevilApp(GhostPortApp):
          "• A captive portal requires re-registration after every MAC change.\n"
          "• The interface is your GhostPort's AP (wlan0) — randomizing will kick "
          "all connected LAN devices off until they re-associate.\n\n"
-         "Randomization isn't sticky across reboots by default; use the enable "
-         "systemd service option for permanent randomization."),
+         "Randomization isn't sticky across reboots — re-randomize after a "
+         "boot if you want a fresh MAC. (For boot-time wlan0 randomization, "
+         "the system ships `gp-mac-random.service` which can be enabled via "
+         "`sudo systemctl enable --now gp-mac-random.service`.)"),
 
         ("The privacy claim in plain language",
          "MAC randomization prevents device-level tracking across WiFi networks. "

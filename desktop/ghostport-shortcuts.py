@@ -2,8 +2,8 @@
 """
 GhostPort Keyboard Shortcuts Widget — Draggable overlay showing hotkeys.
 Uses GTK-Layer-Shell to float above all windows on Wayland.
-Toggle visibility with SIGUSR2 or Super+G from keyboard.
-Drag the title bar to reposition anywhere on screen.
+Toggle visibility with SIGUSR2, the waybar ⌨ button, or Ctrl+? (Ctrl+Shift+/).
+Drag the title bar (left-click or middle-click) to reposition.
 """
 
 import gi
@@ -36,9 +36,13 @@ SHORTCUTS = [
         ("Super + \u2193", "Snap Window Bottom"),
     ]),
     ("TOOLS", [
-        ("Super + G", "Toggle This Widget"),
+        ("Ctrl + ?", "Toggle This Widget"),
         ("Super + W", "Widget Library"),
-        ("Print", "Take a Screenshot"),
+        ("Ctrl + Shift + D", "Open Dashboard"),
+        ("Print", "Screenshot — Full"),
+        ("Shift + Print", "Screenshot — Region"),
+        ("Ctrl + Shift + R", "Screen Record — Region"),
+        ("Ctrl + Shift + F", "Screen Record — Full"),
     ]),
     ("MOUSE", [
         ("Right Click Desktop", "Open App Menu"),
@@ -130,20 +134,23 @@ CSS = b"""
 
 
 def load_position():
-    """Load saved widget position, or return default (bottom-right)."""
+    """Load saved widget position, or return default (top-right under waybar).
+    Anchor changed from bottom-right to top-right 2026-05-02 — waybar lives at
+    top of screen and the ⌨ button is top-right, so opening below that button
+    is the natural place. Default top:35 puts it just under the 30px waybar."""
     try:
         with open(POSITION_FILE, 'r') as f:
             data = json.load(f)
-            return data.get("right", 20), data.get("bottom", 20)
+            return data.get("right", 10), data.get("top", 35)
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        return 20, 20
+        return 10, 35
 
 
-def save_position(right, bottom):
+def save_position(right, top):
     """Save widget position to disk."""
     os.makedirs(os.path.dirname(POSITION_FILE), exist_ok=True)
     with open(POSITION_FILE, 'w') as f:
-        json.dump({"right": right, "bottom": bottom}, f)
+        json.dump({"right": right, "top": top}, f)
 
 
 class ShortcutsWidget(Gtk.Window):
@@ -157,14 +164,16 @@ class ShortcutsWidget(Gtk.Window):
         self.dragging = False
         self.drag_start_x = 0
         self.drag_start_y = 0
-        self.margin_right, self.margin_bottom = load_position()
+        self.margin_right, self.margin_top = load_position()
 
-        # Layer shell setup
+        # Layer shell setup — anchored TOP-RIGHT (was bottom-right). Widget
+        # opens below the waybar ⌨ button so the click→appear motion is
+        # spatially continuous.
         GtkLayerShell.init_for_window(self)
         GtkLayerShell.set_layer(self, GtkLayerShell.Layer.OVERLAY)
-        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.BOTTOM, True)
+        GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, True)
         GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.RIGHT, True)
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, self.margin_bottom)
+        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_top)
         GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, self.margin_right)
         GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
 
@@ -215,7 +224,7 @@ class ShortcutsWidget(Gtk.Window):
 
         close_btn = Gtk.Button(label="\u2715")
         close_btn.set_name("close-btn")
-        close_btn.set_tooltip_text("Hide widget (Super+G to show again)")
+        close_btn.set_tooltip_text("Hide widget (click ⌨ in waybar or Ctrl+? to show again)")
         close_btn.connect("clicked", lambda b: self._toggle_visible())
         header.pack_end(close_btn, False, False, 0)
 
@@ -269,37 +278,68 @@ class ShortcutsWidget(Gtk.Window):
         self.add(main_box)
 
     # --- Drag-and-drop via layer-shell margin manipulation ---
+    # Layer-shell windows can't begin_move_drag (no compositor handle for it),
+    # so we fake it by manipulating RIGHT/BOTTOM margins. Two robustness fixes
+    # over the original (2026-05-02):
+    #   1. Accept BOTH left-click (button 1) AND middle-click (button 2). On
+    #      slow widget repaints the cursor sometimes ends up off the EventBox
+    #      and button-release-event is missed; middle-click is rarely captured
+    #      by anything inside the widget so it's the reliable fallback.
+    #   2. Defensive button-state check on every motion event — if the user
+    #      released outside the widget, dragging gets cleared on the next move
+    #      instead of getting stuck on indefinitely.
+
+    _DRAG_BUTTONS = (1, 2)
+    _DRAG_BUTTON_MASKS = Gdk.ModifierType.BUTTON1_MASK | Gdk.ModifierType.BUTTON2_MASK
 
     def _on_drag_start(self, widget, event):
-        if event.button == 1:
+        if event.button in self._DRAG_BUTTONS:
             self.dragging = True
             self.drag_start_x = event.x_root
             self.drag_start_y = event.y_root
             cursor = Gdk.Cursor.new_from_name(widget.get_display(), "grabbing")
             widget.get_window().set_cursor(cursor)
+            # Pointer grab keeps motion events flowing even if the cursor
+            # ends up outside the EventBox while the widget is repositioning.
+            try:
+                Gtk.grab_add(widget)
+            except Exception:
+                pass
 
     def _on_drag_end(self, widget, event):
         if self.dragging:
             self.dragging = False
             cursor = Gdk.Cursor.new_from_name(widget.get_display(), "grab")
-            widget.get_window().set_cursor(cursor)
-            save_position(self.margin_right, self.margin_bottom)
+            try:
+                widget.get_window().set_cursor(cursor)
+            except Exception:
+                pass
+            try:
+                Gtk.grab_remove(widget)
+            except Exception:
+                pass
+            save_position(self.margin_right, self.margin_top)
 
     def _on_drag_motion(self, widget, event):
         if not self.dragging:
+            return
+        # If neither drag button is held anymore, the release event was eaten;
+        # treat the next motion as an end-of-drag.
+        if not (event.state & self._DRAG_BUTTON_MASKS):
+            self._on_drag_end(widget, event)
             return
         dx = event.x_root - self.drag_start_x
         dy = event.y_root - self.drag_start_y
         self.drag_start_x = event.x_root
         self.drag_start_y = event.y_root
 
-        # Anchored bottom-right: moving mouse right decreases right margin,
-        # moving mouse down decreases bottom margin
+        # Anchored top-right: moving mouse right decreases right margin,
+        # moving mouse down increases top margin.
         self.margin_right = max(0, self.margin_right - int(dx))
-        self.margin_bottom = max(0, self.margin_bottom - int(dy))
+        self.margin_top = max(0, self.margin_top + int(dy))
 
         GtkLayerShell.set_margin(self, GtkLayerShell.Edge.RIGHT, self.margin_right)
-        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.BOTTOM, self.margin_bottom)
+        GtkLayerShell.set_margin(self, GtkLayerShell.Edge.TOP, self.margin_top)
 
     # --- Section collapse/expand ---
 

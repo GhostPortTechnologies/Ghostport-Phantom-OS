@@ -46,7 +46,7 @@ except Exception as _e:  # pragma: no cover
     sys.exit(0)
 
 try:
-    from scapy.all import sniff, Dot11, Dot11Deauth, Dot11Beacon, Dot11Elt, EAPOL, RadioTap
+    from scapy.all import sniff, Dot11, Dot11Deauth, Dot11Beacon, Dot11Elt, Dot11ProbeReq, EAPOL, RadioTap
 except Exception as _e:  # pragma: no cover
     print(f"[gp-sonar-sniffer] scapy unavailable ({_e}); exiting 0", file=sys.stderr)
     sys.exit(0)
@@ -76,6 +76,12 @@ RSSI_CHANGE_THRESHOLD_DB = 10
 # Require this many consecutive observations of an RSSI delta past threshold
 # before alerting — guards against single-sample noise in monitor-mode RX.
 RSSI_CONFIRM_COUNT = 2
+
+# T-0059 — probe-request capture for Wi-Fi Pineapple / Karma detection.
+# Default OFF. mac-only redacts the requested SSID before emit (presence
+# detection without privacy leak); full emits the SSID (active threat hunt).
+# Per-source-MAC dedup so a phone polling 30 SSIDs in a burst becomes one event.
+PROBE_REQ_DEDUP_INTERVAL_S = 60
 
 # OUI vendor lookup — top consumer + enterprise vendors seen in residential RF.
 # Universally-administered MACs only; locally-administered (LA-bit set) returns
@@ -441,9 +447,31 @@ class _BeaconChangeDetector:
         return changes
 
 
-def make_handler(rate, change_detector=None):
+def _read_probe_capture_mode():
+    """Return 'off' | 'mac-only' | 'full' from /etc/ghostport/sonar.json.
+    Defaults to 'off' on any read/parse failure — privacy-safe failure mode.
+    Read once at startup; UI restarts the service when the user changes it.
+    """
+    try:
+        import json
+        with open("/etc/ghostport/sonar.json") as f:
+            data = json.load(f)
+        v = data.get("probe_capture") if isinstance(data, dict) else None
+        if v in ("off", "mac-only", "full"):
+            return v
+    except (FileNotFoundError, OSError, ValueError):
+        pass
+    return "off"
+
+
+def make_handler(rate, change_detector=None, probe_mode="off"):
     """Return the scapy prn callback closure with the shared rate limiter
-    + optional change detector bound."""
+    + optional change detector bound.
+
+    probe_mode is "off" | "mac-only" | "full" — gates Dot11ProbeReq emission.
+    "off" skips the frame entirely. "mac-only" emits source MAC + signal +
+    channel, redacts requested SSID. "full" emits everything including SSID.
+    """
     if change_detector is None:
         change_detector = _BeaconChangeDetector()
 
@@ -480,6 +508,41 @@ def make_handler(rate, change_detector=None):
                         summary=f"EAPOL frame: {src} -> {dst} (bssid={bssid})",
                         details={"src": src, "dst": dst, "bssid": bssid},
                     )
+                return
+
+            if pkt.haslayer(Dot11ProbeReq):
+                # T-0059 — Pineapple/Karma detection feed. Off by default;
+                # operator opts in via Sonar UI. mac-only redacts SSID at the
+                # parser so the SSID never reaches the bus / DB / logs.
+                if probe_mode == "off":
+                    return
+                src = getattr(pkt, "addr2", "??")
+                # Per-MAC dedup so a single device polling 30 cached SSIDs
+                # becomes one bus event, not thirty.
+                if not rate.should_emit(("probe-req", src), PROBE_REQ_DEDUP_INTERVAL_S):
+                    return
+                rt = _radiotap_signal(pkt)
+                details = {
+                    "src": src,
+                    "rssi_dbm": rt.get("rssi_dbm"),
+                    "channel": rt.get("channel"),
+                }
+                if probe_mode == "full":
+                    # Only attached when operator explicitly chose 'full' —
+                    # this is the privacy-sensitive payload (which networks
+                    # the device has previously connected to).
+                    ssid = _ssid_from_beacon(pkt)
+                    details["ssid"] = ssid
+                    summary = f"probe-request: {src} -> {ssid or '(broadcast)'}"
+                else:
+                    summary = f"probe-request: {src}"
+                gp_events.emit(
+                    source="sonar-sniffer",
+                    category="probe_request",
+                    severity=gp_events.SEVERITY_INFO,
+                    summary=summary,
+                    details=details,
+                )
                 return
 
             if pkt.haslayer(Dot11Beacon):
@@ -581,7 +644,9 @@ def main():
     signal.signal(signal.SIGINT, _stop)
 
     rate = RateLimiter()
-    handler = make_handler(rate)
+    probe_mode = _read_probe_capture_mode()
+    LOG.info("probe_capture mode: %s", probe_mode)
+    handler = make_handler(rate, probe_mode=probe_mode)
     try:
         # store=False keeps memory bounded — scapy would otherwise hold every
         # captured packet. stop_filter polls _running so SIGTERM unblocks.

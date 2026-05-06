@@ -221,7 +221,7 @@
 
 <div class="tip">
   <strong>Forgot your passcode?</strong>
-  <p>Hold the reset button on the GhostPort device for 10 seconds. This resets your passcode to a new one displayed on the dashboard login screen. Your settings and WiFi password are NOT affected.</p>
+  <p>Hold the reset button on the GhostPort device for 10 seconds. A new passcode is generated on the device. To retrieve it, SSH into the device (e.g. via Tailscale): <code>sudo cat /etc/ghostport/last-reset-passcode.txt</code> &mdash; the file expires after 5 minutes. Your settings and WiFi password are NOT affected.</p>
 </div>
 
 <h3>The four navigation tabs (mobile)</h3>
@@ -258,25 +258,25 @@
 <div class="mode-card">
   <div class="mode-name">&#9875; ISP Mode &mdash; Open Waters</div>
   <div class="mode-desc">Normal internet. No encryption, no filtering. Your ISP can see everything. Use this if you need maximum speed or are troubleshooting.</div>
-  <div class="mode-score">Privacy Score: 15/100 &mdash; You are fully exposed.</div>
+  <div class="mode-score">Lowest privacy &mdash; you are fully exposed. Live score in the dashboard.</div>
 </div>
 
 <div class="mode-card">
   <div class="mode-name">&#128123; Zero Trust &mdash; Ghost Cloak</div>
   <div class="mode-desc">All DNS (the lookups your device makes to find websites) is encrypted. Pi-hole blocks 1M+ ad and tracker domains. Apps on your devices cannot bypass the DNS filter &mdash; even if they try to use their own DNS servers, GhostPort intercepts and redirects all DNS traffic through Pi-hole. Note: a VPN app on a device can tunnel traffic outside GhostPort's network; see the Family Shield section for how to mitigate this.</div>
-  <div class="mode-score">Privacy Score: 50/100 &mdash; Your ISP can't see your DNS lookups, but can still see IP destinations and that you're online.</div>
+  <div class="mode-score">Your ISP can't see your DNS lookups, but can still see IP destinations and that you're online.</div>
 </div>
 
 <div class="mode-card">
   <div class="mode-name">&#128128; Double Hop &mdash; Dead Man's Route</div>
   <div class="mode-desc">Everything goes through a VPN tunnel (WireGuard). Your ISP sees only encrypted noise &mdash; they can't see what you're browsing, what you're downloading, or what services you're using. DNS is also encrypted inside the tunnel.</div>
-  <div class="mode-score">Privacy Score: 80/100 &mdash; Your ISP sees nothing useful. Requires VPN setup (see Tools).</div>
+  <div class="mode-score">Your ISP sees nothing useful. Requires VPN setup (see Tools).</div>
 </div>
 
 <div class="mode-card">
   <div class="mode-name">&#127988; Z-HOP &mdash; Davy Jones</div>
   <div class="mode-desc">Maximum privacy. VPN tunnel + strict DNS lockdown. All DNS that doesn't go through Pi-hole is blocked at the firewall. No leaks. No exceptions. Full blackout.</div>
-  <div class="mode-score">Privacy Score: 95/100 &mdash; The closest thing to invisible. Requires VPN setup.</div>
+  <div class="mode-score">Highest privacy &mdash; the closest thing to invisible. Requires VPN setup.</div>
 </div>
 
 <h3>How to switch modes</h3>
@@ -449,7 +449,7 @@
 <h3>"I forgot my passcode"</h3>
 <div class="mode-card">
   <div class="mode-desc">
-    Hold the reset button on the GhostPort device for 10 seconds. A new passcode will be generated. Your WiFi password, mode settings, and all other configuration are preserved.
+    Hold the reset button on the GhostPort device for 10 seconds. A new passcode will be generated. To retrieve it, SSH into the device (e.g. via Tailscale): <code>sudo cat /etc/ghostport/last-reset-passcode.txt</code> &mdash; the file expires after 5 minutes. Your WiFi password, mode settings, and all other configuration are preserved.
   </div>
 </div>
 
@@ -468,7 +468,7 @@
 
 <div class="faq">
   <div class="faq-q" onclick="this.classList.toggle('open');this.nextElementSibling.classList.toggle('open')">Will this slow down my internet?</div>
-  <div class="faq-a">ISP Mode and Zero Trust: no speed loss at all. VPN modes (Double Hop, Z-HOP) add minimal overhead &mdash; WireGuard is the fastest VPN protocol available, typically under 5ms of additional latency. Pi-hole actually makes browsing feel faster because it blocks ad requests before they load.</div>
+  <div class="faq-a">ISP Mode and Zero Trust: minimal speed impact. VPN modes (Double Hop, Z-HOP) add some overhead &mdash; WireGuard is one of the fastest VPN protocols available, with low protocol overhead. Total latency depends on the route to the VPN server. Pi-hole actually makes browsing feel faster because it blocks ad requests before they load.</div>
 </div>
 
 <div class="faq">

@@ -476,7 +476,7 @@
       // Access Point
       this.nodes.ap = new TopoNode(this.nodeLayer, "ap", ICONS.wifi, "ACCESS POINT", colAp, rowMain, {
         detail: "wlan0 (192.168.50.x)",
-        tooltipLines: ["*Access Point (wlan0)", "SSID: GhostPortRouter", "Subnet: 192.168.50.0/24"]
+        tooltipLines: ["*Access Point (wlan0)", "Subnet: 192.168.50.0/24"]
       });
 
       // ── Tunnel plane nodes ──

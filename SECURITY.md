@@ -21,7 +21,7 @@ If you discover a security vulnerability in Phantom OS, **please do not open a p
 - **Acknowledgment within 48 hours** (usually faster — one human operates this)
 - A timeline to triage and patch, usually 7–30 days depending on severity
 - Credit in the security advisory when the fix ships, if you'd like it named
-- **Bug bounty**: $50–$500 depending on severity, paid on confirmed fix. See [bug bounty terms on the blog](https://blog.ghostporttechnologies.com).
+- **Bug bounty**: amounts negotiated per finding, severity-based, paid on confirmed fix. See [Bug Bounty Program — full terms, scope, and rules of engagement](https://blog.ghostporttechnologies.com/bug-bounty.html).
 
 ### What NOT to do
 

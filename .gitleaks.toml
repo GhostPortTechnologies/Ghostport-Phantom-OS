@@ -71,6 +71,7 @@ description = "paths + patterns exempt from scanning"
 paths = [
   '''docs/PHANTOM-RENAME-PLAN\.md$''',   # Historical record intentionally references old token prefixes
   '''docs/SECRET-SAFETY-SOP\.md$''',     # The SOP itself cites historical-leak values in §9.6 context
+  '''docs/VULN-DISCLOSURE-SOP\.md$''',   # Severity-rubric prose trips high-entropy generic-api-key (false positive)
   '''\.gitleaks\.toml$''',               # This file — avoids self-match on the known-historical values
   '''public/logo\.png$''',               # Binary asset
   '''public/icon-.*\.png$''',            # Binary asset
