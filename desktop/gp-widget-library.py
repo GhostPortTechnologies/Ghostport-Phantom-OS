@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GhostPort Widget Library — mission control for desktop layout & theme.
+Phantom OS Accessibility — mission control for desktop layout & theme.
 
 Three functions:
   1. Theme picker — 8 presets + custom hex; calls the gp-theme engine which
@@ -63,7 +63,7 @@ DESKTOP_APPS = [
     ("Quartermaster", "gp-audit.svg",      "python3 /opt/phantom/desktop/gp-quartermaster.py", "Security Scan"),
     ("Dashboard",     "gp-dashboard.png",  "brave-browser --app=https://localhost:4201",       "Web UI"),
     ("Brave",         "gp-brave.png",      "brave-browser",                                     "Web Browser"),
-    ("Chamber",       "gp-chamber.svg",    "brave-browser --app=http://127.0.0.1:4242",        "AI Coordination"),
+    ("Chamber",       "gp-chamber.svg",    "brave-browser --user-data-dir=/home/ghostport-admin/.local/share/chamber-brave-profile --app=http://127.0.0.1:4242",        "AI Coordination"),
 ]
 
 # Same eight presets the bash gp-theme menu offers, in the same order.
@@ -79,7 +79,7 @@ THEME_PRESETS = [
 ]
 
 HELP_SECTIONS = [
-    ("What is the Widget Library?",
+    ("What is Accessibility?",
      "Mission control for your desktop. Pick an accent color to retheme the OS, "
      "and toggle which app icons live on the desktop for one-click access."),
     ("Theme picker",
@@ -243,7 +243,7 @@ class WidgetLibrary(GhostPortApp):
     """
 
     def __init__(self):
-        super().__init__("Widget Library", "widget-library", (980, 720))
+        super().__init__("Accessibility", "accessibility", (980, 720))
         self._apply_css(self.EXTRA_CSS)
         self.icon_positions = load_icon_positions()
         self.swatch_areas = []  # list of (hex_code, DrawingArea)
@@ -258,8 +258,8 @@ class WidgetLibrary(GhostPortApp):
 
         header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header = self.make_header(
-            title="Widget Library",
-            subtitle="Theme · Desktop Icons",
+            title="Accessibility",
+            subtitle="Theme · Widgets · Layout",
         )
         header_row.pack_start(header, True, True, 0)
         help_btn = self.make_help_button(sections=HELP_SECTIONS)

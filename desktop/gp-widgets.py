@@ -2169,7 +2169,7 @@ def main():
 
     engine = WidgetEngine()
 
-    # SIGUSR2 = reload layout from disk (sent by Widget Library app)
+    # SIGUSR2 = reload layout from disk (sent by Accessibility app)
     GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGUSR2, engine.reload_layout)
     GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGTERM, engine.shutdown)
     GLib.unix_signal_add(GLib.PRIORITY_HIGH, signal.SIGINT, engine.shutdown)

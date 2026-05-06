@@ -70,8 +70,8 @@ DESKTOP_APPS = [
     ("Quartermaster",  "gp-audit.svg",       "python3 /opt/phantom/desktop/gp-quartermaster.py", "Security Scan"),
     ("Dashboard",      "gp-dashboard.png",   "brave-browser --app=https://localhost:4201",         "Web UI"),
     ("Brave",          "gp-brave.png",       "brave-browser",                                      "Web Browser"),
-    ("Widget Library", "gp-widget-library.svg", "python3 /opt/phantom/desktop/gp-widget-library.py", "Desktop Widgets"),
-    ("Chamber",        "gp-chamber.svg",     "brave-browser --app=http://127.0.0.1:4242",          "AI Coordination"),
+    ("Accessibility",  "gp-widget-library.svg", "python3 /opt/phantom/desktop/gp-widget-library.py", "Display & Theme"),
+    ("Chamber",        "gp-chamber.svg",     "brave-browser --user-data-dir=/home/ghostport-admin/.local/share/chamber-brave-profile --app=http://127.0.0.1:4242",          "AI Coordination"),
 ]
 
 WIDGET_TILES = [
@@ -123,13 +123,26 @@ def load_positions():
         return {}
 
 
-def save_positions(positions):
-    os.makedirs(os.path.dirname(POSITIONS_FILE), exist_ok=True)
+def _atomic_write_json(path, payload):
+    """Write JSON atomically: temp file in same dir, fsync, rename."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}"
     try:
-        with open(POSITIONS_FILE, "w") as f:
-            json.dump(positions, f, indent=2)
+        with open(tmp, "w") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
     except OSError as e:
-        print(f"Save positions error: {e}", file=sys.stderr)
+        print(f"Atomic write {path} error: {e}", file=sys.stderr)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def save_positions(positions):
+    _atomic_write_json(POSITIONS_FILE, positions)
 
 
 def default_position(idx):
@@ -553,9 +566,7 @@ class DesktopCanvas:
         if len(new_items) == len(items):
             return False
         cfg["items"] = new_items
-        os.makedirs(os.path.dirname(DOCK_CONFIG), exist_ok=True)
-        with open(DOCK_CONFIG, "w") as fh:
-            json.dump(cfg, fh, indent=2)
+        _atomic_write_json(DOCK_CONFIG, cfg)
         try:
             with open(DOCK_PID_FILE) as fh:
                 os.kill(int(fh.read().strip()), signal.SIGUSR1)
@@ -582,7 +593,7 @@ class DesktopCanvas:
                 mi.connect("activate", lambda _m: self._pin_to_dock(sp))
             menu.append(mi)
 
-        # Hide from Desktop (apps + files; widgets manage themselves via Widget Library)
+        # Hide from Desktop (apps + files; widgets manage themselves via Accessibility)
         if sp.kind in ("app", "file"):
             mi = Gtk.MenuItem(label="Hide from Desktop")
             mi.connect("activate", lambda _m: self._hide_sprite_and_redraw(sp))
@@ -669,11 +680,11 @@ class DesktopCanvas:
                 ("Server Logs",         ["bash", "-c", "xfce4-terminal -x bash -c\"sudo journalctl -u ghostport -f\""]),
             ]),
             ("Desktop", [
-                ("Widget Library",      [f"{HOME}/.local/bin/gp-widgets", "library"]),
+                ("Accessibility",       [f"{HOME}/.local/bin/gp-widgets", "library"]),
                 ("Theme Picker",        ["bash", "-c", f"xfce4-terminal -x {HOME}/.local/bin/gp-theme menu"]),
                 ("Pirate Cursors",      ["bash", "-c", f"{HOME}/.local/bin/gp-cursor pirate && notify-send 'Phantom OS' 'Pirate cursors ON' && labwc --reconfigure"]),
                 ("Default Cursors",     ["bash", "-c", f"{HOME}/.local/bin/gp-cursor default && notify-send 'Phantom OS' 'Default cursors restored' && labwc --reconfigure"]),
-                ("Chamber Chat",        ["brave-browser", "--app=http://127.0.0.1:4242"]),
+                ("Chamber Chat",        ["brave-browser", "--user-data-dir=/home/ghostport-admin/.local/share/chamber-brave-profile", "--app=http://127.0.0.1:4242"]),
                 ("Start Menu",          [f"{HOME}/.local/bin/gp-menu"]),
             ]),
             ("---",            None),
@@ -807,9 +818,7 @@ class DesktopCanvas:
             "icon": os.path.join(ICON_DIR, icon_file),
             "command": cmd,
         })
-        os.makedirs(os.path.dirname(DOCK_CONFIG), exist_ok=True)
-        with open(DOCK_CONFIG, "w") as fh:
-            json.dump(cfg, fh, indent=2)
+        _atomic_write_json(DOCK_CONFIG, cfg)
         try:
             with open(DOCK_PID_FILE) as fh:
                 os.kill(int(fh.read().strip()), signal.SIGUSR1)

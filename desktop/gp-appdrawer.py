@@ -133,15 +133,15 @@ _FALLBACK_APPS = [
     ),
     ("Brave", "gp-brave.png", "brave-browser", "Web Browser"),
     (
-        "Widget Library",
+        "Accessibility",
         "gp-widget-library.svg",
         "python3 /opt/phantom/desktop/gp-widget-library.py",
-        "Desktop Widgets",
+        "Display & Theme",
     ),
     (
         "Chamber",
         "gp-chamber.svg",
-        "brave-browser --app=http://127.0.0.1:4242",
+        "brave-browser --user-data-dir=/home/ghostport-admin/.local/share/chamber-brave-profile --app=http://127.0.0.1:4242",
         "AI Coordination",
     ),
 ]

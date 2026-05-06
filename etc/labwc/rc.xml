@@ -92,7 +92,7 @@
     <keybind key="W-g">
       <action name="Execute"><command>python3 /opt/ghostport/desktop/ghostport-shortcuts.py</command></action>
     </keybind>
-    <!-- Open Widget Library -->
+    <!-- Open Accessibility -->
     <keybind key="W-w">
       <action name="Execute"><command>/home/ghostport-admin/.local/bin/gp-widgets library</command></action>
     </keybind>
