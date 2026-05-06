@@ -247,12 +247,10 @@ class Dock(Gtk.Window):
                                  spacing=ITEM_SPACING)
         outer.pack_start(self.items_box, False, False, 0)
 
-        # App Drawer launcher — right end, hardcoded, can't be unpinned
-        # Mirrors the logo_btn pattern on the opposite end.
-        sep_r = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
-        sep_r.get_style_context().add_class("dock-sep")
-        outer.pack_end(sep_r, False, False, 0)
-
+        # App Drawer launcher — right end, hardcoded, can't be unpinned.
+        # Mirrors the logo_btn pattern on the opposite end. Pack-end order
+        # matters: the FIRST pack_end is the rightmost, so we pack the
+        # button first, then the separator on its LEFT.
         self.appdrawer_btn = Gtk.Button()
         self.appdrawer_btn.get_style_context().add_class("dock-logo")
         appdrawer_icon = os.path.join(ICON_DIR, "gp-appdrawer.svg")
@@ -268,6 +266,10 @@ class Dock(Gtk.Window):
         self.appdrawer_btn.set_tooltip_text("App Drawer — all apps (Super+A)")
         self.appdrawer_btn.connect("clicked", self._open_appdrawer)
         outer.pack_end(self.appdrawer_btn, False, False, 0)
+
+        sep_r = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        sep_r.get_style_context().add_class("dock-sep")
+        outer.pack_end(sep_r, False, False, 0)
 
         self._rebuild_items()
         self._apply_visibility()
