@@ -636,11 +636,19 @@ class DesktopCanvas:
         FOOT = "xfce4-terminal -x "
         HOME = os.path.expanduser("~")
         DESK = "/opt/phantom/desktop"
+        # Editing primitives go FIRST (Windows/macOS muscle-memory). Each is
+        # a callable handler dispatched via the special "__handler__" payload
+        # marker (see _build_menu_from_tree).
         tree = [
+            ("Paste",       ("__handler__", self._on_menu_paste)),
+            ("Select All",  ("__handler__", self._on_menu_select_all)),
+            ("Refresh",     ("__handler__", self._on_menu_refresh)),
+            ("---",         None),
             ("Quick Settings", [f"{HOME}/.local/bin/gp-quick-settings"]),
             ("Switch Mode",    [f"{HOME}/.local/bin/gp-mode-menu"]),
             ("Dashboard",      ["brave-browser", "--app=https://localhost:4201"]),
             ("All Apps…",      ["python3", f"{DESK}/gp-appdrawer.py"]),
+            ("Lock Screen",    ["swaylock"]),
             ("---",            None),
             ("Privacy Tools", [
                 ("Bulkhead (Firewall)",           ["python3", f"{DESK}/gp-bulkhead.py"]),
@@ -660,11 +668,6 @@ class DesktopCanvas:
                 ("Logbook (Event Log)",               ["python3", f"{DESK}/gp-logbook.py"]),
                 ("Sea Urchin (System Health)",        ["python3", f"{DESK}/gp-seaurchin.py"]),
                 ("Gangplank (USB Manager)",           ["python3", f"{DESK}/gp-gangplank.py"]),
-            ]),
-            ("Terminal Tools", [
-                ("Clipboard Privacy",  FOOT + f"{HOME}/.local/bin/gp-clipboard"),
-                ("Privacy Report",     FOOT + f"{HOME}/.local/bin/gp-privacy-report"),
-                ("Privacy Digest",     FOOT + f"{HOME}/.local/bin/gp-digest --full"),
             ]),
             ("Network", [
                 ("WiFi WAN Settings",   ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-wan status; echo; echo 'Commands: gp-wan scan | gp-wan connect SSID pass'; bash\""]),
@@ -694,18 +697,77 @@ class DesktopCanvas:
             ("Code Editor",    ["geany"]),
             ("Screenshot",     ["bash", "-c", f"mkdir -p {HOME}/Screenshots && grim -g \"$(slurp)\" {HOME}/Screenshots/$(date +%Y%m%d_%H%M%S).png"]),
             ("---",            None),
-            ("Development", [
+            ("More", [
+                ("Clipboard Privacy",  FOOT + f"{HOME}/.local/bin/gp-clipboard"),
+                ("Privacy Report",     FOOT + f"{HOME}/.local/bin/gp-privacy-report"),
+                ("Privacy Digest",     FOOT + f"{HOME}/.local/bin/gp-digest --full"),
+            ]),
+        ]
+        # Development tools — present only on dev images. Marker file
+        # /opt/ghostport/.dev-image (created during dev-Pi setup, stripped
+        # from customer images per project_golden_image_prep). Customer
+        # menu never shows Open Server Code / Git Log / Restart Server —
+        # those are dev-only and one-click sudo restarts are too risky.
+        # On dev Pi, these are also reachable via Super+D.
+        if os.path.isfile("/opt/ghostport/.dev-image"):
+            tree.append(("---", None))
+            tree.append(("Development", [
                 ("Open Server Code",    ["geany", "/opt/phantom/ghostport-server.js"]),
                 ("Git Log",             ["bash", "-c", "xfce4-terminal -x bash -c\"cd /opt/phantom && git log --oneline -20; bash\""]),
                 ("Restart Server",      ["bash", "-c", "xfce4-terminal -x bash -c\"sudo systemctl restart ghostport; echo Server restarted; sleep 2\""]),
-            ]),
-            ("Power", [
-                ("Lock Screen",         ["swaylock"]),
-                ("Reboot",              ["bash", "-c", "xfce4-terminal -x bash -c\"echo 'Rebooting in 3 seconds...'; sleep 3; sudo reboot\""]),
-                ("Shutdown",            ["bash", "-c", "xfce4-terminal -x bash -c\"echo 'Shutting down in 3 seconds...'; sleep 3; sudo poweroff\""]),
-            ]),
-        ]
+            ]))
         return self._build_menu_from_tree(tree)
+
+    # ── Editing-primitive handlers ─────────────────────────────────
+
+    def _on_menu_paste(self, _menu_item):
+        """Paste clipboard contents to ~/Desktop. Auto-detect content kind:
+        - if it's an existing file path, copy that file
+        - otherwise treat as text and write to ~/Desktop/clipboard-<ts>.txt"""
+        try:
+            r = subprocess.run(["wl-paste", "-n"], capture_output=True, text=True, timeout=3)
+            if r.returncode != 0 or not r.stdout:
+                subprocess.Popen(["notify-send", "Paste", "Clipboard is empty."])
+                return
+            payload = r.stdout
+            os.makedirs(DESKTOP_DIR, exist_ok=True)
+            # File-path detection: single line, no trailing whitespace, exists
+            stripped = payload.strip()
+            if "\n" not in stripped and os.path.isfile(stripped):
+                import shutil as _sh
+                dest = os.path.join(DESKTOP_DIR, os.path.basename(stripped))
+                _sh.copy2(stripped, dest)
+                subprocess.Popen(["notify-send", "Paste", f"Copied {os.path.basename(stripped)} to Desktop"])
+            else:
+                ts = __import__("time").strftime("%Y%m%d-%H%M%S")
+                dest = os.path.join(DESKTOP_DIR, f"clipboard-{ts}.txt")
+                with open(dest, "w") as fh:
+                    fh.write(payload)
+                subprocess.Popen(["notify-send", "Paste", f"Saved clipboard to {os.path.basename(dest)}"])
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
+            subprocess.Popen(["notify-send", "Paste failed", str(e)])
+
+    def _on_menu_select_all(self, _menu_item):
+        """Stub: visual multi-select isn't implemented yet (would need a
+        sprite.selected flag + lasso/shift-click + draw-time highlight).
+        Surface what the menu item promises and what it currently does."""
+        subprocess.Popen([
+            "notify-send", "Select All",
+            "Multi-select isn't wired yet. Use App Drawer (Super+A) to manage icons in bulk."
+        ])
+
+    def _on_menu_refresh(self, _menu_item):
+        """Re-read positions, reload icon pixbufs, rebuild widget sprites."""
+        try:
+            self.positions = load_positions()
+            # Force sprite icon reload by zeroing the mtime cache
+            for sp in self.sprites:
+                sp.icon_mtime = 0
+            self._poll()  # idempotent — reads everything fresh
+            self.area.queue_draw()
+            subprocess.Popen(["notify-send", "Desktop", "Refreshed."])
+        except Exception as e:
+            subprocess.Popen(["notify-send", "Refresh failed", str(e)])
 
     def _build_menu_from_tree(self, tree):
         menu = Gtk.Menu()
@@ -714,7 +776,12 @@ class DesktopCanvas:
                 menu.append(Gtk.SeparatorMenuItem())
                 continue
             mi = Gtk.MenuItem(label=label)
-            if isinstance(payload, list) and payload and isinstance(payload[0], tuple):
+            # Tagged-tuple payload — first element "__handler__" means the
+            # second is a Python callable (used by Paste / Refresh / etc.).
+            if (isinstance(payload, tuple) and len(payload) == 2
+                    and payload[0] == "__handler__" and callable(payload[1])):
+                mi.connect("activate", payload[1])
+            elif isinstance(payload, list) and payload and isinstance(payload[0], tuple):
                 # submenu: list of (label, argv-or-shellstring) tuples
                 sub = Gtk.Menu()
                 for sub_label, sub_cmd in payload:
