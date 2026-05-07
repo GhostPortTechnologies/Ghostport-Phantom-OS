@@ -37,12 +37,14 @@ def _parse_timestamp(ts):
                 continue
     return None
 
-CATEGORIES = ["All", "mode", "config", "security", "network"]
+CATEGORIES = ["All", "system", "auth", "mode", "security", "config", "network"]
 CATEGORY_LABELS = {
     "All": "All Events",
+    "system": "System",
+    "auth": "Auth",
     "mode": "Mode",
-    "config": "Config",
     "security": "Security",
+    "config": "Config",
     "network": "Network",
 }
 
@@ -234,14 +236,14 @@ class LogbookApp(GhostPortApp):
             else:
                 self._events = []
 
-            self._events.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+            self._events.sort(key=lambda e: e.get("ts") or e.get("timestamp", ""), reverse=True)
             # Cap at 2000 most recent events for resource safety
             if len(self._events) > 2000:
                 self._events = self._events[:2000]
 
             for evt in self._events:
-                ts = evt.get("timestamp", "?")
-                cat = evt.get("category", "?")
+                ts = evt.get("ts") or evt.get("timestamp", "?")
+                cat = evt.get("type") or evt.get("category", "?")
                 msg = evt.get("message", "")
                 self._store.append([ts, cat, msg])
 
@@ -268,11 +270,11 @@ class LogbookApp(GhostPortApp):
             return
 
         today = datetime.now().strftime("%Y-%m-%d")
-        today_count = sum(1 for e in self._events if e.get("timestamp", "").startswith(today))
+        today_count = sum(1 for e in self._events if (e.get("ts") or e.get("timestamp", "")).startswith(today))
         self._lbl_today.set_text(f"Today: {today_count}")
 
         # Top category
-        cat_counts = Counter(e.get("category", "?") for e in self._events)
+        cat_counts = Counter((e.get("type") or e.get("category", "?")) for e in self._events)
         if cat_counts:
             top_cat, top_count = cat_counts.most_common(1)[0]
             self._lbl_top_cat.set_text(f"Top: {top_cat} ({top_count})")
@@ -283,7 +285,7 @@ class LogbookApp(GhostPortApp):
         now = time.time()
         recent = 0
         for e in self._events:
-            ts = e.get("timestamp", "")
+            ts = e.get("ts") or e.get("timestamp", "")
             parsed = _parse_timestamp(ts)
             if parsed is not None:
                 try:
@@ -396,8 +398,8 @@ class LogbookApp(GhostPortApp):
         # Find related: same category within 5 minutes
         related = []
         for evt in self._events:
-            evt_ts = evt.get("timestamp", "")
-            evt_cat = evt.get("category", "")
+            evt_ts = evt.get("ts") or evt.get("timestamp", "")
+            evt_cat = evt.get("type") or evt.get("category", "")
             if evt_cat != cat or evt_ts == ts_str:
                 continue
             evt_parsed = _parse_timestamp(evt_ts)
@@ -417,7 +419,7 @@ class LogbookApp(GhostPortApp):
             self._corr_box.show()
             for evt in related[:10]:  # Cap display at 10
                 row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-                lbl_ts = self.make_label(evt.get("timestamp", "?"), "gp-dim")
+                lbl_ts = self.make_label(evt.get("ts") or evt.get("timestamp", "?"), "gp-dim")
                 lbl_ts.set_size_request(140, -1)
                 row.pack_start(lbl_ts, False, False, 0)
                 lbl_msg = self.make_label(evt.get("message", ""), "gp-text")
@@ -432,6 +434,8 @@ class LogbookApp(GhostPortApp):
         c = self.colors
         mapping = {
             "mode": _hex_to_rgb(c.get("info", "#4db8ff")),
+            "auth": _hex_to_rgb(c.get("info", "#4db8ff")),
+            "system": _hex_to_rgb(c.get("success", "#80e680")),
             "config": _hex_to_rgb(c.get("success", "#80e680")),
             "security": _hex_to_rgb(c.get("danger", "#ff6666")),
             "network": _hex_to_rgb(c.get("warning", "#ffcc4d")),
@@ -475,8 +479,8 @@ class LogbookApp(GhostPortApp):
         now = time.time()
         hourly = {}  # hour_offset -> {category: count}
         for evt in self._events:
-            ts = evt.get("timestamp", "")
-            cat = evt.get("category", "?")
+            ts = evt.get("ts") or evt.get("timestamp", "")
+            cat = evt.get("type") or evt.get("category", "?")
             parsed = _parse_timestamp(ts)
             if parsed is not None:
                 try:
