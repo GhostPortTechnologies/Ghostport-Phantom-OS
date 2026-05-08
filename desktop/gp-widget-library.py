@@ -75,7 +75,6 @@ THEME_PRESETS = [
     ("Red Alert",   "ff4444"),
     ("Gold",        "ffd700"),
     ("White",       "ffffff"),
-    ("Rainbow",     "RAINBOW"),
 ]
 
 HELP_SECTIONS = [
@@ -248,6 +247,7 @@ class WidgetLibrary(GhostPortApp):
         self.icon_positions = load_icon_positions()
         self.swatch_areas = []  # list of (hex_code, DrawingArea)
         self.toggles = {}       # label -> Gtk.Switch
+        self._card_icons = {}   # label -> (Gtk.Image, icon_file) for theme reload
         self._build_ui()
 
     # ── UI construction ──
@@ -428,6 +428,30 @@ class WidgetLibrary(GhostPortApp):
         self._apply_theme(text.lstrip("#").lower())
 
     def _apply_theme(self, hex_code):
+        # Rainbow mode forces every theme-aware app to re-derive colors and
+        # re-apply CSS on every poll tick — measurable CPU cost and warmth.
+        # Gate behind a confirm so it isn't a one-click trap.
+        if hex_code == "RAINBOW":
+            dlg = Gtk.MessageDialog(
+                transient_for=self,
+                modal=True,
+                message_type=Gtk.MessageType.WARNING,
+                buttons=Gtk.ButtonsType.NONE,
+                text="Enable Rainbow theme?",
+            )
+            dlg.format_secondary_text(
+                "Rainbow cycles the accent color continuously. Every theme-aware "
+                "app (waybar, dock, all 17 desktop apps) re-applies CSS and rebuilds "
+                "icon pixbufs on each tick — measurable CPU cost on a Pi.\n\n"
+                "Pick a solid color preset for normal use; rainbow is a novelty mode."
+            )
+            dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+            dlg.add_button("Enable Rainbow anyway", Gtk.ResponseType.OK)
+            dlg.set_default_response(Gtk.ResponseType.CANCEL)
+            response = dlg.run()
+            dlg.destroy()
+            if response != Gtk.ResponseType.OK:
+                return
         if not apply_theme(hex_code):
             self.show_error(
                 "Theme apply failed",
@@ -497,8 +521,9 @@ class WidgetLibrary(GhostPortApp):
         sub_lbl = Gtk.Label(label=subtitle)
         sub_lbl.set_halign(Gtk.Align.CENTER)
         sub_lbl.get_style_context().add_class("gp-dim")
-        sub_lbl.set_max_width_chars(24)
-        sub_lbl.set_ellipsize(Pango.EllipsizeMode.END)
+        sub_lbl.set_max_width_chars(36)
+        sub_lbl.set_line_wrap(True)
+        sub_lbl.set_justify(Gtk.Justification.CENTER)
         inner.pack_start(sub_lbl, False, False, 0)
 
         toggle_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -566,6 +591,8 @@ class WidgetLibrary(GhostPortApp):
             img = Gtk.Image.new_from_icon_name("application-x-executable", Gtk.IconSize.DIALOG)
         img.set_halign(Gtk.Align.CENTER)
         inner.pack_start(img, False, False, 0)
+        # Track for on_theme_changed → _reload_card_icons (gp-theme rewrites SVGs in place)
+        self._card_icons[label] = (img, icon_file)
 
         name_lbl = Gtk.Label(label=label)
         name_lbl.set_halign(Gtk.Align.CENTER)
@@ -636,6 +663,18 @@ class WidgetLibrary(GhostPortApp):
         self._refresh_current_label()
         for _, area in self.swatch_areas:
             area.queue_draw()
+        self._reload_card_icons()
+
+    def _reload_card_icons(self):
+        """gp-theme rewrites SVG files in place; pixbufs cached at _build_ui
+        time stay stale until reload. Re-read each card's SVG from disk."""
+        for label, (img, icon_file) in self._card_icons.items():
+            icon_path = os.path.join(ICON_DIR, icon_file)
+            try:
+                pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(icon_path, 56, 56, True)
+                img.set_from_pixbuf(pix)
+            except Exception:
+                pass
 
 
 # ── Main ─────────────────────────────────────────────────────────────

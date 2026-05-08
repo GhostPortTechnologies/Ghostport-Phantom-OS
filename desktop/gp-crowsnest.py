@@ -31,6 +31,35 @@ CORRELATION_DISPLAY_WINDOW_S = 3600  # only show findings whose first_evidence_t
 GEOIP_DB = "/usr/share/GeoIP/GeoLite2-Country-Blocks-IPv4.csv"
 GEOIP_LOCATIONS = "/usr/share/GeoIP/GeoLite2-Country-Locations-en.csv"
 
+# T-0140: known WireGuard peer endpoints — return packets from these IPs
+# (or any UDP source on port 51820) are tunnel housekeeping, not malicious
+# probes. Reads from /etc/ghostport/known-wg-peers.json (world-readable
+# cache). Future regions append to that file; no code change needed.
+# /etc/wireguard/*.conf is root-only, so direct parse isn't available to
+# the desktop user.
+KNOWN_PEERS_FILE = "/etc/ghostport/known-wg-peers.json"
+_WG_PEERS_CACHE = {"ts": 0.0, "ips": set()}
+
+def _known_wg_peers():
+    """Return set of IPs from the world-readable peer cache.
+    Cached for 60s so we're not opening the file on every drop event."""
+    now = time.time()
+    if now - _WG_PEERS_CACHE["ts"] < 60:
+        return _WG_PEERS_CACHE["ips"]
+    ips = set()
+    try:
+        with open(KNOWN_PEERS_FILE) as f:
+            data = json.load(f)
+        for entry in data.get("peers", []):
+            ip = entry.get("ip", "").strip()
+            if ip:
+                ips.add(ip)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    _WG_PEERS_CACHE["ts"] = now
+    _WG_PEERS_CACHE["ips"] = ips
+    return ips
+
 # ── Threat Classification ─────────────────────────────────────────────
 
 def classify_drop(src, dst, proto, spt, dpt, in_iface):
@@ -78,6 +107,10 @@ def classify_drop(src, dst, proto, spt, dpt, in_iface):
     if proto_upper in ("ICMP", "1"):
         return "ICMP ping/probe", "info"
     if dpt_int > 1024 and in_iface == "eth0":
+        # T-0140: stale WireGuard return traffic from known peers (across
+        # regions, before/after gp-region toggles) shouldn't show as WARNING.
+        if src in _known_wg_peers() or spt_int == 51820:
+            return "WireGuard peer return traffic (session/region change)", "info"
         return f"Unsolicited inbound on port {dpt_int} (WAN)", "warning"
     port_info = f" on port {dpt_int}" if dpt_int else ""
     return f"Unsolicited packet dropped{port_info}", "info"

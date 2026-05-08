@@ -130,6 +130,15 @@ check "disk" \
     "pct=\$(df / | awk 'NR==2{print \$5}' | tr -d '%'); [ \$pct -lt 90 ] && echo \${pct}%-used || (echo \${pct}%-CRITICAL && exit 1)" \
     "false"
 
+# --- Locale / encoding sanity (warning, not failure) ---
+# xfce4-terminal first-run default ships Encoding=IBM850 on this Debian-arm64
+# build, which corrupts UTF-8 art (neofetch braille, box-drawing) to mojibake.
+# Fix: sed -i 's/^Encoding=.*/Encoding=UTF-8/' on terminalrc. Memory:
+# feedback_xfce4_terminal_utf8.md (2026-05-07).
+TERMINALRC="/home/ghostport-admin/.config/xfce4/terminal/terminalrc"
+check "terminal-utf8" \
+    "[ ! -f $TERMINALRC ] && echo no-terminalrc && exit 0; grep -q '^Encoding=UTF-8' $TERMINALRC && echo UTF-8 || (enc=$(grep ^Encoding= $TERMINALRC | cut -d= -f2); echo ${enc:-missing}-NOT-UTF8 && exit 1)" \
+    "true"
 # --- Build JSON output ---
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 HEALTHY=$( [ $FAILURES -eq 0 ] && echo "true" || echo "false" )

@@ -189,6 +189,7 @@ class BulkheadApp(GhostPortApp):
         self.rule_count = 0
         self.table_count = 0
         self.search_text = ""    # search/filter text
+        self.firing_only = False  # T-0136: hide rules that aren't actively firing
         self.undo_stack = []     # list of (family, table, chain, rule_expr) for undo
         self._prev_packets = {}  # (table, chain, handle) -> packet count for trend arrows
         self._zero_hit_since = {}  # (table, chain, handle) -> first_seen_time for dead rule detection
@@ -339,6 +340,13 @@ class BulkheadApp(GhostPortApp):
         search_box.pack_start(self.search_entry, True, True, 0)
         clear_search = self.make_button("Clear", self._on_clear_search, "gp-btn")
         search_box.pack_start(clear_search, False, False, 0)
+        # T-0136: filter to rules that have actually fired (counter > 0)
+        firing_chk = Gtk.CheckButton(label="Firing only")
+        firing_chk.set_tooltip_text(
+            "Hide rules with zero packets. Quick way to see which rules are doing work."
+        )
+        firing_chk.connect("toggled", self._on_firing_toggle)
+        search_box.pack_start(firing_chk, False, False, 0)
         right.pack_start(search_box, False, False, 0)
 
         # TreeView for rules
@@ -1077,18 +1085,26 @@ class BulkheadApp(GhostPortApp):
                 pkts_raw = int(m.group(1))
                 bytes_raw = int(m.group(2))
 
+            # T-0136: hide zero-traffic rules when firing-only filter is on
+            if self.firing_only and pkts_raw == 0:
+                continue
+
             total_pkts += pkts_raw
             total_bytes_val += bytes_raw
 
-            # Trend arrow based on previous packet count
+            # Δpackets-per-poll — tells the user how busy this rule IS
+            # right now, not just direction. Falls back to a simple arrow
+            # when no prior sample exists.
             key = (r["table"], r["chain"], r["handle"])
             prev_pkts = self._prev_packets.get(key)
             trend = ""
             if prev_pkts is not None:
-                if pkts_raw > prev_pkts:
-                    trend = " \u2191"  # ↑
-                elif pkts_raw < prev_pkts:
-                    trend = " \u2193"  # ↓
+                delta = pkts_raw - prev_pkts
+                if delta > 0:
+                    trend = f"  +{self._fmt_count(delta)}"
+                elif delta < 0:
+                    # Counter rolled / reset — show neutral marker
+                    trend = "  \u21bb"  # ↻
             new_prev[key] = pkts_raw
 
             # Dead rule flagging: track rules with 0 packets for >24h
@@ -1152,6 +1168,10 @@ class BulkheadApp(GhostPortApp):
     def _on_clear_search(self, button):
         self.search_entry.set_text("")
         self.search_text = ""
+        self._update_treeview()
+
+    def _on_firing_toggle(self, chk):
+        self.firing_only = chk.get_active()
         self._update_treeview()
 
     # ── Button Handlers ──────────────────────────────────────────────

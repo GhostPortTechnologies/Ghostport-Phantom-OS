@@ -874,7 +874,7 @@ class SonarApp(GhostPortApp):
         Tighter than a generic GtkMessageDialog so the ask reads quickly:
         what the mode logs, whose data it logs, retention window."""
         dlg = Gtk.MessageDialog(
-            transient_for=self.window,
+            transient_for=self,
             modal=True,
             destroy_with_parent=True,
             message_type=Gtk.MessageType.WARNING,
@@ -916,7 +916,7 @@ class SonarApp(GhostPortApp):
 
         dlg = Gtk.Dialog(
             title="Probe-Request Capture",
-            transient_for=self.window,
+            transient_for=self,
             modal=True,
         )
         dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
@@ -1062,7 +1062,7 @@ class SonarApp(GhostPortApp):
                 self.set_status(f"Probe capture: {chosen.upper()} (sniffer restarted)")
             else:
                 err_dlg = Gtk.MessageDialog(
-                    transient_for=self.window,
+                    transient_for=self,
                     modal=True,
                     message_type=Gtk.MessageType.ERROR,
                     buttons=Gtk.ButtonsType.OK,
@@ -1079,6 +1079,7 @@ class SonarApp(GhostPortApp):
     # neutral tier for ignored APs (item 3).
     def _extra_css(self):
         return """
+.gp-status-bar { font-size: 13px; }
 .gp-card-suspicious {
     background-color: rgba(255, 140, 50, 0.08);
     border: 1px solid rgba(255, 140, 50, 0.40);

@@ -239,6 +239,13 @@ class DesktopCanvas:
         self.sprites = []                    # all sprites in z-order (last = top)
         self.status_data = read_status_cache() or {}
         self._desktop_files = []
+        # Hot-reloadable menu CSS — ~/.config/gtk-3.0/gtk.css is loaded ONCE
+        # at app startup by GTK, so theme changes don't reach an already-running
+        # gp-desktop-icons. We add a process-local CSS provider here and refresh
+        # it from _poll() when the accent changes, keeping right-click menu
+        # colors in sync with theme.json without a relaunch.
+        self._menu_css_provider = None
+        self._apply_menu_css()
 
         # Drag state
         self.dragged = None                  # Sprite currently being dragged
@@ -633,89 +640,21 @@ class DesktopCanvas:
         # Privacy Tools / Monitoring / Terminal Tools split added 2026-04-20
         # when the old fuzzel-based gp-menu was replaced — TUIs moved into a
         # clearly-labeled Terminal Tools bucket to end the GTK-vs-TUI duplication.
-        FOOT = "xfce4-terminal -x "
         HOME = os.path.expanduser("~")
-        DESK = "/opt/phantom/desktop"
-        # Editing primitives go FIRST (Windows/macOS muscle-memory). Each is
-        # a callable handler dispatched via the special "__handler__" payload
-        # marker (see _build_menu_from_tree).
+        # Terminal-style editing menu — operator preference 2026-05-07.
+        # All launchers moved to the App Drawer / start menu; right-click is
+        # for desktop-context primitives only. App Drawer is one Super+A away.
         tree = [
-            ("Paste",       ("__handler__", self._on_menu_paste)),
-            ("Select All",  ("__handler__", self._on_menu_select_all)),
-            ("Refresh",     ("__handler__", self._on_menu_refresh)),
-            ("---",         None),
-            ("Quick Settings", [f"{HOME}/.local/bin/gp-quick-settings"]),
-            ("Switch Mode",    [f"{HOME}/.local/bin/gp-mode-menu"]),
-            ("Dashboard",      ["brave-browser", "--app=https://localhost:4201"]),
-            ("All Apps…",      ["python3", f"{DESK}/gp-appdrawer.py"]),
-            ("Lock Screen",    ["swaylock"]),
-            ("---",            None),
-            ("Privacy Tools", [
-                ("Bulkhead (Firewall)",           ["python3", f"{DESK}/gp-bulkhead.py"]),
-                ("Anchor (Kill Switch)",          ["python3", f"{DESK}/gp-anchor.py"]),
-                ("Stonefish (ARP Guard)",         ["python3", f"{DESK}/gp-stonefish.py"]),
-                ("Seadevil (MAC Randomizer)",      ["python3", f"{DESK}/gp-seadevil.py"]),
-                ("Aether Box (Encrypted Vault)",  ["python3", f"{DESK}/gp-aetherbox.py"]),
-                ("Quartermaster (Security Scan)", ["python3", f"{DESK}/gp-quartermaster.py"]),
-            ]),
-            ("Monitoring", [
-                ("Crow's Nest (Intrusion Detection)", ["python3", f"{DESK}/gp-crowsnest.py"]),
-                ("Dragnet (Packet Capture)",          ["python3", f"{DESK}/gp-dragnet.py"]),
-                ("Sonar (Rogue AP Scanner)",          ["python3", f"{DESK}/gp-sonar.py"]),
-                ("Atlas (Network Topology)",          ["python3", f"{DESK}/gp-atlas.py"]),
-                ("Tide Chart (Bandwidth Heatmap)",    ["python3", f"{DESK}/gp-tidechart.py"]),
-                ("Crew Manifest (Connected Clients)", ["python3", f"{DESK}/gp-crewmanifest.py"]),
-                ("Logbook (Event Log)",               ["python3", f"{DESK}/gp-logbook.py"]),
-                ("Sea Urchin (System Health)",        ["python3", f"{DESK}/gp-seaurchin.py"]),
-                ("Gangplank (USB Manager)",           ["python3", f"{DESK}/gp-gangplank.py"]),
-            ]),
-            ("Network", [
-                ("WiFi WAN Settings",   ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-wan status; echo; echo 'Commands: gp-wan scan | gp-wan connect SSID pass'; bash\""]),
-                ("Pi-hole Admin",       ["brave-browser", "--app=http://localhost/admin"]),
-                ("Mode Status",         ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-mode status; bash\""]),
-            ]),
-            ("System", [
-                ("About This System",   FOOT + f"{HOME}/.local/bin/gp-about"),
-                ("System Update",       FOOT + f"{HOME}/.local/bin/gp-updater"),
-                ("Help & Shortcuts",    FOOT + f"{HOME}/.local/bin/gp-help"),
-                ("Preflight Check",     ["bash", "-c", "xfce4-terminal -x bash -c\"sudo gp-preflight; echo; read -p 'Press Enter to close...'\""]),
-                ("System Monitor",      FOOT + "htop"),
-                ("Server Logs",         ["bash", "-c", "xfce4-terminal -x bash -c\"sudo journalctl -u ghostport -f\""]),
-            ]),
-            ("Desktop", [
-                ("Accessibility",       [f"{HOME}/.local/bin/gp-widgets", "library"]),
-                ("Theme Picker",        ["bash", "-c", f"xfce4-terminal -x {HOME}/.local/bin/gp-theme menu"]),
-                ("Pirate Cursors",      ["bash", "-c", f"{HOME}/.local/bin/gp-cursor pirate && notify-send 'Phantom OS' 'Pirate cursors ON' && labwc --reconfigure"]),
-                ("Default Cursors",     ["bash", "-c", f"{HOME}/.local/bin/gp-cursor default && notify-send 'Phantom OS' 'Default cursors restored' && labwc --reconfigure"]),
-                ("Chamber Chat",        ["brave-browser", "--user-data-dir=/home/ghostport-admin/.local/share/chamber-brave-profile", "--app=http://127.0.0.1:4242"]),
-                ("Start Menu",          [f"{HOME}/.local/bin/gp-menu"]),
-            ]),
-            ("---",            None),
-            ("Terminal",       ["xfce4-terminal"]),
-            ("Files",          ["thunar"]),
-            ("Browser",        ["brave-browser"]),
-            ("Code Editor",    ["geany"]),
-            ("Screenshot",     ["bash", "-c", f"mkdir -p {HOME}/Screenshots && grim -g \"$(slurp)\" {HOME}/Screenshots/$(date +%Y%m%d_%H%M%S).png"]),
-            ("---",            None),
-            ("More", [
-                ("Clipboard Privacy",  FOOT + f"{HOME}/.local/bin/gp-clipboard"),
-                ("Privacy Report",     FOOT + f"{HOME}/.local/bin/gp-privacy-report"),
-                ("Privacy Digest",     FOOT + f"{HOME}/.local/bin/gp-digest --full"),
-            ]),
+            ("Copy",                 ("__handler__", self._on_menu_copy)),
+            ("Paste",                ("__handler__", self._on_menu_paste)),
+            ("Select All",           ("__handler__", self._on_menu_select_all)),
+            ("---",                  None),
+            ("Terminal",             ["xfce4-terminal", f"--working-directory={HOME}/Desktop"]),
+            ("Files",                ["thunar", f"{HOME}/Desktop"]),
+            ("Refresh",              ("__handler__", self._on_menu_refresh)),
+            ("---",                  None),
+            ("Preferences",          [f"{HOME}/.local/bin/gp-widgets", "library"]),
         ]
-        # Development tools — present only on dev images. Marker file
-        # /opt/ghostport/.dev-image (created during dev-Pi setup, stripped
-        # from customer images per project_golden_image_prep). Customer
-        # menu never shows Open Server Code / Git Log / Restart Server —
-        # those are dev-only and one-click sudo restarts are too risky.
-        # On dev Pi, these are also reachable via Super+D.
-        if os.path.isfile("/opt/ghostport/.dev-image"):
-            tree.append(("---", None))
-            tree.append(("Development", [
-                ("Open Server Code",    ["geany", "/opt/phantom/ghostport-server.js"]),
-                ("Git Log",             ["bash", "-c", "xfce4-terminal -x bash -c\"cd /opt/phantom && git log --oneline -20; bash\""]),
-                ("Restart Server",      ["bash", "-c", "xfce4-terminal -x bash -c\"sudo systemctl restart ghostport; echo Server restarted; sleep 2\""]),
-            ]))
         return self._build_menu_from_tree(tree)
 
     # ── Editing-primitive handlers ─────────────────────────────────
@@ -746,6 +685,14 @@ class DesktopCanvas:
                 subprocess.Popen(["notify-send", "Paste", f"Saved clipboard to {os.path.basename(dest)}"])
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as e:
             subprocess.Popen(["notify-send", "Paste failed", str(e)])
+
+    def _on_menu_copy(self, _menu_item):
+        """Stub: needs the same sprite-selection model as Select All.
+        Will copy the names of selected sprites to wl-copy once that lands."""
+        subprocess.Popen([
+            "notify-send", "Copy",
+            "Multi-select isn't wired yet — Copy will pick up selected icons once it is."
+        ])
 
     def _on_menu_select_all(self, _menu_item):
         """Stub: visual multi-select isn't implemented yet (would need a
@@ -895,12 +842,59 @@ class DesktopCanvas:
 
     # ── polling ────────────────────────────────────────────────────
 
+    def _apply_menu_css(self):
+        """Process-local CSS provider for the right-click Gtk.Menu.
+        ~/.config/gtk-3.0/gtk.css is loaded once at GTK init and never
+        re-read; this method runs at startup AND on every theme.json
+        change so the menu colors track the current accent without an app
+        relaunch. Priority APPLICATION wins over THEME so we override
+        Adwaita-dark + the user-config gtk.css both."""
+        try:
+            r, g, b = hex_to_rgb(self.accent)
+        except Exception:
+            return
+        css = f"""
+        menu, menu menuitem {{
+            background-color: rgba(0, 0, 0, 0.92);
+            color: rgba(220, 220, 220, 1.0);
+            border: 1px solid rgba({r},{g},{b}, 0.35);
+        }}
+        menu menuitem:hover, menu menuitem:focus, menu menuitem:active {{
+            background-color: rgba({r},{g},{b}, 0.18);
+            color: rgba({r},{g},{b}, 1.0);
+        }}
+        menu separator {{
+            background-color: rgba({r},{g},{b}, 0.20);
+            min-height: 1px;
+            margin: 2px 0;
+        }}
+        """
+        provider = Gtk.CssProvider()
+        try:
+            provider.load_from_data(css.encode("utf-8"))
+        except Exception:
+            return
+        screen = Gdk.Screen.get_default()
+        if self._menu_css_provider is not None and screen is not None:
+            try:
+                Gtk.StyleContext.remove_provider_for_screen(
+                    screen, self._menu_css_provider)
+            except Exception:
+                pass
+        if screen is not None:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen, provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+        self._menu_css_provider = provider
+
     def _poll(self):
         # Theme
         new_accent = read_theme()
         theme_changed = (new_accent != self.accent)
         if theme_changed:
             self.accent = new_accent
+            self._apply_menu_css()
 
         # Icon SVG mtime — reload pixbuf if file changed on disk
         sprites_changed = False

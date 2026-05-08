@@ -83,23 +83,29 @@ def oui_lookup(mac):
 _LEASES_CACHE = {"ts": 0, "map": {}}
 
 def _load_hostname_map():
-    """ip → hostname from dnsmasq leases (both stock and Pi-hole variants)."""
+    """ip → hostname via the gp-leases canonical helper.
+    Direct reads of /etc/pihole/dhcp.leases fail with PermissionError
+    because the file is owned pihole:pihole mode 640 and ghostport-admin
+    isn't in the pihole group. gp-leases runs under sudoer NOPASSWD and
+    handles dnsmasq/pihole path discovery + ARP fallback when leases stale.
+    """
     import time as _t
     if _t.time() - _LEASES_CACHE["ts"] < 5:
         return _LEASES_CACHE["map"]
     mapping = {}
-    for path in ["/var/lib/misc/dnsmasq.leases", "/etc/pihole/dhcp.leases"]:
-        try:
-            with open(path) as f:
-                for line in f:
-                    parts = line.split()
-                    # dnsmasq format: <expiry> <mac> <ip> <hostname> <client_id>
-                    if len(parts) >= 4 and parts[3] != "*":
-                        mapping[parts[2]] = parts[3]
-        except FileNotFoundError:
-            continue
-        except Exception:
-            continue
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "gp-leases"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                # dnsmasq format: <expiry> <mac> <ip> <hostname> <client_id>
+                if len(parts) >= 4 and parts[3] != "*":
+                    mapping[parts[2]] = parts[3]
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
     _LEASES_CACHE["ts"] = _t.time()
     _LEASES_CACHE["map"] = mapping
     return mapping
@@ -114,7 +120,7 @@ _ACTION_HINTS = {
     "SPOOFING":   "Disconnect & investigate",
     "GW CHANGED": "Check router, rebaseline if intended",
     "FAILED":     "Device likely offline",
-    "CLEAN":      "",
+    "CLEAN":      "✓ Verified",
 }
 def _action_hint(threat):
     return _ACTION_HINTS.get(threat, "")

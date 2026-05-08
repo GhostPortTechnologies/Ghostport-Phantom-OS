@@ -22,8 +22,11 @@ import cairo
 HISTORY_DIR = os.path.expanduser("~/.config/phantom")
 # Separate from TUI heatmap data (different format/granularity)
 HISTORY_FILE = os.path.join(HISTORY_DIR, "tidechart-history.json")
+INTRO_MARKER = os.path.join(HISTORY_DIR, ".tidechart-intro-seen")
 INTERFACES = ["eth0", "wlan0", "wg0", "wg1"]
 POLL_INTERVAL = 5  # seconds
+# Anomaly baseline needs ~7 days of history to be stable
+SPARSE_HISTORY_THRESHOLD_DAYS = 7
 
 RETENTION_CONFIG = "/etc/phantom/retention.json"
 
@@ -151,6 +154,55 @@ class TideChart(GhostPortApp):
 
         self.poll_start(POLL_INTERVAL, self._poll_bandwidth)
 
+        # First-run explainer (defer to idle so the window paints first)
+        if not os.path.exists(INTRO_MARKER):
+            GLib.idle_add(self._show_first_run_intro)
+
+    def _history_day_count(self):
+        """Number of distinct days in history across all interfaces."""
+        days = set()
+        for iface_data in self.history.values():
+            if isinstance(iface_data, dict):
+                days.update(iface_data.keys())
+        return len(days)
+
+    def _update_sparse_banner(self):
+        if self._history_day_count() < SPARSE_HISTORY_THRESHOLD_DAYS:
+            self._sparse_banner.show_all()
+        else:
+            self._sparse_banner.hide()
+
+    def _show_first_run_intro(self):
+        dlg = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.NONE,
+            text="What Tide Chart catches",
+        )
+        dlg.format_secondary_markup(
+            "<b>Rows = days</b> (newest at top). <b>Columns = hours</b> (0–23).\n"
+            "Bright cells = heavy traffic; dim = idle. Anomaly markers flag\n"
+            "unusually busy hours compared to your normal pattern.\n\n"
+            "<b>Real wins:</b>\n"
+            "• Compromised IoT beaconing at 3 AM (vertical streak)\n"
+            "• Streaming binge on a school night (wide bright band)\n"
+            "• VPN leak (wg1 should mirror eth0 in DoubleHop)\n"
+            "• ISP throttling patterns (consistent dim cells at peak hours)\n\n"
+            "Hover any cell for the exact peak rate. Anomaly baseline\n"
+            "needs ~7 days of normal traffic to be reliable."
+        )
+        dlg.add_button("Got it — let me look around", Gtk.ResponseType.OK)
+        dlg.set_default_response(Gtk.ResponseType.OK)
+        dlg.run()
+        dlg.destroy()
+        try:
+            with open(INTRO_MARKER, "w") as f:
+                f.write("seen\n")
+        except OSError:
+            pass
+        return False  # don't reschedule from idle_add
+
     # ── History persistence ───────────────────────────────────────────
 
     def _load_history(self):
@@ -247,6 +299,7 @@ class TideChart(GhostPortApp):
         if self.compare_iface:
             self._compare_da.queue_draw()
         self._update_status()
+        self._update_sparse_banner()
         return True
 
     # ── UI ────────────────────────────────────────────────────────────
@@ -257,6 +310,25 @@ class TideChart(GhostPortApp):
 
         header = self.make_header("TIDE CHART", "Bandwidth Monitor")
         root.pack_start(header, False, False, 0)
+
+        # Sparse-history banner — visible until anomaly baseline is reliable.
+        # Hidden once the user has at least SPARSE_HISTORY_THRESHOLD_DAYS of data.
+        self._sparse_banner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._sparse_banner.get_style_context().add_class("gp-card")
+        self._sparse_banner.set_margin_start(12)
+        self._sparse_banner.set_margin_end(12)
+        self._sparse_banner.set_margin_top(4)
+        self._sparse_banner.set_no_show_all(True)
+        banner_lbl = self.make_label(
+            "Building baseline — anomaly markers stabilize after a week of normal traffic. "
+            "Try comparing eth0 (wired in/out) vs wg1 (VPN data plane) using the dropdowns.",
+            "gp-warning"
+        )
+        banner_lbl.set_line_wrap(True)
+        banner_lbl.set_xalign(0)
+        self._sparse_banner.pack_start(banner_lbl, True, True, 6)
+        root.pack_start(self._sparse_banner, False, False, 0)
+        self._update_sparse_banner()
 
         # Toolbar
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)

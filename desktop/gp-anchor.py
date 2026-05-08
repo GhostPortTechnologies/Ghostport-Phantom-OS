@@ -210,10 +210,17 @@ class AnchorApp(GhostPortApp):
         }
         self._auto_arm_suggested = False
         self.build_ui()
+        self._apply_ui_mode()  # T-0150 initial show/hide
         self.refresh_all()
         self.poll_start(3, self.refresh_all)
         # Ping tunnels every 10s (separate from UI refresh)
         self.poll_start(10, self._ping_tunnels_tick)
+        # First-tick: kick off ONE ping immediately so users see results in
+        # ~3 seconds instead of waiting 10s for the first scheduled tick.
+        # idle_add re-runs whenever the callback returns True; _ping_tunnels_tick
+        # returns True (correct for poll_start but a hot loop in idle_add), so
+        # wrap it in a one-shot lambda that always returns False.
+        GLib.idle_add(lambda: (self._ping_tunnels_tick(), False)[1])
 
     def build_ui(self):
         self._apply_css(self._build_extra_css())
@@ -235,7 +242,7 @@ class AnchorApp(GhostPortApp):
         self.switch_frame.set_halign(Gtk.Align.CENTER)
         self.switch_frame.set_valign(Gtk.Align.CENTER)
 
-        self.toggle_btn = Gtk.Button(label="DISARMED")
+        self.toggle_btn = Gtk.Button(label="ARM KILL SWITCH")
         self.toggle_btn.get_style_context().add_class("anchor-toggle")
         self.toggle_btn.get_style_context().add_class("gp-toggle-off")
         self.toggle_btn.set_size_request(280, 60)
@@ -297,11 +304,14 @@ class AnchorApp(GhostPortApp):
         self.ts_card = self._build_tunnel_card("tailscale0", "Management")
         tunnel_grid.attach(self.ts_card["box"], 2, 0, 1, 1)
 
+        # T-0150: per-tunnel detail is power-user info; keep a handle so we
+        # can hide it in Easy mode and show in Advanced.
+        self._tunnel_grid = tunnel_grid
         content.pack_start(tunnel_grid, False, False, 0)
 
         # ── Tunnel Quality Section ──
-        quality_title = self.make_label("Tunnel Quality", "gp-accent")
-        content.pack_start(quality_title, False, False, 4)
+        self._quality_title = self.make_label("Tunnel Quality", "gp-accent")
+        content.pack_start(self._quality_title, False, False, 4)
 
         quality_grid = Gtk.Grid()
         quality_grid.set_column_spacing(16)
@@ -316,11 +326,13 @@ class AnchorApp(GhostPortApp):
         self._wg1_quality_card = self._build_quality_card("wg1")
         quality_grid.attach(self._wg1_quality_card["box"], 1, 0, 1, 1)
 
+        # T-0150: keep handles for Easy-mode show/hide
+        self._quality_grid = quality_grid
         content.pack_start(quality_grid, False, False, 0)
 
         # ── Uptime Sparklines ──
-        sparkline_title = self.make_label("Uptime (last 1h)", "gp-accent")
-        content.pack_start(sparkline_title, False, False, 4)
+        self._sparkline_title = self.make_label("Uptime (last 1h)", "gp-accent")
+        content.pack_start(self._sparkline_title, False, False, 4)
 
         sparkline_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
 
@@ -395,10 +407,18 @@ class AnchorApp(GhostPortApp):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         card.get_style_context().add_class("gp-card")
 
-        # Grade (big letter)
+        # Grade slot — shows either spinner (probing) or the letter grade.
+        grade_stack = Gtk.Stack()
+        grade_stack.set_halign(Gtk.Align.CENTER)
+        spinner = Gtk.Spinner()
+        spinner.set_size_request(28, 28)
+        spinner.start()
+        grade_stack.add_named(spinner, "loading")
         grade_lbl = self.make_label("?", "gp-dim")
         grade_lbl.set_halign(Gtk.Align.CENTER)
-        card.pack_start(grade_lbl, False, False, 2)
+        grade_stack.add_named(grade_lbl, "result")
+        grade_stack.set_visible_child_name("loading")
+        card.pack_start(grade_stack, False, False, 2)
 
         # Interface name
         name_lbl = self.make_label(iface, "gp-accent")
@@ -406,11 +426,11 @@ class AnchorApp(GhostPortApp):
         card.pack_start(name_lbl, False, False, 0)
 
         # Latency
-        lat_lbl = self.make_label("Latency: --", "gp-dim")
+        lat_lbl = self.make_label("Probing…", "gp-dim")
         card.pack_start(lat_lbl, False, False, 0)
 
         # Loss
-        loss_lbl = self.make_label("Loss: --", "gp-dim")
+        loss_lbl = self.make_label("", "gp-dim")
         card.pack_start(loss_lbl, False, False, 0)
 
         return {
@@ -418,6 +438,8 @@ class AnchorApp(GhostPortApp):
             "grade": grade_lbl,
             "latency": lat_lbl,
             "loss": loss_lbl,
+            "stack": grade_stack,
+            "spinner": spinner,
         }
 
     # ── Sparkline Drawing ────────────────────────────────────────────
@@ -521,7 +543,7 @@ class AnchorApp(GhostPortApp):
         cctx = self.switch_container.get_style_context()
 
         if self.armed:
-            self.toggle_btn.set_label("ARMED")
+            self.toggle_btn.set_label("DISARM KILL SWITCH")
             ctx.remove_class("gp-toggle-off")
             ctx.add_class("gp-toggle-on")
             self.state_label.set_text("All traffic stops if VPN drops")
@@ -531,7 +553,7 @@ class AnchorApp(GhostPortApp):
             cctx.remove_class("anchor-disarmed")
             cctx.add_class("anchor-armed")
         else:
-            self.toggle_btn.set_label("DISARMED")
+            self.toggle_btn.set_label("ARM KILL SWITCH")
             ctx.remove_class("gp-toggle-on")
             ctx.add_class("gp-toggle-off")
             self.state_label.set_text("Kill switch is disarmed")
@@ -549,18 +571,34 @@ class AnchorApp(GhostPortApp):
         return True
 
     def _do_pings(self):
-        """Ping wg0 and wg1 endpoints."""
+        """Ping the tunnel-INTERNAL next-hop, not the public endpoint.
+        EC2 security groups block ICMP to the public WG endpoints, so
+        those pings always returned 100% loss and
+        bogus 'F' grades. Inside-tunnel addresses respond and reflect
+        actual tunnel-path health (latency + drops at the WG layer)."""
+        # Tunnel-internal targets — fixed by the wg subnet allocation:
+        #   wg0 control plane → 10.66.66.0/24 (fleet relay at .1)
+        #   wg1 data plane    → 10.66.67.0/24 (Unbound at .1)
+        TUNNEL_INTERNAL_PEER = {"wg0": "10.66.66.1", "wg1": "10.66.67.1"}
         results = {}
         for iface in ("wg0", "wg1"):
-            ep = self._tunnel_quality[iface].get("endpoint")
-            if ep:
-                # Extract host from endpoint (host:port)
-                host = ep.split(":")[0] if ":" in ep else ep
-                lat, loss = ping_endpoint(host, count=3, timeout=5)
-                grade = grade_quality(lat, loss)
-                results[iface] = {"latency": lat, "loss": loss, "grade": grade}
-            else:
+            # Skip if interface isn't administratively up — saves a 5s ping
+            # timeout in ISP/ZeroTrust modes where wg0/wg1 are down by design.
+            # IFF_RUNNING isn't exposed via sysfs flags (it's a netlink-only
+            # bit), so checking IFF_UP alone is the right signal here.
+            try:
+                with open(f"/sys/class/net/{iface}/flags") as fh:
+                    flags = int(fh.read().strip(), 16)
+                iface_up = bool(flags & 0x1)
+            except (OSError, ValueError):
+                iface_up = False
+            if not iface_up:
                 results[iface] = {"latency": None, "loss": 100.0, "grade": "?"}
+                continue
+            host = TUNNEL_INTERNAL_PEER[iface]
+            lat, loss = ping_endpoint(host, count=3, timeout=5)
+            grade = grade_quality(lat, loss)
+            results[iface] = {"latency": lat, "loss": loss, "grade": grade}
         return results
 
     def _on_pings_done(self, results):
@@ -591,6 +629,12 @@ class AnchorApp(GhostPortApp):
         grade = q["grade"]
         lat = q["latency"]
         loss = q["loss"]
+
+        # Flip from spinner → letter grade once a result has arrived.
+        # We treat any non-'?' grade as a real result (incl. 'F' for down tunnels).
+        if grade != "?":
+            card["spinner"].stop()
+            card["stack"].set_visible_child_name("result")
 
         # Grade label
         card["grade"].set_text(grade)
@@ -627,10 +671,15 @@ class AnchorApp(GhostPortApp):
         data["mode"] = read_current_mode()
 
         for iface in ("wg0", "wg1", "tailscale0"):
+            # WireGuard + Tailscale are POINTOPOINT — no carrier detection,
+            # so 'ip -br link show' reports operstate=UNKNOWN even when the
+            # interface is fully up. The truth lives in the flag list
+            # '<...,UP,LOWER_UP>'. Parse that instead.
             out, err, rc = self.run_cmd(["ip", "-br", "link", "show", iface], timeout=5)
             if rc == 0 and out:
-                parts = out.split()
-                data[f"{iface}_up"] = (len(parts) >= 2 and parts[1] == "UP")
+                flags_match = re.search(r'<([^>]+)>', out)
+                flags = flags_match.group(1).split(",") if flags_match else []
+                data[f"{iface}_up"] = ("UP" in flags and "LOWER_UP" in flags)
             else:
                 data[f"{iface}_up"] = False
 
@@ -826,6 +875,18 @@ class AnchorApp(GhostPortApp):
 .grade-d {{ color: {c['danger']}; font-family: monospace; font-weight: bold; font-size: 18px; }}
 .grade-f {{ color: {c['danger']}; font-family: monospace; font-weight: bold; font-size: 18px; }}
 """
+
+    def _apply_ui_mode(self):
+        """T-0150: hide power-user widgets in Easy mode.
+        Big toggle + state label + auto-arm banner stay visible always."""
+        is_advanced = self.ui_mode == "advanced"
+        for w in (self._tunnel_grid, self._quality_title, self._quality_grid,
+                  self._sparkline_title, self._sparkline_box):
+            w.set_visible(is_advanced)
+            w.set_no_show_all(not is_advanced)
+
+    def on_ui_mode_changed(self):
+        self._apply_ui_mode()
 
     def on_theme_changed(self):
         # Re-apply CSS with new colors

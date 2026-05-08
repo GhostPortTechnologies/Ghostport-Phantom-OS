@@ -21,10 +21,11 @@ def _hex_to_rgb(hex_str):
 
 
 SERVICES = [
-    ("ghostport", "GhostPort Server"),
-    ("ghostport-sni", "SNI Inspector"),
-    ("ghostport-dns-guard", "DNS Guard"),
-    ("ghostport-health-guard", "Health Guard"),
+    # (unit, display_name, kind) — kind="daemon" = always-on, kind="timer" = oneshot fired by .timer
+    ("ghostport", "GhostPort Server", "daemon"),
+    ("ghostport-sni", "SNI Inspector", "daemon"),
+    ("ghostport-dns-guard", "DNS Guard", "timer"),
+    ("ghostport-health-guard", "Health Guard", "timer"),
 ]
 
 IFACE_LIST = ["eth0", "wlan0", "wg0", "wg1", "tailscale0"]
@@ -105,7 +106,7 @@ class SeaUrchinApp(GhostPortApp):
 
         self._svc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self._svc_labels = {}
-        for svc_name, svc_display in SERVICES:
+        for svc_name, svc_display, _kind in SERVICES:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             row.get_style_context().add_class("gp-card")
             dot = Gtk.Label(label="●")
@@ -449,7 +450,10 @@ class SeaUrchinApp(GhostPortApp):
 
     def _read_iface_stats(self):
         """Read interface error/drop counts and packet totals from /proc/net/dev.
-        Returns dict: iface -> (rx_err_drops, tx_err_drops, rx_packets, tx_packets, error_rate_pct)."""
+        Errors (malformed/CRC) and drops (kernel discarded multicast/queue full)
+        are reported separately — drops are normal at modest rates, errors are not.
+        Returns dict: iface -> (rx_errs, tx_errs, rx_drops, tx_drops,
+                                rx_packets, tx_packets, err_rate_pct)."""
         stats = {}
         try:
             with open("/proc/net/dev") as f:
@@ -467,11 +471,11 @@ class SeaUrchinApp(GhostPortApp):
                     tx_packets = int(parts[10])
                     tx_errs = int(parts[11])
                     tx_drops = int(parts[12])
-                    total_errors = (rx_errs + rx_drops + tx_errs + tx_drops)
+                    # err_rate counts ONLY real errors — drops are routine
                     total_packets = rx_packets + tx_packets
-                    error_rate = (total_errors / max(total_packets, 1)) * 100.0
-                    stats[iface] = (rx_errs + rx_drops, tx_errs + tx_drops,
-                                    rx_packets, tx_packets, error_rate)
+                    err_rate = ((rx_errs + tx_errs) / max(total_packets, 1)) * 100.0
+                    stats[iface] = (rx_errs, tx_errs, rx_drops, tx_drops,
+                                    rx_packets, tx_packets, err_rate)
         except Exception:
             pass
         return stats
@@ -498,8 +502,47 @@ class SeaUrchinApp(GhostPortApp):
         except Exception:
             return []
 
+    def _service_health(self, name, kind):
+        """Returns (healthy, status_text). For 'daemon' units it's a simple
+        is-active check. For 'timer' units (oneshot fired by .timer) we check
+        the unit's last invocation result + whether the timer's NextElapse is
+        in the future. Reports 'last run Xs ago' instead of 'inactive'."""
+        if kind == "timer":
+            tinfo = self.run_cmd([
+                "systemctl", "show", f"{name}.timer",
+                "--property=NextElapseUSecRealtime",
+                "--property=LastTriggerUSec",
+            ])[0]
+            uinfo = self.run_cmd([
+                "systemctl", "show", name,
+                "--property=Result",
+                "--property=ExecMainStatus",
+            ])[0]
+            result = "success"
+            for line in uinfo.splitlines():
+                if line.startswith("Result="):
+                    result = line.split("=", 1)[1].strip()
+            last_trigger_str = ""
+            for line in tinfo.splitlines():
+                if line.startswith("LastTriggerUSec="):
+                    last_trigger_str = line.split("=", 1)[1].strip()
+            healthy = (result == "success") and bool(tinfo.strip())
+            if last_trigger_str and last_trigger_str != "n/a":
+                # Format like "Wed 2026-05-06 22:00:08 PDT" — show just the time piece
+                parts = last_trigger_str.split()
+                last_short = parts[2] if len(parts) >= 3 else last_trigger_str
+                status = f"scheduled · last {last_short}"
+            else:
+                status = "scheduled"
+            if not healthy:
+                status = f"failed: {result}"
+            return healthy, status
+        # daemon kind
+        _, _, rc = self.run_cmd(["systemctl", "is-active", "--quiet", name])
+        return rc == 0, ("active" if rc == 0 else "inactive")
+
     def _check_service(self, name):
-        """Check if a systemd service is active."""
+        """Check if a systemd service is active (legacy helper, used elsewhere)."""
         _, _, rc = self.run_cmd(["systemctl", "is-active", "--quiet", name])
         return rc == 0
 
@@ -597,46 +640,71 @@ class SeaUrchinApp(GhostPortApp):
         g["da"].queue_draw()
 
         # Services
-        for svc_name, svc_display in SERVICES:
+        for svc_name, svc_display, kind in SERVICES:
             dot, status_lbl = self._svc_labels[svc_name]
-            active = self._check_service(svc_name)
-            if active:
-                dot.set_text("●")
-                dot.get_style_context().remove_class("gp-dim")
+            healthy, status_text = self._service_health(svc_name, kind)
+            dot.set_text("●")
+            dot.get_style_context().remove_class("gp-dim")
+            if healthy:
                 dot.get_style_context().remove_class("gp-danger")
                 dot.get_style_context().add_class("gp-success")
-                status_lbl.set_text("active")
                 status_lbl.get_style_context().remove_class("gp-danger")
                 status_lbl.get_style_context().add_class("gp-success")
             else:
-                dot.set_text("●")
-                dot.get_style_context().remove_class("gp-dim")
                 dot.get_style_context().remove_class("gp-success")
                 dot.get_style_context().add_class("gp-danger")
-                status_lbl.set_text("inactive")
                 status_lbl.get_style_context().remove_class("gp-success")
                 status_lbl.get_style_context().add_class("gp-danger")
+            status_lbl.set_text(status_text)
 
-        # Interface Health
+        # Interface Health — errors and drops are different things:
+        #   errors  = malformed/CRC — should be 0 on healthy hardware
+        #   drops   = kernel discarded (multicast/queue full) — modest = fine
         iface_stats = self._read_iface_stats()
         for iface in IFACE_LIST:
             if iface not in self._iface_labels:
                 continue
             name_lbl, rx_lbl, tx_lbl, delta_lbl = self._iface_labels[iface]
             if iface in iface_stats:
-                rx_total, tx_total, rx_pkts, tx_pkts, error_rate = iface_stats[iface]
-                rate_str = f" ({error_rate:.2f}%)" if error_rate > 0 else ""
-                rx_lbl.set_text(f"RX err: {rx_total}{rate_str}")
-                tx_lbl.set_text(f"TX err: {tx_total}")
-                # Calculate delta from previous poll
-                prev = self._prev_iface_stats.get(iface, (0, 0, 0, 0, 0.0))
-                delta_rx = rx_total - prev[0]
-                delta_tx = tx_total - prev[1]
-                total_errs = rx_total + tx_total
-                # Color based on error rate: >0.1% is danger, any errors is warning
-                if error_rate > 0.1:
+                rx_errs, tx_errs, rx_drops, tx_drops, rx_pkts, tx_pkts, err_rate = iface_stats[iface]
+                # Threshold-based health: tiny error rates (sub-0.1%) are
+                # transient noise from region toggles, brief network blips,
+                # or kernel queue churn — treat as clean. Real problems
+                # only fire warnings above the noise floor.
+                NOISE_FLOOR_PCT = 0.1   # below this: 'clean (N transient)'
+                DANGER_PCT = 1.0        # above this: red
+                # RX line
+                if rx_errs == 0 and rx_drops == 0:
+                    rx_lbl.set_text("RX: clean")
+                elif rx_errs > 0 and err_rate > NOISE_FLOOR_PCT:
+                    rx_lbl.set_text(f"RX err: {rx_errs} ({err_rate:.2f}%)")
+                elif rx_errs > 0:
+                    rx_lbl.set_text(f"RX: clean ({rx_errs} transient)")
+                else:
+                    rx_lbl.set_text(f"RX drops: {rx_drops}")
+                rx_lbl.set_tooltip_text(
+                    f"errors={rx_errs}  drops={rx_drops}  packets={rx_pkts}\n"
+                    "Errors = malformed/CRC or transmit-failed packets.\n"
+                    f"Sub-{NOISE_FLOOR_PCT}% error rate is treated as transient noise.\n"
+                    "Drops = kernel-discarded multicast or queue overflow — modest counts are normal."
+                )
+                # TX line
+                if tx_errs == 0 and tx_drops == 0:
+                    tx_lbl.set_text("TX: clean")
+                elif tx_errs > 0 and err_rate > NOISE_FLOOR_PCT:
+                    tx_lbl.set_text(f"TX err: {tx_errs}")
+                elif tx_errs > 0:
+                    tx_lbl.set_text(f"TX: clean ({tx_errs} transient)")
+                else:
+                    tx_lbl.set_text(f"TX drops: {tx_drops}")
+                tx_lbl.set_tooltip_text(
+                    f"errors={tx_errs}  drops={tx_drops}  packets={tx_pkts}"
+                )
+                # Color tier — three levels gated on aggregate error rate.
+                total_errs = rx_errs + tx_errs
+                if total_errs > 0 and err_rate > DANGER_PCT:
                     css_class = "gp-danger"
-                elif total_errs > 0:
+                elif total_errs > 0 and err_rate > NOISE_FLOOR_PCT:
                     css_class = "gp-warning"
                 else:
                     css_class = "gp-success"
@@ -644,8 +712,12 @@ class SeaUrchinApp(GhostPortApp):
                     for cls in ("gp-dim", "gp-success", "gp-warning", "gp-danger"):
                         lbl.get_style_context().remove_class(cls)
                     lbl.get_style_context().add_class(css_class)
-                if delta_rx + delta_tx > 0:
-                    delta_lbl.set_text(f"+{delta_rx + delta_tx}")
+                # Delta tracks ERRORS only (drops can grow steadily and aren't news)
+                prev = self._prev_iface_stats.get(iface, (0, 0, 0, 0, 0, 0, 0.0))
+                delta_rx_errs = rx_errs - prev[0]
+                delta_tx_errs = tx_errs - prev[1]
+                if delta_rx_errs + delta_tx_errs > 0:
+                    delta_lbl.set_text(f"+{delta_rx_errs + delta_tx_errs} new err")
                     delta_lbl.get_style_context().remove_class("gp-dim")
                     delta_lbl.get_style_context().add_class("gp-danger")
                 else:
@@ -653,8 +725,8 @@ class SeaUrchinApp(GhostPortApp):
                     delta_lbl.get_style_context().remove_class("gp-danger")
                     delta_lbl.get_style_context().add_class("gp-dim")
             else:
-                rx_lbl.set_text("RX err: --")
-                tx_lbl.set_text("TX err: --")
+                rx_lbl.set_text("RX: --")
+                tx_lbl.set_text("TX: --")
                 delta_lbl.set_text("(down)")
                 for lbl in (rx_lbl, tx_lbl, delta_lbl):
                     for cls in ("gp-success", "gp-warning", "gp-danger"):

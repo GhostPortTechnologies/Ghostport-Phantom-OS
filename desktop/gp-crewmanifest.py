@@ -502,12 +502,14 @@ class CrewManifestApp(GhostPortApp):
         lbl_dot = self.make_label(dot_text, dot_css)
         row1.pack_start(lbl_dot, False, False, 0)
 
-        hostname = client["hostname"] if client["hostname"] else "(unnamed)"
-        lbl_hostname = self.make_label(hostname, "gp-accent")
+        # T-0139 #1: alias overrides DHCP hostname for the display name.
+        profile = self._profiles.get(client["mac"], {})
+        alias = profile.get("alias", "")
+        display_name = alias or client["hostname"] or "(unnamed)"
+        lbl_hostname = self.make_label(display_name, "gp-accent")
         row1.pack_start(lbl_hostname, True, True, 0)
 
         # Device class badge
-        profile = self._profiles.get(client["mac"], {})
         cached = self._activity_cache.get(client["ip"])
         top_ports = cached[2] if cached else []
         dev_class = classify_device(client["vendor"], client["hostname"], top_ports)
@@ -558,14 +560,47 @@ class CrewManifestApp(GhostPortApp):
             self._on_activity_loaded
         )
 
+    def _save_alias(self, mac, alias):
+        """T-0139 #1: persist a friendly name override for a device.
+        Empty string clears the alias so the DHCP hostname shows again."""
+        profile = self._profiles.get(mac, {})
+        alias = alias.strip()
+        if alias:
+            profile["alias"] = alias
+        else:
+            profile.pop("alias", None)
+        self._profiles[mac] = profile
+        save_profiles(self._profiles)
+        self.set_status(f"Saved name for {mac}")
+        # Refresh detail + main list so the new name shows
+        if self.selected_client and self.selected_client["mac"] == mac:
+            self._show_detail(self.selected_client)
+        self._rebuild_list()
+
     def _show_detail(self, client):
         for child in self.detail_box.get_children():
             self.detail_box.remove(child)
 
-        hostname = client["hostname"] if client["hostname"] else "(unnamed)"
-        lbl_title = self.make_label(hostname, "gp-accent")
+        # T-0139 #1: alias overrides DHCP hostname for the title display.
+        # Stored per-MAC in the existing profiles store.
+        profile = self._profiles.get(client["mac"], {})
+        alias = profile.get("alias", "")
+        display_name = alias or client["hostname"] or "(unnamed)"
+        lbl_title = self.make_label(display_name, "gp-accent")
         lbl_title.override_font(Pango.FontDescription("monospace bold 14"))
         self.detail_box.pack_start(lbl_title, False, False, 4)
+
+        # Rename row — entry + Save button. Empty alias clears the override.
+        rename_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        rename_entry = Gtk.Entry()
+        rename_entry.set_text(alias)
+        rename_entry.set_placeholder_text(client["hostname"] or "Friendly name…")
+        rename_entry.set_max_length(40)
+        rename_entry.set_hexpand(True)
+        rename_row.pack_start(rename_entry, True, True, 0)
+        rename_btn = self.make_button("Save", lambda _b: self._save_alias(client["mac"], rename_entry.get_text()), "gp-btn")
+        rename_row.pack_start(rename_btn, False, False, 0)
+        self.detail_box.pack_start(rename_row, False, False, 2)
 
         status_text = "ONLINE" if client["online"] else "OFFLINE"
         status_css = "gp-success" if client["online"] else "gp-danger"

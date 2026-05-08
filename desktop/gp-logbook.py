@@ -13,29 +13,32 @@ import cairo
 import json
 import os
 import time
-import math
 from collections import Counter
 from datetime import datetime
 
 ACTIVITY_FILE = "/etc/phantom/activity.json"
 
 
-def _parse_timestamp(ts):
-    """Parse a timestamp string, trying multiple formats. Returns time.struct_time or None."""
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+def _ts_to_epoch(ts):
+    """Convert an ISO-8601 timestamp string to epoch seconds.
+    Handles 'Z' suffix (UTC), +HH:MM offsets, microseconds, and naive (local) forms.
+    Returns None on parse failure."""
+    if not ts:
+        return None
+    # datetime.fromisoformat handles +HH:MM offsets natively; convert trailing 'Z' for it.
+    s = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        # Legacy 'YYYY-MM-DD HH:MM:SS' (no T separator) — treat as local
         try:
-            return time.strptime(ts, fmt)
+            return time.mktime(time.strptime(ts, "%Y-%m-%d %H:%M:%S"))
         except (ValueError, TypeError):
-            continue
-    # Try ISO 8601 with timezone offset by stripping it
-    if ts and ('+' in ts[10:] or ts.endswith('Z')):
-        clean = ts.replace('Z', '').rsplit('+', 1)[0].rsplit('-', 1)[0] if 'T' in ts else ts
-        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-            try:
-                return time.strptime(clean, fmt)
-            except (ValueError, TypeError):
-                continue
-    return None
+            return None
+    try:
+        return dt.timestamp()  # tz-aware → epoch directly; naive → uses local tz
+    except (OSError, OverflowError, ValueError):
+        return None
 
 CATEGORIES = ["All", "system", "auth", "mode", "security", "config", "network"]
 CATEGORY_LABELS = {
@@ -286,14 +289,9 @@ class LogbookApp(GhostPortApp):
         recent = 0
         for e in self._events:
             ts = e.get("ts") or e.get("timestamp", "")
-            parsed = _parse_timestamp(ts)
-            if parsed is not None:
-                try:
-                    evt_time = time.mktime(parsed)
-                    if now - evt_time < 86400:
-                        recent += 1
-                except Exception:
-                    pass
+            evt_time = _ts_to_epoch(ts)
+            if evt_time is not None and 0 <= now - evt_time < 86400:
+                recent += 1
         avg_per_hour = recent / 24.0 if recent > 0 else 0
         self._lbl_per_hour.set_text(f"Avg/hr: {avg_per_hour:.1f}")
 
@@ -385,13 +383,8 @@ class LogbookApp(GhostPortApp):
         cat = model[treeiter][1]
 
         # Parse selected event timestamp
-        parsed = _parse_timestamp(ts_str)
-        if parsed is None:
-            self._corr_box.hide()
-            return
-        try:
-            sel_time = time.mktime(parsed)
-        except Exception:
+        sel_time = _ts_to_epoch(ts_str)
+        if sel_time is None:
             self._corr_box.hide()
             return
 
@@ -402,14 +395,9 @@ class LogbookApp(GhostPortApp):
             evt_cat = evt.get("type") or evt.get("category", "")
             if evt_cat != cat or evt_ts == ts_str:
                 continue
-            evt_parsed = _parse_timestamp(evt_ts)
-            if evt_parsed is not None:
-                try:
-                    evt_time = time.mktime(evt_parsed)
-                    if abs(evt_time - sel_time) <= 300:  # 5 minutes
-                        related.append(evt)
-                except Exception:
-                    pass
+            evt_time = _ts_to_epoch(evt_ts)
+            if evt_time is not None and abs(evt_time - sel_time) <= 300:  # 5 minutes
+                related.append(evt)
 
         # Show correlation panel
         for child in self._corr_list.get_children():
@@ -481,17 +469,14 @@ class LogbookApp(GhostPortApp):
         for evt in self._events:
             ts = evt.get("ts") or evt.get("timestamp", "")
             cat = evt.get("type") or evt.get("category", "?")
-            parsed = _parse_timestamp(ts)
-            if parsed is not None:
-                try:
-                    evt_time = time.mktime(parsed)
-                    hours_ago = (now - evt_time) / 3600
-                    if 0 <= hours_ago < 24:
-                        hour_idx = int(hours_ago)
-                        bucket = hourly.setdefault(hour_idx, Counter())
-                        bucket[cat] += 1
-                except Exception:
-                    pass
+            evt_time = _ts_to_epoch(ts)
+            if evt_time is None:
+                continue
+            hours_ago = (now - evt_time) / 3600
+            if 0 <= hours_ago < 24:
+                hour_idx = int(hours_ago)
+                bucket = hourly.setdefault(hour_idx, Counter())
+                bucket[cat] += 1
 
         if not hourly:
             cr.set_source_rgba(r, g, b, 0.3)

@@ -32,9 +32,22 @@ def get_current_mac(iface):
     return m.group(1) if m else None
 
 def get_permanent_mac(iface):
-    out, _, _ = run_cmd(["sudo", "ethtool", "-P", iface])
-    m = re.search(r'Permanent address:\s+([0-9a-f:]{17})', out)
-    return m.group(1) if m else None
+    """Read the permanent MAC without ethtool (which isn't installed here).
+    Strategy: only trust /sys/class/net/<iface>/address as 'permanent' when
+    addr_assign_type==0 (kernel says it IS permanent). If type is anything
+    else (1=random, 2=stolen, 3=set), we can't recover the burned-in MAC
+    from /sys alone — return None so the caller falls back to the cached
+    originals.json (saved at first launch BEFORE any randomization)."""
+    try:
+        with open(f"/sys/class/net/{iface}/addr_assign_type") as f:
+            assign_type = f.read().strip()
+        if assign_type != "0":
+            return None
+        with open(f"/sys/class/net/{iface}/address") as f:
+            mac = f.read().strip().lower()
+        return mac if re.match(r'^[0-9a-f:]{17}$', mac) else None
+    except (FileNotFoundError, OSError):
+        return None
 
 def generate_random_mac():
     """Generate a locally-administered unicast MAC address."""
@@ -286,14 +299,16 @@ class SeadevilApp(GhostPortApp):
         _, _, rc = run_cmd(["systemctl", "is-active", "--quiet", "hostapd"])
         return rc == 0
 
-    def _confirm_ap_randomize(self, iface):
-        """Modal confirmation gate when about to disrupt the AP. Returns True to proceed."""
+    def _confirm_ap_disruption(self, iface, action_verb):
+        """Modal confirmation gate when about to disrupt the AP.
+        action_verb is the user-facing verb ('Randomize' or 'Restore').
+        Returns True to proceed."""
         dialog = Gtk.MessageDialog(
             parent=self,
             modal=True,
             message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.NONE,
-            text=f"Randomize {iface} MAC?",
+            text=f"{action_verb} {iface} MAC?",
         )
         dialog.format_secondary_text(
             f"{iface} is the active access point. Changing its MAC will disconnect "
@@ -302,11 +317,17 @@ class SeadevilApp(GhostPortApp):
             "Continue?"
         )
         dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
-        dialog.add_button("Randomize anyway", Gtk.ResponseType.OK)
+        dialog.add_button(f"{action_verb} anyway", Gtk.ResponseType.OK)
         dialog.set_default_response(Gtk.ResponseType.CANCEL)
         response = dialog.run()
         dialog.destroy()
         return response == Gtk.ResponseType.OK
+
+    def _confirm_ap_randomize(self, iface):
+        return self._confirm_ap_disruption(iface, "Randomize")
+
+    def _confirm_ap_restore(self, iface):
+        return self._confirm_ap_disruption(iface, "Restore")
 
     def on_randomize(self, iface):
         if self._iface_is_active_ap(iface):
@@ -350,6 +371,11 @@ class SeadevilApp(GhostPortApp):
         if not original:
             self.set_status(f"No original MAC saved for {iface}")
             return
+
+        if self._iface_is_active_ap(iface):
+            if not self._confirm_ap_restore(iface):
+                self.set_status(f"Restore cancelled — {iface} is the AP")
+                return
 
         self.set_status(f"Restoring {iface} to {original}...")
 

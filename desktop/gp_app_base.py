@@ -34,6 +34,7 @@ import subprocess
 # ── Theme ────────────────────────────────────────────────────────────
 
 THEME_FILE = "/etc/phantom/theme.json"
+UI_MODE_FILE = "/etc/phantom/ui-mode.json"
 
 def read_theme_color():
     """Read accent color hex from theme.json, returns 6-char hex string."""
@@ -46,6 +47,17 @@ def read_theme_color():
     except Exception:
         pass
     return "39ff8f"
+
+def read_ui_mode():
+    """T-0150: read OS-wide UI mode ('easy' or 'advanced') from ui-mode.json.
+    Default 'advanced' so an existing operator's experience doesn't change
+    until they explicitly opt into easy mode via the Accessibility toggle."""
+    try:
+        with open(UI_MODE_FILE) as f:
+            mode = (json.load(f).get("mode") or "advanced").strip().lower()
+            return mode if mode in ("easy", "advanced") else "advanced"
+    except Exception:
+        return "advanced"
 
 def hex_to_rgb(h):
     """Convert 6-char hex string to (r, g, b) tuple. Falls back to ghost-green on bad input."""
@@ -401,6 +413,26 @@ entry:focus {{
     border-color: rgba({c['r']},{c['g']},{c['b']}, 0.7);
 }}
 
+/* Switch — accent-tinted when on, dim when off (overrides Adwaita's default blue) */
+switch {{
+    background-color: rgba({c['r']},{c['g']},{c['b']}, 0.15);
+    border: 1px solid rgba({c['r']},{c['g']},{c['b']}, 0.3);
+}}
+
+switch:checked {{
+    background-color: rgba({c['r']},{c['g']},{c['b']}, 0.6);
+    border-color: rgba({c['r']},{c['g']},{c['b']}, 0.9);
+}}
+
+switch slider {{
+    background-color: rgba({c['r']},{c['g']},{c['b']}, 0.9);
+    border-radius: 50%;
+}}
+
+switch:checked slider {{
+    background-color: {c['accent']};
+}}
+
 /* Scrollbar */
 scrollbar slider {{
     background-color: rgba({c['r']},{c['g']},{c['b']}, 0.3);
@@ -474,6 +506,11 @@ class GhostPortApp(Gtk.Window):
         # Theme
         self.theme_hex = read_theme_color()
         self.colors = derive_colors(self.theme_hex)
+
+        # T-0150: OS-wide UI mode ('easy' or 'advanced'). Subclasses branch
+        # rendering off self.ui_mode. Default 'advanced' so existing users
+        # see no change until they opt in via Accessibility.
+        self.ui_mode = read_ui_mode()
 
         # Apply CSS
         self._apply_css()
@@ -572,7 +609,7 @@ class GhostPortApp(Gtk.Window):
         self._css_provider = provider
 
     def _check_theme(self):
-        """Poll theme.json for color changes."""
+        """Poll theme.json + ui-mode.json for changes (every 3s)."""
         try:
             new_hex = read_theme_color()
             if new_hex != self.theme_hex:
@@ -582,10 +619,23 @@ class GhostPortApp(Gtk.Window):
                 self.on_theme_changed()
         except Exception:
             pass
+        # T-0150: piggyback on the theme poll for ui-mode changes
+        try:
+            new_mode = read_ui_mode()
+            if new_mode != self.ui_mode:
+                self.ui_mode = new_mode
+                self.on_ui_mode_changed()
+        except Exception:
+            pass
         return True
 
     def on_theme_changed(self):
         """Override in subclasses to handle theme changes (e.g., redraw cairo)."""
+        pass
+
+    def on_ui_mode_changed(self):
+        """T-0150: override in subclasses to react to easy/advanced toggle.
+        Default behavior: do nothing — subclasses opt in by overriding."""
         pass
 
     def _on_destroy(self, *_args):

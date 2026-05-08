@@ -542,20 +542,24 @@ class AtlasApp(GhostPortApp):
                 self._draw_flow_badge(cr, x, y, r, node.flows, ar, ag, ab)
 
         elif node.node_type == "internet":
+            # T-0135: rounded-rectangle silhouette so the WAN node is
+            # visually distinct from circular client/router nodes.
             ir, ig, ib = _hex_to_rgb(self.colors["info"])
             cr.set_source_rgba(ir, ig, ib, 0.15)
-            cr.arc(x, y, r, 0, 2 * math.pi)
+            self._rounded_rect(cr, x - r, y - r * 0.7, r * 2, r * 1.4, r * 0.4)
             cr.fill()
             cr.set_source_rgba(ir, ig, ib, 0.7)
             cr.set_line_width(1.5)
-            cr.arc(x, y, r, 0, 2 * math.pi)
+            self._rounded_rect(cr, x - r, y - r * 0.7, r * 2, r * 1.4, r * 0.4)
             cr.stroke()
             cr.set_source_rgba(ir, ig, ib, 1.0)
             self._draw_centered_text(cr, x, y, "WAN", 11, True)
 
         elif node.node_type == "tunnel":
+            # T-0135: hexagon silhouette so tunnel nodes (lock-like) read
+            # differently from circular endpoint nodes.
             cr.set_source_rgba(ar, ag, ab, 0.1)
-            cr.arc(x, y, r, 0, 2 * math.pi)
+            self._hexagon(cr, x, y, r)
             cr.fill()
             if node.up:
                 cr.set_source_rgba(ar, ag, ab, 0.7)
@@ -563,7 +567,7 @@ class AtlasApp(GhostPortApp):
                 dr, dg, db = _hex_to_rgb(self.colors["danger"]); cr.set_source_rgba(dr, dg, db, 0.5)
             cr.set_line_width(1.5)
             cr.set_dash([4, 3])
-            cr.arc(x, y, r, 0, 2 * math.pi)
+            self._hexagon(cr, x, y, r)
             cr.stroke()
             cr.set_dash([])
             cr.set_source_rgba(ar, ag, ab, 0.9)
@@ -602,6 +606,28 @@ class AtlasApp(GhostPortApp):
             cr.set_source_rgba(1, 1, 1, 0.15)
             cr.arc(x, y, r + 3, 0, 2 * math.pi)
             cr.stroke()
+
+    def _rounded_rect(self, cr, x, y, w, h, radius):
+        """Append a rounded-rectangle path to cr (caller fills/strokes)."""
+        cr.new_sub_path()
+        cr.arc(x + w - radius, y + radius, radius, -math.pi / 2, 0)
+        cr.arc(x + w - radius, y + h - radius, radius, 0, math.pi / 2)
+        cr.arc(x + radius, y + h - radius, radius, math.pi / 2, math.pi)
+        cr.arc(x + radius, y + radius, radius, math.pi, 3 * math.pi / 2)
+        cr.close_path()
+
+    def _hexagon(self, cr, cx, cy, r):
+        """Append a flat-topped hexagon path centered at (cx, cy)."""
+        cr.new_sub_path()
+        for i in range(6):
+            angle = math.pi / 3 * i
+            px = cx + r * math.cos(angle)
+            py = cy + r * math.sin(angle)
+            if i == 0:
+                cr.move_to(px, py)
+            else:
+                cr.line_to(px, py)
+        cr.close_path()
 
     def _draw_flow_badge(self, cr, x, y, r, flows, ar, ag, ab):
         """Draw a flow count badge below a node."""
@@ -745,7 +771,9 @@ class AtlasApp(GhostPortApp):
             self._neighborhood_win.present()
             return
         win = Gtk.Window(title="🛰 RF Neighborhood — passive Wi-Fi scan")
-        win.set_default_size(820, 480)
+        win.set_default_size(720, 480)
+        # Don't let the wrapped status label dictate width — operator can resize wider if they want.
+        win.set_size_request(560, 320)
         win.set_transient_for(self)
         win.connect("delete-event", self._on_close_neighborhood)
         self._neighborhood_win = win
@@ -780,6 +808,10 @@ class AtlasApp(GhostPortApp):
 
         self._neighborhood_status = Gtk.Label(label="")
         self._neighborhood_status.set_xalign(0.0)
+        # Wrap the markup-status so the dongle-suggestion sentence doesn't
+        # blow the window's minimum width out past the screen edge.
+        self._neighborhood_status.set_line_wrap(True)
+        self._neighborhood_status.set_max_width_chars(60)
         vbox.pack_start(self._neighborhood_status, False, False, 0)
 
         win.show_all()
@@ -803,10 +835,34 @@ class AtlasApp(GhostPortApp):
         self._neighborhood_store.clear()
         for r in rows:
             self._neighborhood_store.append(r)
-        self._neighborhood_status.set_text(
-            f"{len(rows)} BSSIDs seen in last {self.NEIGHBORHOOD_LOOKBACK_S // 60}m  "
-            f"|  Updated: {time.strftime('%H:%M:%S')}"
-        )
+        # T-0134: when the sniffer is dead AND the lookback window is empty,
+        # explain WHY (most likely: no monitor-capable radio available because
+        # MT7921 hosts the AP and its firmware doesn't allow AP+monitor).
+        if rows:
+            self._neighborhood_status.set_text(
+                f"{len(rows)} BSSIDs seen in last {self.NEIGHBORHOOD_LOOKBACK_S // 60}m  "
+                f"|  Updated: {time.strftime('%H:%M:%S')}"
+            )
+        else:
+            sniffer_active = subprocess.run(
+                ["systemctl", "is-active", "--quiet", "ghostport-sonar-sniffer"],
+                timeout=3
+            ).returncode == 0
+            if sniffer_active:
+                # Service is up but no beacons in window — quiet area or just started
+                self._neighborhood_status.set_text(
+                    f"0 BSSIDs in last {self.NEIGHBORHOOD_LOOKBACK_S // 60}m — sniffer running, "
+                    f"give it a minute  |  Updated: {time.strftime('%H:%M:%S')}"
+                )
+            else:
+                self._neighborhood_status.set_markup(
+                    "<b>Sniffer not running.</b>  Sonar's RF Neighborhood needs a "
+                    "monitor-capable radio. The current Wi-Fi card hosts the access "
+                    "point and can't simultaneously do monitor mode (firmware "
+                    "restriction). Plug in a USB Wi-Fi dongle that supports monitor "
+                    "mode (RTL8812AU / MT7610U / RT5572) to enable.  "
+                    f"Updated: {time.strftime('%H:%M:%S')}"
+                )
         return True
 
     def _read_neighborhood(self):

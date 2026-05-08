@@ -15,7 +15,7 @@ from gp_app_base import GhostPortApp
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib, Pango
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
 
 VAULT_BASE = os.path.expanduser("~/.local/share/ghostport-vault")
 CIPHER_DIR = os.path.join(VAULT_BASE, "cipher")
@@ -156,7 +156,40 @@ class AetherBox(GhostPortApp):
         scrolled.set_margin_top(4)
         scrolled.set_margin_bottom(4)
         self.file_scroll = scrolled
-        root.pack_start(scrolled, True, True, 0)
+
+        # Locked-state placeholder: big Aether Box icon centered, with caption.
+        # Shown when vault is locked so users know the empty list isn't a bug.
+        self.locked_placeholder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL,
+                                          spacing=12)
+        self.locked_placeholder.set_valign(Gtk.Align.CENTER)
+        self.locked_placeholder.set_halign(Gtk.Align.CENTER)
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(
+                "/opt/ghostport/desktop/icons/gp-strongbox.svg", 128, 128, True)
+            lock_img = Gtk.Image.new_from_pixbuf(pix)
+            lock_img.set_opacity(0.55)  # dim — emphasize locked / not active
+        except Exception:
+            lock_img = Gtk.Image.new_from_icon_name("system-lock-screen",
+                                                    Gtk.IconSize.DIALOG)
+        self.locked_placeholder.pack_start(lock_img, False, False, 0)
+        cap = self.make_label("Vault locked", "gp-accent")
+        cap.set_halign(Gtk.Align.CENTER)
+        cap.override_font(Pango.FontDescription("monospace bold 14"))
+        self.locked_placeholder.pack_start(cap, False, False, 0)
+        sub = self.make_label("Click UNLOCK above to view files", "gp-dim")
+        sub.set_halign(Gtk.Align.CENTER)
+        self.locked_placeholder.pack_start(sub, False, False, 0)
+
+        # Stack swaps between placeholder and treeview based on lock state.
+        self.file_stack = Gtk.Stack()
+        self.file_stack.set_margin_start(12)
+        self.file_stack.set_margin_end(12)
+        self.file_stack.set_margin_top(4)
+        self.file_stack.set_margin_bottom(4)
+        self.file_stack.add_named(self.locked_placeholder, "locked")
+        self.file_stack.add_named(scrolled, "files")
+        self.file_stack.set_visible_child_name("locked")
+        root.pack_start(self.file_stack, True, True, 0)
 
         # Status bar
         self.status_bar = self.make_status_bar("Checking vault status...")
@@ -179,13 +212,13 @@ class AetherBox(GhostPortApp):
         if not self._has_gocryptfs():
             self.install_box.set_no_show_all(False)
             self.install_box.show_all()
-            self.file_scroll.hide()
+            self.file_stack.hide()
             self.toggle_btn.set_sensitive(False)
             self.set_status("gocryptfs not installed")
             return
 
         self.install_box.hide()
-        self.file_scroll.show()
+        self.file_stack.show_all()
         self.toggle_btn.set_sensitive(True)
 
         # Ensure directories exist with restrictive perms (0700 — owner-only).
@@ -219,6 +252,8 @@ class AetherBox(GhostPortApp):
         self.export_btn.set_sensitive(False)
         self.delete_btn.set_sensitive(False)
         self.store.clear()
+        # Show the locked-state strongbox icon instead of an empty file list.
+        self.file_stack.set_visible_child_name("locked")
         self.lock_timer_label.set_text("")
         if self._auto_lock_timer:
             self.poll_stop(self._auto_lock_timer)
@@ -234,6 +269,8 @@ class AetherBox(GhostPortApp):
         ctx.remove_class("gp-toggle-off")
         ctx.add_class("gp-toggle-on")
         self.add_btn.set_sensitive(True)
+        # Reveal the file list now that the vault is open.
+        self.file_stack.set_visible_child_name("files")
         self._start_auto_lock_timer()
 
     def _start_auto_lock_timer(self):
@@ -401,9 +438,11 @@ class AetherBox(GhostPortApp):
                     size_str = self._fmt_size(size)
                     total_size += size
                     count += 1
-                    self.store.append([name, size_str, mtime, path])
+                    self.store.append([f"{self._type_glyph(name)}  {name}",
+                                       size_str, mtime, path])
                 except OSError:
-                    self.store.append([name, "?", "?", path])
+                    self.store.append([f"{self._type_glyph(name)}  {name}",
+                                       "?", "?", path])
                     count += 1
         except OSError as e:
             self.set_status(f"Error reading vault: {e}")
@@ -417,6 +456,33 @@ class AetherBox(GhostPortApp):
                 return f"{size:.0f} {unit}" if unit == 'B' else f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} TB"
+
+    @staticmethod
+    def _type_glyph(name):
+        """Return a unicode glyph that hints at file type from extension.
+        No image thumbnails — that would defeat the vault by caching plaintext."""
+        ext = os.path.splitext(name)[1].lower().lstrip('.')
+        if ext in ('txt', 'md', 'log', 'csv', 'json', 'yml', 'yaml', 'toml', 'ini', 'conf'):
+            return "\U0001F4C4"   # 📄 page
+        if ext in ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'tiff'):
+            return "\U0001F5BC"   # 🖼 framed picture
+        if ext == 'pdf':
+            return "\U0001F4D5"   # 📕 closed book
+        if ext in ('zip', 'tar', 'gz', 'bz2', 'xz', '7z', 'rar'):
+            return "\U0001F4E6"   # 📦 package
+        if ext in ('key', 'pem', 'crt', 'cer', 'pfx', 'p12', 'asc', 'gpg', 'pgp'):
+            return "\U0001F511"   # 🔑 key
+        if ext in ('mp3', 'wav', 'flac', 'm4a', 'ogg', 'aac'):
+            return "\U0001F3B5"   # 🎵 musical note
+        if ext in ('mp4', 'mov', 'avi', 'mkv', 'webm'):
+            return "\U0001F3AC"   # 🎬 clapper board
+        if ext in ('py', 'sh', 'js', 'ts', 'go', 'rs', 'c', 'cpp', 'h', 'java', 'rb'):
+            return "\U0001F4BB"   # 💻 laptop
+        if ext in ('doc', 'docx', 'odt', 'rtf'):
+            return "\U0001F4DD"   # 📝 memo
+        if ext in ('xls', 'xlsx', 'ods'):
+            return "\U0001F4CA"   # 📊 chart
+        return "\U0001F4CE"       # 📎 paperclip (default)
 
     def _on_add_file(self, btn):
         dialog = Gtk.FileChooserDialog(
