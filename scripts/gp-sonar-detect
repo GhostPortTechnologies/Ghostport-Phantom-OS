@@ -133,7 +133,7 @@ def main():
     # 3. Detection
     our_ssid, our_bssid = sonar.get_our_ap()
     trusted = sonar.load_trusted_aps()
-    signatures = sonar.load_signatures()
+    signatures, _sig_err = sonar.load_signatures()
 
     aps = sonar.parse_iw_scan(
         result.stdout, our_ssid, our_bssid, trusted, signatures

@@ -264,6 +264,21 @@ cmd_confirm() {
   printf '%sCONFIRMED — rollback timer cleared%s\n' "$ACC" "$RST"
 }
 
+resolve_region_by_endpoint() {
+  # T-0163: look up region id by endpoint IP. Tries cache first, then fleet API.
+  # Echoes id (or "unknown"). Never fails — rollback must always update state.
+  local ip="$1"
+  local data=""
+  [ -r "$CACHE_FILE" ] && data=$(cat "$CACHE_FILE" 2>/dev/null)
+  [ -z "$data" ] && data=$(fetch_regions 2>/dev/null || echo "")
+  if [ -n "$data" ]; then
+    local id
+    id=$(echo "$data" | jq -r --arg ip "$ip" '.regions[] | select(.endpoint | startswith($ip + ":")) | .id' 2>/dev/null | head -1)
+    [ -n "$id" ] && { echo "$id"; return 0; }
+  fi
+  echo "unknown"
+}
+
 cmd_rollback() {
   local auto=""
   [ "${1:-}" = "--auto" ] && auto="auto-"
@@ -278,27 +293,29 @@ cmd_rollback() {
   sudo cp -p "$snap" "$WG_CONF"
   apply_wg_conf || die "rollback wg setconf failed — manual intervention needed"
   # Write state FIRST — stopping the timer service while we ARE that service kills the script (2026-05-04 self-kill bug).
-  local prev=""
-  [ -r "$STATE_FILE" ] && prev=$(jq -r '.previous_id // ""' "$STATE_FILE")
-  if [ -n "$prev" ]; then
-    local now
-    now=$(date +%s)
-    sudo tee "$STATE_FILE" >/dev/null <<EOF
+  # T-0163: derive id from the restored Endpoint, not state.previous_id — previous_id is null after a chained
+  # rollback, which used to leave state pointing at a region no longer live.
+  local prev_id="" restored_ip="" new_id=""
+  [ -r "$STATE_FILE" ] && prev_id=$(jq -r '.id // ""' "$STATE_FILE")
+  restored_ip=$(sudo grep -E '^Endpoint' "$WG_CONF" 2>/dev/null | head -1 | awk -F'[ =:]+' '{print $3}')
+  new_id=$(resolve_region_by_endpoint "$restored_ip")
+  local now
+  now=$(date +%s)
+  sudo tee "$STATE_FILE" >/dev/null <<EOF
 {
-  "id": "$prev",
+  "id": "$new_id",
   "switched_at": $now,
   "switched_by": "rollback",
   "rollback_timer": null,
-  "previous_id": null
+  "previous_id": "$prev_id"
 }
 EOF
-    sudo chmod 644 "$STATE_FILE"
-  fi
+  sudo chmod 644 "$STATE_FILE"
   # Only stop the timer service when invoked manually — auto-mode is already running inside it and will die naturally.
   if [ "$auto" != "auto-" ]; then
     sudo systemctl stop "$ROLLBACK_TIMER_UNIT" "$ROLLBACK_SVC_UNIT" 2>/dev/null || true
   fi
-  printf '%sROLLED BACK to %s%s\n' "$ACC" "${prev:-previous}" "$RST"
+  printf '%sROLLED BACK to %s%s\n' "$ACC" "$new_id" "$RST"
 }
 
 cmd_refresh() {

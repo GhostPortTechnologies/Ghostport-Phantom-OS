@@ -649,7 +649,7 @@ class DesktopCanvas:
             ("Paste",                ("__handler__", self._on_menu_paste)),
             ("Select All",           ("__handler__", self._on_menu_select_all)),
             ("---",                  None),
-            ("Terminal",             ["xfce4-terminal", f"--working-directory={HOME}/Desktop"]),
+            ("Terminal",             ["xfce4-terminal"]),
             ("Files",                ["thunar", f"{HOME}/Desktop"]),
             ("Refresh",              ("__handler__", self._on_menu_refresh)),
             ("---",                  None),
