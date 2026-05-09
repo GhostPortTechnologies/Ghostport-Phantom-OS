@@ -816,6 +816,28 @@ class SonarApp(GhostPortApp):
          "privacy-disclosure modal fires every time you promote to Full, not "
          "just the first time, so the consent is renewed on every change."),
 
+        ("🚨 SURVEILLANCE asset alerts",
+         "When a probe-request comes in from a MAC that matches a known surveillance "
+         "vendor (Flock Safety ALPR cameras, ShotSpotter Raven gunshot sensors), the "
+         "row gets a red 🚨 badge with the vendor name.\n\n"
+         "Detection is signature-based — operationally observed MAC OUI prefixes "
+         "from public research (DeFlock community, EFF investigations, GainSec "
+         "security audits). The signature DB lives at "
+         "/opt/phantom/desktop/surveillance-vendors.json with operator override at "
+         "/etc/phantom/surveillance-vendors.json.\n\n"
+         "Flock cameras emit a distinctive wildcard probe-request (empty SSID + "
+         "Flock OUI) that's near-impossible to fake accidentally. Other "
+         "consumer-electronics manufacturers happen to share a few of the OUI "
+         "prefixes — false positives are rare but possible. Confirm by walking "
+         "the area: a Flock camera is usually a small box on a pole with a solar "
+         "panel above it, no visible logo, no LEDs.\n\n"
+         "Surveillance detection runs even when probe capture is set to Off — "
+         "you don't need to enable privacy-sensitive Full mode to spot a Flock "
+         "camera. The feature is always-on as long as the sniffer service is "
+         "running.\n\n"
+         "Filter: 🚨 'Only surveillance assets' hides ordinary probes so you can "
+         "sweep for surveillance signatures without the noise."),
+
         ("Probe Captures tab",
          "Switch to the Probe Captures tab to see live probe-request events without "
          "leaving the app — every device near you that's looking for a known network "
@@ -921,6 +943,37 @@ class SonarApp(GhostPortApp):
             pass
         return {}
 
+    # T-0166 — Surveillance asset OUI lookup. Same source-of-truth as the
+    # sniffer (/opt/phantom/desktop/surveillance-vendors.json + user override
+    # at /etc/phantom/surveillance-vendors.json) — keeps signature-rotation
+    # hands-free between sniffer and GUI.
+    _SURVEILLANCE_DB_USER = "/etc/phantom/surveillance-vendors.json"
+    _SURVEILLANCE_DB_BUNDLED = "/opt/phantom/desktop/surveillance-vendors.json"
+
+    def _load_surveillance_db(self):
+        """Build {oui_prefix: vendor_dict}. Returns {} if no DB found."""
+        for path in (self._SURVEILLANCE_DB_USER, self._SURVEILLANCE_DB_BUNDLED):
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError, OSError):
+                continue
+            mapping = {}
+            for vendor in data.get("vendors", []):
+                for oui in vendor.get("wifi_ouis", []):
+                    mapping[oui.upper()] = vendor
+            return mapping
+        return {}
+
+    def _surveillance_match(self, mac):
+        """Return vendor dict if MAC's OUI matches a surveillance asset, else None."""
+        if not mac or len(mac) < 8:
+            return None
+        if not hasattr(self, "_surveillance_cache"):
+            self._surveillance_cache = self._load_surveillance_db()
+        prefix = mac.upper().replace("-", ":")[:8]
+        return self._surveillance_cache.get(prefix)
+
     def _oui_lookup(self, mac):
         """Return vendor name for MAC prefix, or '' for unknown.
         Locally-administered (random) MACs return 'Random' since the OUI
@@ -1025,6 +1078,17 @@ class SonarApp(GhostPortApp):
         self.chk_hide_broadcast = Gtk.CheckButton(label="Hide broadcast probes")
         self.chk_hide_broadcast.connect("toggled", lambda *_a: self._refresh_probe_captures())
         filter_row.pack_start(self.chk_hide_broadcast, False, False, 12)
+
+        # T-0166 — surveillance-only filter. When enabled, hides ordinary
+        # probe-requests so an operator sweeping for Flock cameras / Raven
+        # gunshot sensors can focus on the actual signals.
+        self.chk_only_surveillance = Gtk.CheckButton(label="🚨 Only surveillance assets")
+        self.chk_only_surveillance.set_tooltip_text(
+            "Show only probes whose source MAC matches a known surveillance vendor "
+            "(Flock Safety ALPR, ShotSpotter Raven, etc.)"
+        )
+        self.chk_only_surveillance.connect("toggled", lambda *_a: self._refresh_probe_captures())
+        filter_row.pack_start(self.chk_only_surveillance, False, False, 0)
 
         page.pack_start(filter_row, False, False, 0)
 
@@ -1154,10 +1218,23 @@ class SonarApp(GhostPortApp):
             300,
         )
         try:
-            events = gp_events.recent(
+            # T-0166 — surveillance_asset events ride the same bus and we
+            # want them in the same list so the user sees them inline. Pull
+            # both, then sort by timestamp desc.
+            probe_events = gp_events.recent(
                 since_seconds=window_sec,
                 source="sonar-sniffer",
                 category="probe_request",
+            )
+            surv_events = gp_events.recent(
+                since_seconds=window_sec,
+                source="sonar-sniffer",
+                category="surveillance_asset",
+            )
+            events = sorted(
+                probe_events + surv_events,
+                key=lambda e: e.get("timestamp", 0),
+                reverse=True,
             )
         except Exception as e:
             sys.stderr.write(f"[sonar] probe-capture refresh failed: {e}\n")
@@ -1166,6 +1243,14 @@ class SonarApp(GhostPortApp):
         hide_bcast = self.chk_hide_broadcast.get_active()
         if hide_bcast:
             events = [e for e in events if (e.get("details") or {}).get("ssid")]
+
+        only_surv = self.chk_only_surveillance.get_active()
+        if only_surv:
+            events = [
+                e for e in events
+                if e.get("category") == "surveillance_asset"
+                or self._surveillance_match((e.get("details") or {}).get("src", ""))
+            ]
 
         events = events[:PROBE_LIST_LIMIT]
 
@@ -1197,6 +1282,12 @@ class SonarApp(GhostPortApp):
         rssi = details.get("rssi_dbm")
         channel = details.get("channel")
         vendor = self._oui_lookup(src)
+        # T-0166 — flag rows whose source MAC matches a known surveillance
+        # vendor, regardless of whether the event came in as 'probe_request'
+        # or 'surveillance_asset' (matters because surveillance_asset emits
+        # are dedup'd at 5min, while probe_request events from the same MAC
+        # are dedup'd at 1min — the older signal still deserves the badge).
+        surv = self._surveillance_match(src)
 
         row = Gtk.ListBoxRow()
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -1204,6 +1295,18 @@ class SonarApp(GhostPortApp):
         hbox.set_margin_end(8)
         hbox.set_margin_top(4)
         hbox.set_margin_bottom(4)
+
+        # Surveillance badge (left-most when present, else nothing — keeps
+        # ordinary rows visually clean).
+        if surv:
+            badge_text = f"🚨 {surv['name']}"
+            lbl_badge = self.make_label(badge_text, "gp-warning-amber")
+            lbl_badge.set_xalign(0)
+            lbl_badge.set_tooltip_text(
+                f"{surv['name']} ({surv.get('category', 'surveillance asset')}) — "
+                f"OUI matches a known signature"
+            )
+            hbox.pack_start(lbl_badge, False, False, 0)
 
         # Time
         lbl_time = self.make_label(self._format_age(ev["timestamp"]), "gp-dim")
@@ -1215,6 +1318,10 @@ class SonarApp(GhostPortApp):
         mac_text = src
         if vendor:
             mac_text = f"{src}  ({vendor})"
+        elif surv:
+            # If the OUI table doesn't have a generic-vendor name but the
+            # surveillance DB does, surface that as the vendor field.
+            mac_text = f"{src}  ({surv['name']})"
         lbl_mac = self.make_label(mac_text, "")
         lbl_mac.set_xalign(0)
         lbl_mac.set_size_request(280, -1)

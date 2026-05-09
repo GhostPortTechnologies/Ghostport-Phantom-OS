@@ -83,6 +83,16 @@ RSSI_CONFIRM_COUNT = 2
 # Per-source-MAC dedup so a phone polling 30 SSIDs in a burst becomes one event.
 PROBE_REQ_DEDUP_INTERVAL_S = 60
 
+# T-0166 — Surveillance asset detection (Flock Safety / ShotSpotter / etc).
+# Vendor signatures live in /opt/phantom/desktop/surveillance-vendors.json with
+# /etc/phantom/surveillance-vendors.json as the operator override.
+# Detection runs BEFORE the probe_mode gate — operators get the security signal
+# without needing to enable privacy-sensitive Full mode for everyone else.
+# Surveillance assets are stationary by definition, so dedup at 5 min is fine.
+SURVEILLANCE_DEDUP_INTERVAL_S = 300
+SURVEILLANCE_DB_USER = "/etc/phantom/surveillance-vendors.json"
+SURVEILLANCE_DB_BUNDLED = "/opt/phantom/desktop/surveillance-vendors.json"
+
 # OUI vendor lookup — top consumer + enterprise vendors seen in residential RF.
 # Universally-administered MACs only; locally-administered (LA-bit set) returns
 # None because they're typically virtual/random privacy MACs without vendor info.
@@ -179,6 +189,43 @@ def _walk_ies(pkt):
             elt = elt.payload.getlayer(Dot11Elt) if elt.payload else None
         except Exception:
             break
+
+
+# T-0166 — Surveillance asset detection. Loaded once at startup; the daemon
+# restarts on config-file change via gp-sonar-config, so a hot-reload isn't
+# needed here. Lookup map is keyed on the upper-case OUI prefix "AA:BB:CC".
+_SURVEILLANCE_OUI_MAP = {}
+
+
+def _load_surveillance_db():
+    """Build {oui_prefix: vendor_dict} from the surveillance-vendors database.
+
+    User override at SURVEILLANCE_DB_USER takes precedence over the bundled DB,
+    matching the pattern used by load_signatures() in gp-sonar.py.
+    """
+    global _SURVEILLANCE_OUI_MAP
+    _SURVEILLANCE_OUI_MAP = {}
+    for path in (SURVEILLANCE_DB_USER, SURVEILLANCE_DB_BUNDLED):
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            continue
+        for vendor in data.get("vendors", []):
+            for oui in vendor.get("wifi_ouis", []):
+                _SURVEILLANCE_OUI_MAP[oui.upper()] = vendor
+        LOG.info("loaded %d surveillance OUI signatures from %s",
+                 len(_SURVEILLANCE_OUI_MAP), path)
+        return
+    LOG.info("no surveillance-vendors database found — surveillance detection inactive")
+
+
+def _match_surveillance_oui(mac):
+    """Return the vendor dict if the MAC's OUI matches a known surveillance asset, else None."""
+    if not mac or len(mac) < 8:
+        return None
+    prefix = mac.upper().replace("-", ":")[:8]
+    return _SURVEILLANCE_OUI_MAP.get(prefix)
 
 
 def _ssid_from_beacon(pkt):
@@ -511,17 +558,52 @@ def make_handler(rate, change_detector=None, probe_mode="off"):
                 return
 
             if pkt.haslayer(Dot11ProbeReq):
+                src = getattr(pkt, "addr2", "??")
+                rt = _radiotap_signal(pkt)
+                ssid_raw = _ssid_from_beacon(pkt)
+
+                # T-0166 — Surveillance asset detection runs FIRST, before the
+                # probe_mode gate. This is a security-critical signal that
+                # shouldn't require flipping probe_capture to Full.
+                vendor = _match_surveillance_oui(src)
+                if vendor is not None:
+                    # For Flock specifically the high-precision signature
+                    # requires a wildcard (empty) SSID. Other vendors flagged
+                    # purely on OUI emit unconditionally.
+                    pattern = vendor.get("wifi_probe_pattern", "any")
+                    pattern_ok = (pattern != "wildcard_ssid") or (not ssid_raw)
+                    if pattern_ok and rate.should_emit(
+                        ("surv-" + vendor["id"], src),
+                        SURVEILLANCE_DEDUP_INTERVAL_S,
+                    ):
+                        gp_events.emit(
+                            source="sonar-sniffer",
+                            category="surveillance_asset",
+                            severity=gp_events.SEVERITY_WARNING,
+                            summary=(
+                                f"{vendor['name']} ({vendor['category']}) "
+                                f"detected: {src}"
+                            ),
+                            details={
+                                "src": src,
+                                "vendor_id": vendor["id"],
+                                "vendor_name": vendor["name"],
+                                "category": vendor["category"],
+                                "rssi_dbm": rt.get("rssi_dbm"),
+                                "channel": rt.get("channel"),
+                                "wifi_probe_pattern": pattern,
+                            },
+                        )
+
                 # T-0059 — Pineapple/Karma detection feed. Off by default;
                 # operator opts in via Sonar UI. mac-only redacts SSID at the
                 # parser so the SSID never reaches the bus / DB / logs.
                 if probe_mode == "off":
                     return
-                src = getattr(pkt, "addr2", "??")
                 # Per-MAC dedup so a single device polling 30 cached SSIDs
                 # becomes one bus event, not thirty.
                 if not rate.should_emit(("probe-req", src), PROBE_REQ_DEDUP_INTERVAL_S):
                     return
-                rt = _radiotap_signal(pkt)
                 details = {
                     "src": src,
                     "rssi_dbm": rt.get("rssi_dbm"),
@@ -531,9 +613,8 @@ def make_handler(rate, change_detector=None, probe_mode="off"):
                     # Only attached when operator explicitly chose 'full' —
                     # this is the privacy-sensitive payload (which networks
                     # the device has previously connected to).
-                    ssid = _ssid_from_beacon(pkt)
-                    details["ssid"] = ssid
-                    summary = f"probe-request: {src} -> {ssid or '(broadcast)'}"
+                    details["ssid"] = ssid_raw
+                    summary = f"probe-request: {src} -> {ssid_raw or '(broadcast)'}"
                 else:
                     summary = f"probe-request: {src}"
                 gp_events.emit(
@@ -646,6 +727,7 @@ def main():
     rate = RateLimiter()
     probe_mode = _read_probe_capture_mode()
     LOG.info("probe_capture mode: %s", probe_mode)
+    _load_surveillance_db()
     handler = make_handler(rate, probe_mode=probe_mode)
     try:
         # store=False keeps memory bounded — scapy would otherwise hold every

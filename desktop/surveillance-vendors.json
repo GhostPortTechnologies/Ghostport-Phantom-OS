@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "updated": "2026-05-08",
+  "_doc": "Surveillance asset detection database. Used by Sonar's probe-request pipeline (T-0166) and Beacon Watch's BLE pipeline (T-0167). Override locally at /etc/phantom/surveillance-vendors.json. Discipline: every entry must cite a public source. OUI prefixes are operationally observed, not necessarily IEEE-registered to the named vendor — fleet-rotation and reuse across product lines is normal. Prefer empty over false-positive.",
+  "vendors": [
+    {
+      "id": "flock_safety_alpr",
+      "name": "Flock Safety",
+      "category": "ALPR camera",
+      "severity": "warning",
+      "description": "Automated license-plate reader. Pole-mounted, solar/battery powered, cellular backhaul. Emits a wildcard probe-request from one of the listed OUI prefixes; older units also broadcast BLE manufacturer ID 0x09C8.",
+      "wifi_ouis": [
+        "70:C9:4E", "3C:91:80", "D8:F3:BC", "80:30:49", "B8:35:32",
+        "14:5A:FC", "74:4C:A1", "08:3A:88", "9C:2F:9D", "C0:35:32",
+        "94:08:53", "E4:AA:EA", "F4:6A:DD", "F8:A2:D6", "24:B2:B9",
+        "00:F4:8D", "D0:39:57", "E8:D0:FC", "E0:4F:43", "B8:1E:A4",
+        "70:08:94", "58:8E:81", "EC:1B:BD", "3C:71:BF", "58:00:E3",
+        "90:35:EA", "5C:93:A2", "64:6E:69", "48:27:EA", "A4:CF:12",
+        "82:6B:F2", "B4:1E:52"
+      ],
+      "wifi_probe_pattern": "wildcard_ssid",
+      "ble_manufacturer_ids": ["0x09C8"],
+      "sources": [
+        "https://github.com/colonelpanichacks/flock-you",
+        "https://github.com/justcallmekoko/ESP32Marauder/wiki/Flock-Sniff",
+        "https://gainsec.com/2025/11/05/formalizing-my-flock-safety-security-research/",
+        "https://www.eff.org/deeplinks/2025/12/effs-investigations-expose-flock-safetys-surveillance-abuses-2025-review",
+        "https://deflock.me"
+      ]
+    },
+    {
+      "id": "shotspotter_raven",
+      "name": "ShotSpotter Raven",
+      "category": "Acoustic gunshot sensor",
+      "severity": "warning",
+      "description": "SoundThinking/ShotSpotter Raven gunshot-detection microphone. Often co-located with Flock cameras on city light poles. Advertises a distinctive set of 16-bit BLE service UUIDs.",
+      "wifi_ouis": [],
+      "ble_service_uuids": [
+        "0x180A",
+        "0x1809",
+        "0x1819",
+        "0x3100",
+        "0x3200",
+        "0x3300",
+        "0x3400",
+        "0x3500"
+      ],
+      "sources": [
+        "https://github.com/colonelpanichacks/flock-you",
+        "https://gainsec.com/2025/11/05/formalizing-my-flock-safety-security-research/"
+      ]
+    }
+  ]
+}
