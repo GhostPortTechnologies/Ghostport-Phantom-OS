@@ -1,0 +1,15 @@
+#!/bin/bash
+# gp-region-rclick — waybar right-click handler for the region module.
+# Pending-switch (rollback timer armed): rollback now. Otherwise: no-op.
+set -uo pipefail
+
+ROLLBACK_TIMER_UNIT="gp-region-rollback.timer"
+
+if systemctl is-active --quiet "$ROLLBACK_TIMER_UNIT" 2>/dev/null; then
+  if sudo -n /usr/local/bin/gp-region rollback >/dev/null 2>&1; then
+    notify-send -t 3000 -u normal "Region switch rolled back" "Reverted to previous region."
+  else
+    notify-send -t 5000 -u critical "Region rollback failed" "Run 'sudo gp-region status' for detail."
+  fi
+fi
+# No-op when no pending switch.

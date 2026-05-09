@@ -8,28 +8,42 @@ define LAN_SUBNET = "192.168.50.0/24"
 table inet management {
     chain input {
         type filter hook input priority -100; policy drop;
-        iifname "lo" accept
-        ct state established,related accept
-        ct state invalid drop
+        iifname "lo" counter accept
+
+        ct state established,related counter accept
+
+        ct state invalid counter drop
+
         # SSH from LAN and Tailscale only
-        iifname { $LAN_IF, $TS_IF } tcp dport 22 accept
+        iifname { $LAN_IF, $TS_IF } tcp dport 22 counter accept
+
         # Dashboard from LAN, Tailscale, localhost
-        iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201, 4202 } accept
+        iifname { $LAN_IF, $TS_IF, "lo" } tcp dport { 4200, 4201, 4202 } counter accept
+
         # Tailscale WireGuard (peer discovery)
-        udp dport 41641 accept
+        udp dport 41641 counter accept
+
         # DNS + DHCP from LAN (Pi-hole)
-        iifname $LAN_IF udp dport { 53, 67 } accept
-        iifname $LAN_IF tcp dport { 53, 80 } accept
+        iifname $LAN_IF udp dport { 53, 67 } counter accept
+
+        iifname $LAN_IF tcp dport { 53, 80 } counter accept
+
         # Pi-hole admin + DNS from Tailscale
-        iifname $TS_IF tcp dport { 53, 80 } accept
-        iifname $TS_IF udp dport 53 accept
+        iifname $TS_IF tcp dport { 53, 80 } counter accept
+
+        iifname $TS_IF udp dport 53 counter accept
+
         # WireGuard tunnel traffic (when doublehop/zhop active)
-        iifname { $WG_IF, $WG_DATA } accept
+        iifname { $WG_IF, $WG_DATA } counter accept
+
         # ICMP (ping, path MTU discovery)
-        ip protocol icmp accept
-        ip6 nexthdr icmpv6 accept
+        ip protocol icmp counter accept
+
+        ip6 nexthdr icmpv6 counter accept
+
         # DHCP client on WAN (needed for both eth0 and wlan1)
-        iifname $WAN_IF udp sport 67 udp dport 68 accept
+        iifname $WAN_IF udp sport 67 udp dport 68 counter accept
+
         # Log dropped packets (rate-limited)
         limit rate 5/minute log prefix "[GhostPort-DROP] " level warn
     }

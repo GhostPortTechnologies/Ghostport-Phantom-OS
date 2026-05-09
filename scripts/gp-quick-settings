@@ -1,0 +1,240 @@
+#!/bin/bash
+# gp-quick-settings — waybar control panel + quick router toggles.
+# Hotkey: Super+Q. Bound to the waybar gear icon (custom/settings on-click).
+#
+# Top-level menu:
+#   QUICK TOGGLES — Encrypted DNS, Ad Blocking, Kill Switch (live status shown)
+#   WAYBAR        — Hide/Show Modules, Position Top↔Bottom, Reload, Edit Config
+#
+# Module hide/show and position changes write override files in
+# ~/.config/waybar/ and relaunch waybar via gp-waybar-restart. The master
+# config (~/.config/waybar/config) is never touched destructively.
+
+set -euo pipefail
+
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+    exit 0
+fi
+
+if [[ -f /usr/local/lib/gp-theme-colors.sh ]]; then
+    # shellcheck disable=SC1091
+    source /usr/local/lib/gp-theme-colors.sh
+fi
+ACCENT="${ACCENT_HEX:-39ff8f}"
+
+MASTER="$HOME/.config/waybar/config"
+HIDDEN="$HOME/.config/waybar/hidden-modules.json"
+POS="$HOME/.config/waybar/position-override"
+RESTART="$HOME/.local/bin/gp-waybar-restart"
+
+# ── fuzzel wrapper ──────────────────────────────────────────
+
+fuzzel_pick() {
+    # Theme/colors come from ~/.config/fuzzel/fuzzel.ini — only functional
+    # flags here. Keeps every gp-* fuzzel menu visually consistent.
+    local prompt="$1" lines="$2"
+    fuzzel --dmenu -w 46 -l "$lines" --prompt="$prompt"
+}
+
+# ── status helpers ──────────────────────────────────────────
+
+dns_status() {
+    if systemctl is-active --quiet cloudflared 2>/dev/null \
+        || pgrep -x cloudflared >/dev/null 2>&1; then
+        echo "ON"
+    else
+        echo "OFF"
+    fi
+}
+
+ks_status() {
+    [[ -f /tmp/gp-killswitch.active ]] && echo "ON" || echo "OFF"
+}
+
+ads_status() {
+    local ph
+    ph=$(timeout 3 gp-pihole blocking 2>/dev/null \
+        | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("blocking",""))
+except Exception: pass' 2>/dev/null) || true
+    [[ "$ph" == "disabled" ]] && echo "OFF" || echo "ON"
+}
+
+current_position() {
+    if [[ -f "$POS" ]]; then
+        local v
+        v=$(tr -d '[:space:]' < "$POS" | tr '[:upper:]' '[:lower:]')
+        if [[ "$v" == "top" || "$v" == "bottom" ]]; then
+            echo "$v"
+            return
+        fi
+    fi
+    python3 -c "import json; print(json.load(open('$MASTER')).get('position','top'))" \
+        2>/dev/null || echo "top"
+}
+
+list_master_modules() {
+    python3 -c "
+import json
+cfg = json.load(open('$MASTER'))
+for k in ('modules-left','modules-center','modules-right'):
+    for m in cfg.get(k, []):
+        print(m)
+"
+}
+
+read_hidden() {
+    [[ -f "$HIDDEN" ]] || return 0
+    python3 -c "
+import json
+try:
+    d = json.load(open('$HIDDEN'))
+    if isinstance(d, list):
+        for m in d:
+            print(m)
+except Exception:
+    pass
+" 2>/dev/null || true
+}
+
+write_hidden() {
+    # stdin: one module per line; blanks dropped, duplicates removed.
+    python3 -c "
+import json, sys
+seen = []
+for line in sys.stdin:
+    m = line.strip()
+    if m and m not in seen:
+        seen.append(m)
+json.dump(seen, open('$HIDDEN', 'w'), indent=2)
+"
+}
+
+# ── waybar submenus ─────────────────────────────────────────
+
+toggle_module_visibility() {
+    while :; do
+        local hidden_now items=""
+        hidden_now=$(read_hidden)
+        while IFS= read -r m; do
+            [[ -z "$m" ]] && continue
+            if printf '%s\n' "$hidden_now" | grep -qFx "$m"; then
+                items+="[ ] $m"$'\n'
+            else
+                items+="[✓] $m"$'\n'
+            fi
+        done < <(list_master_modules)
+        items+="─────────────────────────────"$'\n'
+        items+="↩ Back"$'\n'
+
+        local pick
+        pick=$(printf '%s' "$items" | fuzzel_pick " Modules > " 14) || return 0
+        [[ -z "$pick" ]] && return 0
+        [[ "$pick" == *"Back"* ]] && return 0
+        [[ "$pick" == ─* ]] && continue
+
+        local module="${pick:4}"   # strip "[✓] " / "[ ] " prefix
+        local action new
+        if printf '%s\n' "$hidden_now" | grep -qFx "$module"; then
+            new=$(printf '%s\n' "$hidden_now" | grep -vFx "$module" || true)
+            action="shown"
+        else
+            new=$(printf '%s\n%s' "$hidden_now" "$module")
+            action="hidden"
+        fi
+        printf '%s\n' "$new" | write_hidden
+        "$RESTART"
+        notify-send "Phantom OS" "$module: $action" -t 2500 2>/dev/null || true
+    done
+}
+
+toggle_position() {
+    local cur next
+    cur=$(current_position)
+    if [[ "$cur" == "top" ]]; then
+        next="bottom"
+    else
+        next="top"
+    fi
+    printf '%s\n' "$next" > "$POS"
+    "$RESTART"
+    notify-send "Phantom OS" "Waybar moved to $next" -t 2500 2>/dev/null || true
+}
+
+# ── main menu ───────────────────────────────────────────────
+
+DNS=$(dns_status)
+KS=$(ks_status)
+ADS=$(ads_status)
+CURPOS=$(current_position)
+NEXTPOS_LBL=$([[ "$CURPOS" == "top" ]] && echo "Bottom" || echo "Top")
+CURPOS_LBL=$([[ "$CURPOS" == "top" ]] && echo "Top" || echo "Bottom")
+
+MENU=$(cat <<EOF
+─── QUICK TOGGLES ───
+🔒 Encrypted DNS:  ${DNS}
+🛡 Ad Blocking:    ${ADS}
+🛑 Kill Switch:    ${KS}
+─── WAYBAR ───
+🎛 Hide / Show Modules
+↕  Position: ${CURPOS_LBL} → ${NEXTPOS_LBL}
+↻  Reload Waybar
+✎  Edit Waybar Config
+─────────────────────
+✕  Close
+EOF
+)
+
+CHOICE=$(printf '%s' "$MENU" | fuzzel_pick " ⚙ Quick Settings  › " 14) || exit 0
+[[ -z "$CHOICE" ]] && exit 0
+[[ "$CHOICE" == ─* ]] && exit 0
+[[ "$CHOICE" == ✕* ]] && exit 0
+
+case "$CHOICE" in
+    *"Encrypted DNS"*)
+        if [[ "$DNS" == "ON" ]]; then
+            if sudo gp-dns-switch off 2>/dev/null; then
+                notify-send "Phantom OS" "Encrypted DNS disabled" -t 2500 2>/dev/null || true
+            fi
+        else
+            if sudo gp-dns-switch on 2>/dev/null; then
+                notify-send "Phantom OS" "Encrypted DNS enabled" -t 2500 2>/dev/null || true
+            fi
+        fi
+        ;;
+    *"Ad Blocking"*)
+        if [[ "$ADS" == "ON" ]]; then
+            sudo pihole disable 300 >/dev/null 2>&1 || true
+            notify-send "Phantom OS" "Ad blocking paused 5 min" -t 2500 2>/dev/null || true
+        else
+            sudo pihole enable >/dev/null 2>&1 || true
+            notify-send "Phantom OS" "Ad blocking enabled" -t 2500 2>/dev/null || true
+        fi
+        ;;
+    *"Kill Switch"*)
+        if [[ "$KS" == "ON" ]]; then
+            gp-killswitch disable 2>/dev/null \
+                || sudo nft delete chain inet filter "gp-killswitch" 2>/dev/null \
+                || true
+            notify-send "Phantom OS" "Kill Switch disabled" -t 2500 2>/dev/null || true
+        else
+            gp-killswitch enable 2>/dev/null || true
+            notify-send "Phantom OS" "Kill Switch armed" -t 2500 2>/dev/null || true
+        fi
+        ;;
+    *"Hide / Show Modules"*)
+        toggle_module_visibility
+        ;;
+    *"Position:"*)
+        toggle_position
+        ;;
+    *"Reload Waybar"*)
+        "$RESTART"
+        notify-send "Phantom OS" "Waybar reloaded" -t 2000 2>/dev/null || true
+        ;;
+    *"Edit Waybar Config"*)
+        geany "$MASTER" >/dev/null 2>&1 &
+        disown
+        ;;
+esac

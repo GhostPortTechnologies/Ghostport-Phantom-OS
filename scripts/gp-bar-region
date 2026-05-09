@@ -1,17 +1,33 @@
 #!/bin/bash
-# gp-bar-region — waybar JSON module showing current wg1 region
+# gp-bar-region — waybar JSON module showing current wg1 region.
+# T-PI-2: surfaces pending-switch state with countdown so operators see the
+# 60s rollback timer in always-visible UI instead of having to run
+# `gp-region status` to find it.
 set -uo pipefail
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   echo "gp-bar-region — waybar JSON module for current wg1 data-plane region"
+  echo "  during a pending switch (60s rollback timer armed): shows"
+  echo "  ⏳ CONFIRM with countdown. Click handlers (gp-region-click /"
+  echo "  gp-region-rclick) commit or rollback."
   exit 0
 fi
 
 STATE_FILE="/etc/ghostport/active-region.json"
+ROLLBACK_TIMER_UNIT="gp-region-rollback.timer"
 
 emit() {
   jq -nc --arg t "$1" --arg c "$2" --arg tip "$3" \
     '{text:$t, class:$c, tooltip:$tip}'
+}
+
+label_for() {
+  case "$1" in
+    us-east-1) echo "EAST" ;;
+    us-west-1) echo "WEST" ;;
+    us-west-2) echo "WEST-OR" ;;
+    *)         echo "$1" ;;
+  esac
 }
 
 if [ ! -r "$STATE_FILE" ]; then
@@ -21,12 +37,29 @@ fi
 
 id=$(jq -r '.id // "unknown"' "$STATE_FILE" 2>/dev/null)
 ts=$(jq -r '.switched_at // 0' "$STATE_FILE" 2>/dev/null)
+rb=$(jq -r '.rollback_timer // "null"' "$STATE_FILE" 2>/dev/null)
 
+# Pending-switch state: state-file says armed AND systemd timer is active
+if [ "$rb" = "armed" ] && systemctl is-active --quiet "$ROLLBACK_TIMER_UNIT" 2>/dev/null; then
+  now=$(date +%s)
+  secs_left=$(( 60 - (now - ts) ))
+  [ "$secs_left" -lt 0 ] && secs_left=0
+  label=$(label_for "$id")
+  emit "⏳ CONFIRM $label (${secs_left}s)" "region-pending" \
+"Pending switch to $label
+left-click  → commit (gp-region confirm)
+right-click → rollback now
+Auto-rollback in ${secs_left}s if no action."
+  exit 0
+fi
+
+# Normal state
+label=$(label_for "$id")
 case "$id" in
-  us-east-1) label="EAST"; long="Virginia (us-east-1)" ;;
-  us-west-1) label="WEST"; long="San Jose (us-west-1)" ;;
-  us-west-2) label="WEST-OR"; long="Oregon (us-west-2)" ;;
-  *)         label="$id"; long="$id" ;;
+  us-east-1) long="Virginia (us-east-1)" ;;
+  us-west-1) long="San Jose (us-west-1)" ;;
+  us-west-2) long="Oregon (us-west-2)" ;;
+  *)         long="$id" ;;
 esac
 
 tooltip="data-plane region: $long"

@@ -110,7 +110,10 @@ start_wg0() {
   local addr
   addr=$(sudo grep -oP 'Address\s*=\s*\K\S+' /etc/wireguard/wg0.conf)
   sudo ip addr replace "$addr" dev wg0 2>/dev/null || true
-  sudo ip link set wg0 mtu 1420 up || die "Failed to bring up wg0"
+  # T-0170: 1420 → 1380. Keeps the encapsulated outer UDP under 1492 (PPPoE) and
+  # avoids the ip_do_fragment path that trips the in-kernel wireguard refcount
+  # UAF (lib/refcount.c:28) seen on 6.12.75.
+  sudo ip link set wg0 mtu 1380 up || die "Failed to bring up wg0"
   sudo ip link set wg0 txqueuelen 5000 2>/dev/null || true
 
   # Add route for control plane subnet through wg0
@@ -135,7 +138,8 @@ start_wg1() {
   local addr
   addr=$(sudo grep -oP 'Address\s*=\s*\K\S+' /etc/wireguard/wg1.conf)
   sudo ip addr replace "$addr" dev wg1 2>/dev/null || true
-  sudo ip link set wg1 mtu 1420 up || die "Failed to bring up wg1"
+  # T-0170: 1420 → 1380 (same rationale as wg0 above — avoid fragmentation UAF).
+  sudo ip link set wg1 mtu 1380 up || die "Failed to bring up wg1"
   sudo ip link set wg1 txqueuelen 5000 2>/dev/null || true
   echo "[gp-mode] wg1 (data plane) up"
 }

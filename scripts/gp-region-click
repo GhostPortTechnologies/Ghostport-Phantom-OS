@@ -1,0 +1,17 @@
+#!/bin/bash
+# gp-region-click — waybar left-click handler for the region module.
+# Pending-switch (rollback timer armed): commit. Otherwise: open picker.
+set -uo pipefail
+
+ROLLBACK_TIMER_UNIT="gp-region-rollback.timer"
+
+if systemctl is-active --quiet "$ROLLBACK_TIMER_UNIT" 2>/dev/null; then
+  if sudo -n /usr/local/bin/gp-region confirm >/dev/null 2>&1; then
+    notify-send -t 3000 -u normal "Region switch confirmed" "Pending switch committed."
+  else
+    notify-send -t 5000 -u critical "Region confirm failed" "Run 'sudo gp-region status' for detail."
+  fi
+  exit 0
+fi
+
+exec ~/.local/bin/gp-region-picker

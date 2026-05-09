@@ -5,6 +5,38 @@ set -euo pipefail
 MODEFILE="/etc/ghostport/current-mode"
 WAN_CONF="/etc/ghostport/wan.json"
 
+# T-0188: any non-flag invocation re-applies the saved privacy mode.
+# Diagnostic tools that called 'gp-mode-boot --dry-run' (fictional flag)
+# would silently trigger a real mode reapplication. Make --check explicit.
+case "${1:-}" in
+  -h|--help|help)
+    cat <<'EOF'
+gp-mode-boot — boot-time mode + WAN restore (NOT a status tool)
+
+Usage:
+  gp-mode-boot           apply saved WAN + mode (only valid in boot units)
+  gp-mode-boot --check   read-only: print what would be applied; take no action
+  gp-mode-boot --help    this message
+
+Diagnostic note: any non-flag invocation re-applies the saved privacy mode.
+For read-only state, prefer 'gp-mode status' or 'cat /etc/ghostport/current-mode'.
+EOF
+    exit 0
+    ;;
+  --check|--dry-run|--status)
+    saved=$(cat "$MODEFILE" 2>/dev/null || echo "isp")
+    case "$saved" in
+      isp|zerotrust|doublehop|zhop) ok="valid" ;;
+      *) ok="invalid (would force isp)" ;;
+    esac
+    wan_type="ethernet"
+    [[ -f "$WAN_CONF" ]] && wan_type=$(python3 -c "import json; print(json.load(open('$WAN_CONF')).get('type','ethernet'))" 2>/dev/null || echo "ethernet")
+    echo "[gp-mode-boot --check] saved-mode=$saved ($ok) wan-type=$wan_type"
+    echo "[gp-mode-boot --check] No action taken."
+    exit 0
+    ;;
+esac
+
 # ── Restore WiFi WAN if configured ──────────────────────
 if [[ -f "$WAN_CONF" ]]; then
   wan_type=$(python3 -c "import json; print(json.load(open('$WAN_CONF')).get('type','ethernet'))" 2>/dev/null || echo "ethernet")

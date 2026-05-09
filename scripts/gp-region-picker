@@ -10,28 +10,40 @@ fi
 
 API_URL="http://10.66.66.1:8080/api/regions"
 STATE_FILE="/etc/ghostport/active-region.json"
+CACHE_FILE="/etc/ghostport/regions-cache.json"
 
-data=$(curl -s --max-time 5 "$API_URL" 2>/dev/null) || {
-  notify-send -u critical "Region switcher" "fleet API unreachable at $API_URL"
+# Prefer fleet API, fall back to cache (gp-region's read_regions pattern).
+data=$(curl -s --max-time 5 "$API_URL" 2>/dev/null)
+if [ -z "$data" ] && [ -r "$CACHE_FILE" ]; then
+  data=$(cat "$CACHE_FILE" 2>/dev/null)
+fi
+if [ -z "$data" ]; then
+  notify-send -u critical "Region switcher" "no fleet data — cache empty AND fleet API unreachable. Switch to DoubleHop/ZHop, then run 'sudo gp-region refresh'."
   exit 2
-}
+fi
 
 current=$(jq -r '.id // "unknown"' "$STATE_FILE" 2>/dev/null)
 
-# Format: "<label>  [⊕ current]\t<id>" then fuzzel, take col 2 as id
-choice=$(echo "$data" \
-  | jq -r --arg cur "$current" '
-      .regions[] |
-      "\(.label)\(if .id == $cur then "  ⊕ current" else "" end)\t\(.id)"' \
-  | fuzzel --dmenu --prompt "wg1 region: " --lines 5 --width 40 \
+# Format: "<symbol> <label>\t<id>" — ⊕ for current, ⌖ for switchable, ✕ Close at end.
+items=$(echo "$data" | jq -r --arg cur "$current" '
+  .regions[] |
+  "\(if .id == $cur then "⊕" else "⌖" end)  \(.label)\(if .id == $cur then "  (current)" else "" end)\t\(.id)"')
+items="$items
+✕  Close	__close__"
+
+# Theme/colors come from ~/.config/fuzzel/fuzzel.ini — only functional flags here.
+choice=$(echo "$items" | fuzzel --dmenu --prompt=" ⊕ Region  › " --lines 6 --width 44 \
   | awk -F'\t' '{print $2}')
 
 [ -z "$choice" ] && exit 0
+[ "$choice" = "__close__" ] && exit 0
 
 if [ "$choice" = "$current" ]; then
   notify-send "Region switcher" "Already on $choice — no change."
   exit 0
 fi
 
-output=$(gp-region switch "$choice" 2>&1 || true)
-notify-send -t 8000 "Region switch (DRY-RUN)" "$output"
+output=$(sudo -n /usr/local/bin/gp-region switch "$choice" 2>&1 || true)
+notify-send -t 8000 "Region switching to $choice" "$output
+
+Click the pulsing waybar tag to confirm, or right-click to rollback."

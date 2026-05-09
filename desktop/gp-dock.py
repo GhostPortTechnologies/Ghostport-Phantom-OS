@@ -129,6 +129,18 @@ class Dock(Gtk.Window):
             GtkLayerShell.set_anchor(self, GtkLayerShell.Edge.TOP, False)
             GtkLayerShell.set_exclusive_zone(self, DOCK_HEIGHT)
             GtkLayerShell.set_keyboard_mode(self, GtkLayerShell.KeyboardMode.NONE)
+
+            # HDMI hotplug recovery (parallel to T-0174 in gp-desktop-icons.py).
+            # Wayland renames the output (HDMI-A-1 → HDMI-A-2) on unplug/replug
+            # and the original layer-shell surface dies with no automatic rebind.
+            # Re-exec on monitor-added/removed so a fresh surface attaches to the
+            # current output. Debounced 1s — a single hotplug fires removed-then-
+            # added back-to-back; we want one restart, not two.
+            self._monitor_change_pending = False
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.connect("monitor-added", self._on_monitor_topology_changed)
+                display.connect("monitor-removed", self._on_monitor_topology_changed)
         else:
             self.set_keep_above(True)
             self.set_skip_taskbar_hint(True)
@@ -438,6 +450,24 @@ class Dock(Gtk.Window):
         except OSError:
             pass
         Gtk.main_quit()
+        return False
+
+    # ── monitor topology hotplug ────────────────────────────────────
+
+    def _on_monitor_topology_changed(self, _display, _monitor):
+        """Re-exec on Wayland output add/remove. Debounced 1s so removed-then-
+        added from a single HDMI hotplug only restarts once."""
+        if self._monitor_change_pending:
+            return
+        self._monitor_change_pending = True
+        GLib.timeout_add(1000, self._reexec_self)
+
+    def _reexec_self(self):
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except OSError as e:
+            sys.stderr.write(f"[gp-dock] re-exec failed: {e}\n")
+            self._monitor_change_pending = False
         return False
 
 

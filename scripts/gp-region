@@ -70,6 +70,20 @@ fetch_regions() {
   printf '%s' "$out"
 }
 
+read_regions() {
+  # T-PI-1: prefer fleet API (fresh) but fall back to local cache when wg0 is
+  # down (ISP/ZeroTrust modes — fleet API at 10.66.66.1 is unreachable there).
+  # Use this for read-only ops (list, switch); cmd_refresh still uses
+  # fetch_regions directly since it MUST hit the upstream source.
+  local data=""
+  data=$(fetch_regions 2>/dev/null)
+  if [ -z "$data" ] && [ -r "$CACHE_FILE" ]; then
+    data=$(cat "$CACHE_FILE" 2>/dev/null)
+  fi
+  [ -z "$data" ] && return 1
+  printf '%s' "$data"
+}
+
 apply_wg_conf() {
   # Convert /etc/wireguard/wg1.conf -> wg setconf-compatible (strip wg-quick-only fields)
   local tmp
@@ -79,6 +93,25 @@ apply_wg_conf() {
   local rc=$?
   sudo rm -f "$tmp"
   return $rc
+}
+
+pin_endpoint_route() {
+  # T-0173: pin a host-route for the wg1 endpoint via the WAN gateway, so the
+  # encrypted UDP packet doesn't get routed through the wg1 default route
+  # itself (recursive loop — first symptom: handshake init never leaves the
+  # Pi, EC2 tcpdump sees zero packets, dual-check times out at 15s).
+  # gp-mode pins this at boot for the boot-time endpoint; gp-region must
+  # repin on every region switch and rollback.
+  local ip="$1"
+  [ -z "$ip" ] && return 1
+  local gw wif
+  read -r gw wif < <(ip route show default 2>/dev/null | awk '/^default via/ && /eth0/ {print $3, $5; exit}')
+  if [ -z "$gw" ] || [ -z "$wif" ]; then
+    log "warning: could not derive WAN gateway/iface — endpoint pin skipped"
+    return 1
+  fi
+  sudo ip route replace "$ip" via "$gw" dev "$wif" 2>/dev/null && \
+    log "pinned endpoint $ip via $gw dev $wif"
 }
 
 verify_path() {
@@ -138,7 +171,7 @@ cmd_status() {
 cmd_list() {
   need jq
   local data
-  data=$(fetch_regions) || die "fleet API unreachable at $API_URL" 2
+  data=$(read_regions) || die "no fleet data — cache empty AND fleet API unreachable (wg0 down). Run 'sudo gp-region refresh' from DoubleHop/ZHop to populate the cache." 2
   printf '%s%-12s %-30s %-25s %s%s\n' "$ACC" "ID" "LABEL" "ENDPOINT" "STATUS" "$RST"
   echo "$data" | jq -r '.regions[] | [.id, .label, .endpoint, .status] | @tsv' \
     | while IFS=$'\t' read -r id label endpoint status; do
@@ -156,7 +189,7 @@ cmd_switch() {
 
   # Load fleet config
   local data peer
-  data=$(fetch_regions) || die "fleet API unreachable" 2
+  data=$(read_regions) || die "no fleet data — cache empty AND fleet API unreachable (wg0 down). Run 'sudo gp-region refresh' from DoubleHop/ZHop to populate the cache." 2
   peer=$(echo "$data" | jq --arg id "$target" '.regions[] | select(.id == $id)')
   [ -z "$peer" ] && die "region '$target' not found in fleet API"
 
@@ -192,6 +225,10 @@ cmd_switch() {
   sudo sed -i "s|^Endpoint *=.*|Endpoint = $new_endpoint|" "$WG_CONF"
   sudo sed -i "s|^PublicKey *=.*|PublicKey = $new_pubkey|" "$WG_CONF"
 
+  # 2a. T-0173: pin host-route for new endpoint BEFORE wg setconf, so the
+  # very first handshake init has correct routing (eth0, not wg1 itself).
+  pin_endpoint_route "$new_endpoint_ip"
+
   # 3. Apply via wg setconf (no interface bounce)
   if ! apply_wg_conf; then
     log "%swg setconf FAILED — restoring snapshot%s" "$ERR" "$RST"
@@ -215,6 +252,10 @@ cmd_switch() {
     log "%sdual-check FAILED — auto-rolling back%s" "$ERR" "$RST"
     sudo cp -p "$snap" "$WG_CONF"
     apply_wg_conf || true
+    # T-0173: re-pin the restored endpoint so traffic egresses eth0, not wg1.
+    local restored_ip
+    restored_ip=$(sudo grep -oP '^Endpoint\s*=\s*\K[^:]+' "$WG_CONF" 2>/dev/null | head -1)
+    [ -n "$restored_ip" ] && pin_endpoint_route "$restored_ip"
     die "switch failed (dual-check timeout); restored snapshot from $snap" 3
   fi
 
@@ -290,18 +331,38 @@ cmd_rollback() {
   fi
   [ -z "$snap" ] && die "no rollback snapshot found"
   log "${auto}rollback: restoring $snap"
-  sudo cp -p "$snap" "$WG_CONF"
-  apply_wg_conf || die "rollback wg setconf failed — manual intervention needed"
-  # Write state FIRST — stopping the timer service while we ARE that service kills the script (2026-05-04 self-kill bug).
-  # T-0163: derive id from the restored Endpoint, not state.previous_id — previous_id is null after a chained
-  # rollback, which used to leave state pointing at a region no longer live.
-  local prev_id="" restored_ip="" new_id=""
+
+  # T-0188: capture prev_id BEFORE we touch state, so even a mid-flight crash
+  # leaves the operator with the right "what was I rolling back from?" trail.
+  local prev_id=""
   [ -r "$STATE_FILE" ] && prev_id=$(jq -r '.id // ""' "$STATE_FILE")
-  restored_ip=$(sudo grep -E '^Endpoint' "$WG_CONF" 2>/dev/null | head -1 | awk -F'[ =:]+' '{print $3}')
+
+  # Apply the rollback. Capture exit codes — DO NOT die mid-flight, since
+  # that left state lying about the live region (root cause of T-0188).
+  sudo cp -p "$snap" "$WG_CONF"
+  local apply_rc=0
+  apply_wg_conf || apply_rc=$?
+
+  # T-0173: re-pin restored endpoint so first packet through restored tunnel
+  # egresses eth0, not the wg1 default route.
+  local rb_ip
+  rb_ip=$(sudo grep -oP '^Endpoint\s*=\s*\K[^:]+' "$WG_CONF" 2>/dev/null | head -1)
+  [ -n "$rb_ip" ] && pin_endpoint_route "$rb_ip"
+
+  # T-0163: derive id from the restored Endpoint, not state.previous_id —
+  # previous_id is null after a chained rollback.
+  local restored_ip new_id
+  restored_ip="$rb_ip"
   new_id=$(resolve_region_by_endpoint "$restored_ip")
   local now
   now=$(date +%s)
-  sudo tee "$STATE_FILE" >/dev/null <<EOF
+
+  # T-0188: write state file with id derived from ACTUAL live wg1.conf,
+  # plus an apply_rc field so a failed apply is visible in state — never
+  # implicit. Operators reading active-region.json see the inconsistency
+  # explicitly instead of state silently disagreeing with wg1.conf.
+  if [ "$apply_rc" -eq 0 ]; then
+    sudo tee "$STATE_FILE" >/dev/null <<EOF
 {
   "id": "$new_id",
   "switched_at": $now,
@@ -310,10 +371,29 @@ cmd_rollback() {
   "previous_id": "$prev_id"
 }
 EOF
+  else
+    sudo tee "$STATE_FILE" >/dev/null <<EOF
+{
+  "id": "$new_id",
+  "switched_at": $now,
+  "switched_by": "rollback",
+  "rollback_timer": null,
+  "previous_id": "$prev_id",
+  "last_apply_error": "wg setconf failed during rollback (rc=$apply_rc) — wg1.conf restored, kernel state may differ"
+}
+EOF
+  fi
   sudo chmod 644 "$STATE_FILE"
+
   # Only stop the timer service when invoked manually — auto-mode is already running inside it and will die naturally.
   if [ "$auto" != "auto-" ]; then
     sudo systemctl stop "$ROLLBACK_TIMER_UNIT" "$ROLLBACK_SVC_UNIT" 2>/dev/null || true
+  fi
+
+  if [ "$apply_rc" -ne 0 ]; then
+    log "${ERR}rollback wg setconf FAILED rc=${apply_rc} — wg1.conf restored, kernel may need manual reload${RST}"
+    printf '%sROLLED BACK (with apply error) to %s — see active-region.json for last_apply_error%s\n' "$WARN" "$new_id" "$RST"
+    exit 3
   fi
   printf '%sROLLED BACK to %s%s\n' "$ACC" "$new_id" "$RST"
 }

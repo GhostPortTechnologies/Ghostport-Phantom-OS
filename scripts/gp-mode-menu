@@ -1,0 +1,98 @@
+#!/bin/bash
+# gp-mode-menu — Quick mode switcher via fuzzel
+# Shows 4 modes, current mode marked, switches on selection
+# Toggle option to skip 60s rollback timer
+
+CURRENT=$(cat /etc/ghostport/current-mode 2>/dev/null || echo "unknown")
+TOKEN=$(cat /run/ghostport/widget-token 2>/dev/null)
+STATE_FILE="$HOME/.config/ghostport/skip-rollback"
+mkdir -p "$HOME/.config/ghostport"
+
+# Check current skip-rollback state
+[[ -f "$STATE_FILE" ]] && SKIP_ROLLBACK=true || SKIP_ROLLBACK=false
+
+# Build menu with current mode marked
+MENU=""
+for mode in isp zerotrust doublehop zhop; do
+    case "$mode" in
+        isp)        label="ISP — No filtering (passthrough)" ;;
+        zerotrust)  label="ZERO TRUST — DNS locked, Pi-hole active" ;;
+        doublehop)  label="DOUBLE HOP — WireGuard VPN tunnel" ;;
+        zhop)       label="ZHOP — VPN + DNS lock (maximum)" ;;
+    esac
+    if [[ "$mode" == "$CURRENT" ]]; then
+        MENU+="▸ $label\n"
+    else
+        MENU+="  $label\n"
+    fi
+done
+
+MENU+="─────────────────────────────────────\n"
+if [[ "$SKIP_ROLLBACK" == "true" ]]; then
+    MENU+="☑ Skip rollback timer (instant commit)\n"
+else
+    MENU+="☐ Skip rollback timer (60s safety net)\n"
+fi
+MENU+="─────────────────────────────────────\n"
+MENU+="✕ Close"
+
+# Theme/colors come from ~/.config/fuzzel/fuzzel.ini — only functional flags here.
+CHOICE=$(echo -e "$MENU" | fuzzel --dmenu -w 50 -l 8 --prompt=" ▸ Switch Mode  › ")
+
+[[ -z "$CHOICE" ]] && exit 0
+# Explicit close
+echo "$CHOICE" | grep -q "^✕ Close$" && exit 0
+
+# Handle skip-rollback toggle
+if echo "$CHOICE" | grep -qi "skip rollback"; then
+    if [[ -f "$STATE_FILE" ]]; then
+        rm "$STATE_FILE"
+        notify-send "GhostPort OS" "Rollback timer ENABLED (60s safety net)" -t 3000
+    else
+        touch "$STATE_FILE"
+        notify-send "GhostPort OS" "Rollback timer DISABLED (instant commit)" -t 3000
+    fi
+    # Re-launch menu so user can pick a mode
+    exec "$0"
+fi
+
+# Skip separator line
+echo "$CHOICE" | grep -q "───" && exit 0
+
+# Extract mode from choice
+if echo "$CHOICE" | grep -qi "isp"; then
+    TARGET="isp"
+elif echo "$CHOICE" | grep -qi "zero.trust"; then
+    TARGET="zerotrust"
+elif echo "$CHOICE" | grep -qi "double.hop"; then
+    TARGET="doublehop"
+elif echo "$CHOICE" | grep -qi "zhop"; then
+    TARGET="zhop"
+else
+    exit 1
+fi
+
+if [[ "$TARGET" == "$CURRENT" ]]; then
+    notify-send "GhostPort OS" "Already in ${TARGET^^} mode" -t 3000
+    exit 0
+fi
+
+# Check skip-rollback state
+[[ -f "$STATE_FILE" ]] && SKIP=true || SKIP=false
+
+# Switch mode via API
+RESP=$(curl -sf -m 10 -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"mode\": \"$TARGET\", \"skipRollback\": $SKIP}" \
+    "http://localhost:4200/api/mode" 2>/dev/null)
+
+if [[ $? -eq 0 ]]; then
+    if [[ "$SKIP" == "true" ]]; then
+        notify-send "GhostPort OS" "Switched to ${TARGET^^} mode (no rollback)" -t 5000
+    else
+        notify-send "GhostPort OS" "Switching to ${TARGET^^} mode...\n60s rollback timer started" -t 5000
+    fi
+else
+    notify-send "GhostPort OS" "Mode switch failed" -u critical -t 5000
+fi
