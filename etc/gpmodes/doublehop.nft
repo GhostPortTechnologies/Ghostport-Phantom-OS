@@ -11,8 +11,10 @@ table inet filter {
     # Kill Switch Armed check). gp-anchor.py disarm/arm tears down/rebuilds.
     chain killswitch {
         type filter hook forward priority -10; policy drop;
-        oifname $WG_DATA accept
-        iifname $WG_DATA ct state established,related accept
+        oifname $WG_DATA counter accept
+
+        iifname $WG_DATA ct state established,related counter accept
+
     }
 
     chain forward {
@@ -21,16 +23,28 @@ table inet filter {
         tcp flags syn tcp option maxseg size set rt mtu
         # Drop all IPv6 forwarded traffic to prevent tunnel bypass
         meta nfproto ipv6 counter drop
-        ct state invalid drop
-        ct state established,related accept
-        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
-        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
+        ct state invalid counter drop
+
+        ct state established,related counter accept
+
+        # T-0175 — Block DoH-over-QUIC bypass: drop UDP/443 only to known DoH
+        # resolver IPs, not to all destinations. The blanket UDP/443 drop the
+        # previous gp-quic-block rule applied broke QUIC for everything (PS5
+        # PSN, Switch Online, Chromebook HTTP/3 video). DoubleHop already
+        # routes all DNS through wg_data + nat-redirects LAN DNS to Pi-hole;
+        # this rule closes the DNS-over-QUIC bypass to public resolvers.
+        iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } udp dport 443 counter drop comment "gp-doh-quic-block"
+
         # Block DoT (853) — forces DNS through Pi-hole
-        iifname $LAN_IF tcp dport 853 drop comment "gp-dot-block"
-        iifname $LAN_IF udp dport 853 drop comment "gp-dot-block"
+        iifname $LAN_IF tcp dport 853 counter drop comment "gp-dot-block"
+
+        iifname $LAN_IF udp dport 853 counter drop comment "gp-dot-block"
+
         # LAN exits only through WireGuard
-        iifname $LAN_IF oifname $WG_DATA accept
-        iifname $WG_DATA oifname $LAN_IF ct state established,related accept
+        iifname $LAN_IF oifname $WG_DATA counter accept
+
+        iifname $WG_DATA oifname $LAN_IF ct state established,related counter accept
+
     }
 
     chain output {
@@ -38,20 +52,30 @@ table inet filter {
         # Block Pi's own IPv6 on WAN — prevents tunnel bypass
         oifname $WAN_IF meta nfproto ipv6 counter drop
         # Allow DNS to localhost (Pi-hole)
-        ip daddr 127.0.0.1 udp dport 53 accept
-        ip daddr 127.0.0.1 tcp dport 53 accept
+        ip daddr 127.0.0.1 udp dport 53 counter accept
+
+        ip daddr 127.0.0.1 tcp dport 53 counter accept
+
         # Allow DNS to Tailscale MagicDNS
-        ip daddr 100.100.100.100 udp dport 53 accept
-        ip daddr 100.100.100.100 tcp dport 53 accept
+        ip daddr 100.100.100.100 udp dport 53 counter accept
+
+        ip daddr 100.100.100.100 tcp dport 53 counter accept
+
         # Allow DNS out through WireGuard tunnel (Pi-hole upstream)
-        oifname $WG_DATA udp dport 53 accept
-        oifname $WG_DATA tcp dport 53 accept
+        oifname $WG_DATA udp dport 53 counter accept
+
+        oifname $WG_DATA tcp dport 53 counter accept
+
         # Block DNS over any other interface to prevent leaks
-        udp dport 53 drop
-        tcp dport 53 drop
+        udp dport 53 counter drop
+
+        tcp dport 53 counter drop
+
         # Block DoT from the Pi — prevent encrypted DNS bypass
-        tcp dport 853 drop
-        udp dport 853 drop
+        tcp dport 853 counter drop
+
+        udp dport 853 counter drop
+
     }
 }
 
@@ -65,6 +89,7 @@ table inet nat {
 
     chain postrouting {
         type nat hook postrouting priority srcnat; policy accept;
-        oifname $WG_DATA masquerade
+        oifname $WG_DATA counter masquerade
+
     }
 }

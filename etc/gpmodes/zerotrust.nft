@@ -4,23 +4,36 @@ include "/etc/gpmodes/common.nft"
 table inet filter {
     chain forward {
         type filter hook forward priority 0; policy drop;
-        ct state invalid drop
-        ct state established,related accept
+        ct state invalid counter drop
+
+        ct state established,related counter accept
+
         # Drop IPv6 forwarding — prevent bypass via IPv6 tunnels
         meta nfproto ipv6 counter drop
 
         # Block DNS over TLS (DoT)
-        iifname $LAN_IF tcp dport 853 drop
-        iifname $LAN_IF udp dport 853 drop
+        iifname $LAN_IF tcp dport 853 counter drop
+
+        iifname $LAN_IF udp dport 853 counter drop
+
 
         # Block known DoH servers by IP
-        iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } tcp dport 443 drop
+        iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } tcp dport 443 counter drop
 
-        # Block QUIC (UDP 443) — forces browsers to fall back to TCP/HTTPS
-        iifname $LAN_IF udp dport 443 drop comment "gp-quic-block"
+
+        # T-0175 — Block DoH-over-QUIC bypass: drop UDP/443 only to known DoH
+        # resolver IPs, not to all destinations. The blanket UDP/443 drop the
+        # previous gp-quic-block rule applied broke QUIC for everything (PS5
+        # PSN, Switch Online, Chromebook HTTP/3 video). Same destination set
+        # as the tcp/443 DoH-IP rule above so DNS-over-QUIC bypass via
+        # 1.1.1.1 / 8.8.8.8 / 9.9.9.9 / OpenDNS is still blocked.
+        iifname $LAN_IF ip daddr { 8.8.8.8, 8.8.4.4, 1.1.1.1, 1.0.0.1, 9.9.9.9, 208.67.222.222, 208.67.220.220 } udp dport 443 counter drop comment "gp-doh-quic-block"
+
         # Allow everything else
-        iifname $LAN_IF oifname $WAN_IF accept
-        iifname $WAN_IF oifname $LAN_IF ct state established,related accept
+        iifname $LAN_IF oifname $WAN_IF counter accept
+
+        iifname $WAN_IF oifname $LAN_IF ct state established,related counter accept
+
     }
 
     chain output {
@@ -28,17 +41,25 @@ table inet filter {
         # Block IPv6 output to WAN — prevent router IPv6 leaks
         oifname $WAN_IF meta nfproto ipv6 counter drop
         # Allow DNS to localhost (Pi-hole / cloudflared)
-        ip daddr 127.0.0.1 udp dport 53 accept
-        ip daddr 127.0.0.1 tcp dport 53 accept
+        ip daddr 127.0.0.1 udp dport 53 counter accept
+
+        ip daddr 127.0.0.1 tcp dport 53 counter accept
+
         # Allow DNS to Tailscale MagicDNS
-        ip daddr 100.100.100.100 udp dport 53 accept
-        ip daddr 100.100.100.100 tcp dport 53 accept
+        ip daddr 100.100.100.100 udp dport 53 counter accept
+
+        ip daddr 100.100.100.100 tcp dport 53 counter accept
+
         # Block all other DNS from the Pi itself — prevent cleartext leak
-        udp dport 53 drop
-        tcp dport 53 drop
+        udp dport 53 counter drop
+
+        tcp dport 53 counter drop
+
         # Block DoT from the Pi — force all DNS through cloudflared
-        tcp dport 853 drop
-        udp dport 853 drop
+        tcp dport 853 counter drop
+
+        udp dport 853 counter drop
+
     }
 }
 
@@ -52,6 +73,7 @@ table inet nat {
 
     chain postrouting {
         type nat hook postrouting priority srcnat; policy accept;
-        oifname $WAN_IF masquerade
+        oifname $WAN_IF counter masquerade
+
     }
 }
