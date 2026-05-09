@@ -1,5 +1,5 @@
 # GhostPort persistent Wi-Fi radio names — applied 2026-05-02
-# MT7921 (PCIe HAT) carries the AP role as wlan0 (high-throughput 2x2 Wi-Fi 6)
-# brcmfmac (Pi 5 built-in) is renamed wlan_built — used for monitor / WiFi WAN
-SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mt7921e", NAME="wlan0"
-SUBSYSTEM=="net", ACTION=="add", DRIVERS=="brcmfmac", NAME="wlan_built"
+# MT7921 (PCIe HAT) renamed wlan0_5g — driver TX-clamps to 3 dBm, useless for far-room AP
+# brcmfmac (Pi 5 built-in) carries AP role as wlan0 — proper 31 dBm TX (T-0198, 2026-05-09)
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="mt7921e", NAME="wlan0_5g"
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="brcmfmac", NAME="wlan0"
