@@ -1601,7 +1601,10 @@ app.post("/api/mode", async (req, res) => {
     const result = await run(`sudo gp-mode ${mode}`);
 
     if (!result.ok) {
-      console.error(`[GhostPort] Mode switch failed: ${result.err}`);
+      console.error(
+        `[GhostPort] Mode switch failed (ok=${result.ok}): ` +
+        `stderr="${result.err || "<empty>"}" stdout="${result.out || "<empty>"}"`
+      );
       return res.status(500).json({ ok: false, error: "Mode switch failed" });
     }
 
