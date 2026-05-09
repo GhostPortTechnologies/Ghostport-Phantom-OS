@@ -89,7 +89,12 @@ table inet nat {
 
     chain postrouting {
         type nat hook postrouting priority srcnat; policy accept;
-        oifname $WG_DATA counter masquerade
+        # T-0195 follow-on: 'persistent' keeps the same source-port mapping
+        # for a given inside endpoint regardless of destination — what NAT
+        # detectors call 'cone NAT'. Without it, p2p game services (EA
+        # matchmaking, PS5 Party voice) see strict NAT and refuse to connect.
+        # Witnessed 2026-05-09 with EA error 990104014 on Skate.
+        oifname $WG_DATA counter masquerade persistent
 
     }
 }
