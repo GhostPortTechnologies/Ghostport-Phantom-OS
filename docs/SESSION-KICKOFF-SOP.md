@@ -25,6 +25,12 @@ Plus the newer ones when relevant to the task:
 /opt/phantom/docs/ASK-NOT-ASSUME-SOP.md
 ```
 
+Plus the architecture invariants — required reading before touching firewall, tunnel, AP, or boot paths:
+```
+/opt/phantom/docs/ARCHITECTURE-INVARIANTS.md
+```
+One page of load-bearing rules with the "why" and the consequence of violating each. Skim once per session — costs 60 seconds, saves hours.
+
 Read them with the Read tool. Do not summarize from memory.
 
 ### Step 2 — Check Chamber
