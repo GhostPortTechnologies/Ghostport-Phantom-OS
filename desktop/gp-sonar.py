@@ -38,6 +38,11 @@ ROGUE_BLOCK_CMD = "/usr/local/bin/gp-rogue-block"
 ROGUE_BLOCKS_FILE = os.path.expanduser("~/.local/share/phantom/rogue-blocks.json")
 ROGUE_POLL_INTERVAL_SEC = 30
 
+# T-0165 — Probe Captures tab. Polls the gp_events bus for category=probe_request.
+PROBE_POLL_INTERVAL_SEC = 5
+PROBE_LIST_LIMIT = 250  # bound the list so a busy AP doesn't melt GTK
+OUI_EXTRAS_FILE = "/etc/phantom/oui-extras.json"
+
 # Bounded session memory (T-0017). Long-running Sonar GUI on busy/hostile
 # RF environments can otherwise grow these without limit. Oldest entries
 # evict first via OrderedDict.popitem(last=False).
@@ -810,6 +815,20 @@ class SonarApp(GhostPortApp):
          "the UI: a missing or corrupt config file is treated as Off. The "
          "privacy-disclosure modal fires every time you promote to Full, not "
          "just the first time, so the consent is renewed on every change."),
+
+        ("Probe Captures tab",
+         "Switch to the Probe Captures tab to see live probe-request events without "
+         "leaving the app — every device near you that's looking for a known network "
+         "shows up here as it's heard.\n\n"
+         "Top of the tab: capture-mode buttons (Off / MAC-Only / Full). They do the "
+         "same thing as the ⚙ Probe Capture settings dialog — the dialog adds the "
+         "long-form privacy explanation and a confirmation modal for Full.\n\n"
+         "Each row shows: time-since (e.g. \"12s ago\"), source MAC + vendor, signal "
+         "strength as a colored bar, and the SSID being probed (or \"(broadcast)\" "
+         "when the device is doing a generic scan).\n\n"
+         "Filter row: time window (Last 5m / 1h / All) and a checkbox to hide "
+         "broadcast probes (useful when you only care about devices probing for "
+         "a specific named network)."),
     ]
 
     def _on_help(self, _btn):
@@ -869,6 +888,58 @@ class SonarApp(GhostPortApp):
         except Exception as e:
             return False, str(e)
 
+    # ── T-0165 OUI lookup (compact, in-app) ────────────────────────────
+    # Slim built-in map for the most common consumer devices; extended at
+    # runtime via /etc/phantom/oui-extras.json (same file Stonefish/Crew
+    # Manifest read). Kept inline so Sonar has no import-time dep on
+    # gp-stonefish.py (which is a script, not a module).
+    _OUI_BUILTIN = {
+        "00:1A:11": "Google", "F4:F5:D8": "Google", "FC:AA:14": "Google",
+        "A4:77:33": "Google", "20:DF:B9": "Google", "AC:63:BE": "Google-Nest",
+        "DC:A6:32": "Raspberry Pi", "B8:27:EB": "Raspberry Pi",
+        "E4:5F:01": "Raspberry Pi", "28:CD:C1": "Raspberry Pi",
+        "AC:DE:48": "Apple", "3C:22:FB": "Apple", "DC:A9:04": "Apple",
+        "F8:FF:C2": "Apple", "A4:83:E7": "Apple", "F4:1B:A1": "Apple",
+        "00:25:00": "Apple", "14:BD:61": "Apple",
+        "00:1D:D8": "Microsoft", "00:50:F2": "Microsoft", "7C:1E:52": "Microsoft",
+        "F0:18:98": "Samsung", "5C:0A:5B": "Samsung", "78:25:AD": "Samsung",
+        "BC:72:B1": "Samsung-TV", "44:65:0D": "Amazon-Echo", "F0:D2:F1": "Amazon-Echo",
+        "00:17:88": "Philips-Hue", "EC:B5:FA": "Philips-Hue",
+        "D0:52:A8": "TP-Link", "F0:9F:C2": "Ubiquiti", "24:5A:4C": "Ubiquiti",
+        "18:E8:29": "Ubiquiti", "70:8B:CD": "Ubiquiti",
+        "88:C9:D0": "LG", "B8:AD:3E": "LG-Smart-TV",
+        "E0:75:7D": "Roku", "CC:6D:A0": "Roku",
+    }
+
+    def _load_oui_extras(self):
+        try:
+            with open(OUI_EXTRAS_FILE) as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        return {}
+
+    def _oui_lookup(self, mac):
+        """Return vendor name for MAC prefix, or '' for unknown.
+        Locally-administered (random) MACs return 'Random' since the OUI
+        is meaningless for privacy-randomized addresses."""
+        if not mac or len(mac) < 8:
+            return ""
+        try:
+            first_byte = int(mac[:2], 16)
+        except ValueError:
+            return ""
+        if first_byte & 0x02:
+            return "Random"
+        prefix = mac.upper().replace("-", ":")[:8]
+        # Lazy-load extras once per session — file is 39k entries (per memory)
+        if not hasattr(self, "_oui_extras_cache"):
+            self._oui_extras_cache = self._load_oui_extras()
+        return (self._OUI_BUILTIN.get(prefix)
+                or self._oui_extras_cache.get(prefix, ""))
+
     def _confirm_full_capture(self):
         """Privacy disclosure shown every time the user picks Full mode.
         Tighter than a generic GtkMessageDialog so the ask reads quickly:
@@ -901,6 +972,276 @@ class SonarApp(GhostPortApp):
         resp = dlg.run()
         dlg.destroy()
         return resp == Gtk.ResponseType.OK
+
+    # ── T-0165 Probe Captures tab ──────────────────────────────────────
+
+    PROBE_TIME_WINDOWS = [
+        ("5m",  "Last 5 min", 300),
+        ("1h",  "Last 1 hour", 3600),
+        ("all", "All",         86400),  # cap at 24h to bound the SQL scan
+    ]
+
+    def _build_probe_captures_page(self):
+        """T-0165 — second Notebook page surfacing live probe-request events
+        in a clickable list, with inline capture-mode controls so the user
+        can start/stop/change capture without leaving the GUI."""
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        page.set_margin_start(8)
+        page.set_margin_end(8)
+        page.set_margin_top(8)
+        page.set_margin_bottom(8)
+
+        # ── Capture-mode control row ──
+        ctrl_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        ctrl_row.pack_start(self.make_label("Capture mode:", "gp-dim"), False, False, 0)
+
+        self._probe_mode_buttons = {}
+        for value, _icon, label, *_rest in self.PROBE_CAPTURE_TIERS:
+            btn = Gtk.ToggleButton(label=label)
+            btn.connect("toggled", self._on_probe_mode_toggled, value)
+            self._probe_mode_buttons[value] = btn
+            ctrl_row.pack_start(btn, False, False, 0)
+
+        # Status indicator on the right end of the control row
+        self.lbl_probe_status = self.make_label("", "gp-dim")
+        ctrl_row.pack_end(self.lbl_probe_status, False, False, 0)
+
+        page.pack_start(ctrl_row, False, False, 0)
+
+        # ── Filter row ──
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        filter_row.pack_start(self.make_label("Show:", "gp-dim"), False, False, 0)
+
+        self._probe_window_buttons = {}
+        for key, label, _seconds in self.PROBE_TIME_WINDOWS:
+            btn = Gtk.ToggleButton(label=label)
+            btn.connect("toggled", self._on_probe_window_toggled, key)
+            self._probe_window_buttons[key] = btn
+            filter_row.pack_start(btn, False, False, 0)
+        # Default window = 5m
+        self._probe_window = "5m"
+        self._probe_window_buttons["5m"].set_active(True)
+
+        self.chk_hide_broadcast = Gtk.CheckButton(label="Hide broadcast probes")
+        self.chk_hide_broadcast.connect("toggled", lambda *_a: self._refresh_probe_captures())
+        filter_row.pack_start(self.chk_hide_broadcast, False, False, 12)
+
+        page.pack_start(filter_row, False, False, 0)
+
+        # ── List of probe events ──
+        self.probe_listbox = Gtk.ListBox()
+        self.probe_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+
+        # Empty-state placeholder — replaced when refresh finds rows.
+        self.probe_empty_label = self.make_label("", "gp-dim")
+        self.probe_empty_label.set_halign(Gtk.Align.CENTER)
+        self.probe_empty_label.set_valign(Gtk.Align.CENTER)
+        self.probe_listbox.set_placeholder(self.probe_empty_label)
+        self.probe_empty_label.show()
+
+        scrolled = self.make_scrolled(self.probe_listbox)
+        page.pack_start(scrolled, True, True, 0)
+
+        # Prime status + first refresh
+        self._refresh_probe_status()
+        self._refresh_probe_captures()
+        self.poll_start(PROBE_POLL_INTERVAL_SEC, self._on_probe_poll_tick)
+
+        return page
+
+    def _on_probe_poll_tick(self):
+        """Combined tick — keep status indicator + list current."""
+        self._refresh_probe_status()
+        self._refresh_probe_captures()
+
+    def _refresh_probe_status(self):
+        """Update the capture-mode toggle states + status text from current config."""
+        mode = self._read_probe_mode()
+        # Suppress the toggle handler while we sync state to avoid a cascade
+        # of save calls when refresh_status discovers external changes.
+        for value, btn in self._probe_mode_buttons.items():
+            btn.handler_block_by_func(self._on_probe_mode_toggled)
+            btn.set_active(value == mode)
+            btn.handler_unblock_by_func(self._on_probe_mode_toggled)
+
+        # Sniffer service active?
+        try:
+            rc = subprocess.run(
+                ["systemctl", "is-active", "ghostport-sonar-sniffer.service"],
+                capture_output=True, text=True, timeout=3,
+            ).returncode
+            sniffer_active = (rc == 0)
+        except (subprocess.TimeoutExpired, OSError):
+            sniffer_active = False
+
+        if mode == "off":
+            self.lbl_probe_status.set_text("Capture: Off")
+        elif sniffer_active:
+            self.lbl_probe_status.set_text(f"Capture: {mode} • sniffer active")
+        else:
+            self.lbl_probe_status.set_text(f"Capture: {mode} • sniffer inactive (no monitor adapter?)")
+
+    def _on_probe_mode_toggled(self, btn, value):
+        if not btn.get_active():
+            return  # untoggle event — ignore; only act on activations
+        # Full-mode privacy disclosure piggybacks on the existing dialog helper.
+        if value == "full" and not self._confirm_full_capture():
+            # User cancelled — restore the prior selection silently.
+            self._refresh_probe_status()
+            return
+        ok, err = self._write_probe_mode(value)
+        if not ok:
+            self._notify_error("Probe capture", f"Could not change mode: {err}")
+            self._refresh_probe_status()
+            return
+        # Success — sniffer service auto-restarts. Status will refresh on next poll.
+        self.set_status(f"Probe capture set to: {value}")
+        # Force one immediate status refresh so the label updates without delay.
+        GLib.timeout_add(800, lambda: (self._refresh_probe_status(), False)[1])
+
+    def _on_probe_window_toggled(self, btn, key):
+        if not btn.get_active():
+            return
+        # Single-select segmented behavior — turn off the others.
+        for other_key, other_btn in self._probe_window_buttons.items():
+            if other_key != key and other_btn.get_active():
+                other_btn.handler_block_by_func(self._on_probe_window_toggled)
+                other_btn.set_active(False)
+                other_btn.handler_unblock_by_func(self._on_probe_window_toggled)
+        self._probe_window = key
+        self._refresh_probe_captures()
+
+    def _on_notebook_switch_page(self, _notebook, _page, page_num):
+        # Page index 1 = Probe Captures (per build_ui order). Refresh on entry.
+        if page_num == 1:
+            self._refresh_probe_status()
+            self._refresh_probe_captures()
+
+    def _format_age(self, ts):
+        age = max(0, int(time.time() - ts))
+        if age < 60:
+            return f"{age}s ago"
+        if age < 3600:
+            return f"{age // 60}m ago"
+        if age < 86400:
+            return f"{age // 3600}h ago"
+        return f"{age // 86400}d ago"
+
+    def _format_rssi_bar(self, dbm):
+        """RSSI -30 (excellent) to -90 (faint) → 5-block bar."""
+        if dbm is None:
+            return "····· "
+        try:
+            d = int(dbm)
+        except (TypeError, ValueError):
+            return "····· "
+        # Map dBm to filled blocks: -30 → 5, -50 → 4, -65 → 3, -75 → 2, -85 → 1
+        if d >= -50: filled = 5
+        elif d >= -60: filled = 4
+        elif d >= -70: filled = 3
+        elif d >= -80: filled = 2
+        else: filled = 1
+        return "▮" * filled + "▯" * (5 - filled)
+
+    def _refresh_probe_captures(self):
+        """Pull category=probe_request from the events bus and rebuild the list.
+        Newest first; capped at PROBE_LIST_LIMIT to keep GTK responsive."""
+        if not hasattr(self, "probe_listbox"):
+            return  # build_ui not finished yet; first poll will retry
+        # Resolve the active time window (seconds)
+        window_sec = next(
+            (s for k, _l, s in self.PROBE_TIME_WINDOWS if k == self._probe_window),
+            300,
+        )
+        try:
+            events = gp_events.recent(
+                since_seconds=window_sec,
+                source="sonar-sniffer",
+                category="probe_request",
+            )
+        except Exception as e:
+            sys.stderr.write(f"[sonar] probe-capture refresh failed: {e}\n")
+            events = []
+
+        hide_bcast = self.chk_hide_broadcast.get_active()
+        if hide_bcast:
+            events = [e for e in events if (e.get("details") or {}).get("ssid")]
+
+        events = events[:PROBE_LIST_LIMIT]
+
+        # Wipe + rebuild. ListBox is small (≤250 rows) so full rebuild beats
+        # diff'ing — same pattern the AP list uses.
+        for row in self.probe_listbox.get_children():
+            self.probe_listbox.remove(row)
+
+        if not events:
+            mode = self._read_probe_mode()
+            if mode == "off":
+                msg = "Capture is Off — pick MAC-Only or Full above to start."
+            elif window_sec <= 300:
+                msg = "No probes in the last 5 minutes."
+            else:
+                msg = "No probes recorded in this window."
+            self.probe_empty_label.set_text(msg)
+            return
+
+        for ev in events:
+            row = self._build_probe_row(ev)
+            self.probe_listbox.add(row)
+        self.probe_listbox.show_all()
+
+    def _build_probe_row(self, ev):
+        details = ev.get("details") or {}
+        src = details.get("src", "??:??:??:??:??:??")
+        ssid = details.get("ssid") or "(broadcast)"
+        rssi = details.get("rssi_dbm")
+        channel = details.get("channel")
+        vendor = self._oui_lookup(src)
+
+        row = Gtk.ListBoxRow()
+        hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        hbox.set_margin_start(8)
+        hbox.set_margin_end(8)
+        hbox.set_margin_top(4)
+        hbox.set_margin_bottom(4)
+
+        # Time
+        lbl_time = self.make_label(self._format_age(ev["timestamp"]), "gp-dim")
+        lbl_time.set_xalign(0)
+        lbl_time.set_size_request(80, -1)
+        hbox.pack_start(lbl_time, False, False, 0)
+
+        # MAC + vendor
+        mac_text = src
+        if vendor:
+            mac_text = f"{src}  ({vendor})"
+        lbl_mac = self.make_label(mac_text, "")
+        lbl_mac.set_xalign(0)
+        lbl_mac.set_size_request(280, -1)
+        hbox.pack_start(lbl_mac, False, False, 0)
+
+        # Signal bar
+        lbl_signal = self.make_label(self._format_rssi_bar(rssi), "gp-dim")
+        lbl_signal.set_xalign(0)
+        if rssi is not None:
+            lbl_signal.set_tooltip_text(f"{rssi} dBm")
+        hbox.pack_start(lbl_signal, False, False, 0)
+
+        # SSID (or broadcast)
+        ssid_class = "gp-dim" if ssid == "(broadcast)" else ""
+        lbl_ssid = self.make_label(ssid, ssid_class)
+        lbl_ssid.set_xalign(0)
+        lbl_ssid.set_ellipsize(Pango.EllipsizeMode.END)
+        hbox.pack_start(lbl_ssid, True, True, 0)
+
+        # Channel
+        if channel is not None:
+            lbl_ch = self.make_label(f"ch{channel}", "gp-dim")
+            lbl_ch.set_xalign(1)
+            hbox.pack_end(lbl_ch, False, False, 0)
+
+        row.add(hbox)
+        return row
 
     def _on_probe_capture_settings(self, _btn):
         # Re-styled 2026-05-01 — replaced stacked radio+label rows with framed
@@ -1641,7 +1982,26 @@ class SonarApp(GhostPortApp):
         scrolled_detail.set_min_content_width(250)
         paned.pack2(scrolled_detail, False, True)
 
-        root.pack_start(paned, True, True, 0)
+        # T-0165: Wrap the main content in a Notebook so we can add the Probe
+        # Captures page alongside the existing AP-list view. Bottom button bar
+        # stays global below the notebook — Trust/Untrust/Snapshot/etc. only
+        # make sense for an AP selection but they grey out otherwise so leaving
+        # them visible while on Probe Captures tab is fine.
+        self.notebook = Gtk.Notebook()
+        self.notebook.set_scrollable(False)
+
+        networks_label = Gtk.Label(label="Networks")
+        self.notebook.append_page(paned, networks_label)
+
+        probe_page = self._build_probe_captures_page()
+        probe_label = Gtk.Label(label="Probe Captures")
+        self.notebook.append_page(probe_page, probe_label)
+
+        # Refresh probe list whenever the tab is shown — saves a poll cycle's
+        # worth of latency for the most common case (user just clicked the tab).
+        self.notebook.connect("switch-page", self._on_notebook_switch_page)
+
+        root.pack_start(self.notebook, True, True, 0)
 
         # Bottom button bar
         btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
