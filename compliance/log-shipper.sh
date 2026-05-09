@@ -4,7 +4,11 @@
 # Stored on EC2 at /var/log/ghostport-central/pi/
 
 EC2="ubuntu@10.66.66.1"
-SSH_KEY="$HOME/Downloads/Ghostport-vpn.pem"
+# T-0172 — SSH key path parameterized so the public repo doesn't disclose the
+# operator's deploy-key filename. Set GP_DEPLOY_KEY in your shell or sourced
+# env file (e.g. ~/.config/ghostport/deploy.env) to your actual key path.
+[ -r "$HOME/.config/ghostport/deploy.env" ] && . "$HOME/.config/ghostport/deploy.env"
+SSH_KEY="${GP_DEPLOY_KEY:?GP_DEPLOY_KEY not set — see ~/.config/ghostport/deploy.env}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes"
 REMOTE_DIR="/var/log/ghostport-central/pi"
 STATE_DIR="/tmp/gp-log-shipper"

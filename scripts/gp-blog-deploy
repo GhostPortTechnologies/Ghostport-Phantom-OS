@@ -6,7 +6,11 @@ set -euo pipefail
 BLOG_FILE="${1:-$HOME/ghostport-blog-latest.html}"
 EC2_USER="ubuntu"
 EC2_HOST="10.66.66.1"
-SSH_KEY="$HOME/Downloads/Ghostport-vpn.pem"
+# T-0172 — SSH key path parameterized so the public repo doesn't disclose the
+# operator's deploy-key filename. Set GP_DEPLOY_KEY in your shell or sourced
+# env file (e.g. ~/.config/ghostport/deploy.env) to your actual key path.
+[ -r "$HOME/.config/ghostport/deploy.env" ] && . "$HOME/.config/ghostport/deploy.env"
+SSH_KEY="${GP_DEPLOY_KEY:?GP_DEPLOY_KEY not set — see ~/.config/ghostport/deploy.env}"
 REMOTE_DIR="/var/www/blog"
 
 [[ -f "$BLOG_FILE" ]] || { echo "ERROR: Blog file not found: $BLOG_FILE" >&2; exit 1; }
