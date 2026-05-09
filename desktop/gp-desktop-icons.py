@@ -280,6 +280,18 @@ class DesktopCanvas:
                 GtkLayerShell.set_anchor(self.win, edge, True)
             GtkLayerShell.set_exclusive_zone(self.win, -1)
             GtkLayerShell.set_keyboard_mode(self.win, GtkLayerShell.KeyboardMode.NONE)
+
+            # T-0174: HDMI hotplug recovery. When the user unplugs/replugs the
+            # display, Wayland renames the output (HDMI-A-1 → HDMI-A-2) and the
+            # original layer-shell surface dies with no automatic rebind. Re-
+            # exec ourselves on monitor-added / monitor-removed so a fresh
+            # surface attaches to the current output. Debounced so a single
+            # hotplug (which fires removed-then-added) doesn't double-restart.
+            self._monitor_change_pending = False
+            display = Gdk.Display.get_default()
+            if display is not None:
+                display.connect("monitor-added", self._on_monitor_topology_changed)
+                display.connect("monitor-removed", self._on_monitor_topology_changed)
         else:
             self.win.set_keep_below(True)
             self.win.set_skip_taskbar_hint(True)
@@ -431,6 +443,24 @@ class DesktopCanvas:
             if sp.contains(x, y):
                 return sp
         return None
+
+    # ── monitor topology hotplug ────────────────────────────────────
+
+    def _on_monitor_topology_changed(self, _display, _monitor):
+        """T-0174: re-exec on Wayland output add/remove. Debounced 1s so the
+        removed-then-added pair from a single HDMI hotplug only restarts once."""
+        if self._monitor_change_pending:
+            return
+        self._monitor_change_pending = True
+        GLib.timeout_add(1000, self._reexec_self)
+
+    def _reexec_self(self):
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except OSError as e:
+            sys.stderr.write(f"[gp-desktop-icons] re-exec failed: {e}\n")
+            self._monitor_change_pending = False
+        return False
 
     # ── input handlers ─────────────────────────────────────────────
 
