@@ -99,10 +99,12 @@ def run(cmd, check=False):
 
 def collect_stations():
     """Return [{mac, tx_bitrate, tx_failed, inactive_ms, arp}, ...] for all associated stations."""
-    iw = run(["iw", "dev", IFACE, "station", "dump"])
+    # Absolute paths — under systemd root the secure_path includes /usr/sbin,
+    # but a non-root --check invocation may not. Same gotcha as T-0214.
+    iw = run(["/usr/sbin/iw", "dev", IFACE, "station", "dump"])
     if iw.returncode != 0:
         return []
-    arp = run(["ip", "neigh", "show", "dev", IFACE])
+    arp = run(["/usr/sbin/ip", "neigh", "show", "dev", IFACE])
     arp_text = arp.stdout if arp.returncode == 0 else ""
     stations = parse_station_dump(iw.stdout)
     for s in stations:
@@ -111,7 +113,15 @@ def collect_stations():
 
 
 def is_wedged(station, prev_failed):
-    """True if station is in TX-wedge state per T-0215 criteria."""
+    """True if station is in TX-wedge state per T-0215 strict criteria
+    (claude-opus's original spec).
+
+    Path-B (sustained-low) was attempted 2026-05-10 and reverted same day
+    — it deauthed idle stations whose bitrate naturally drops to 1.0 MBit/s
+    without traffic, triggering a destructive flap. The strict criteria
+    here are deliberate: they wait for ARP to fail before acting. Don't
+    relax this without evidence the false-positive is fixed.
+    """
     bitrate = station.get("tx_bitrate", 99.0)
     failed = station.get("tx_failed", 0)
     arp = station.get("arp", "NONE")
@@ -120,7 +130,6 @@ def is_wedged(station, prev_failed):
     if arp not in ("INCOMPLETE", "FAILED"):
         return False
     if prev_failed is None:
-        # No prior sample; require ARP-broken + bitrate-floor as enough signal
         return True
     if failed - prev_failed < WEDGE_FAILED_DELTA:
         return False
@@ -129,7 +138,7 @@ def is_wedged(station, prev_failed):
 
 def deauthenticate(mac):
     """Run hostapd_cli deauthenticate <mac>. Returns (rc, output)."""
-    cmd = ["hostapd_cli", "-i", IFACE, "deauthenticate", mac]
+    cmd = ["/usr/sbin/hostapd_cli", "-i", IFACE, "deauthenticate", mac]
     res = run(cmd)
     return res.returncode, (res.stdout + res.stderr).strip()
 
