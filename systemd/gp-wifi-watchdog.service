@@ -1,0 +1,25 @@
+[Unit]
+Description=GhostPort — brcmfmac AP TX-wedge auto-recovery daemon (T-0215)
+After=network.target hostapd.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+Wants=hostapd.service
+ConditionPathExists=/usr/local/bin/gp-wifi-watchdog
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/gp-wifi-watchdog
+Restart=on-failure
+RestartSec=10
+
+# Process hardening — read-only system, no network namespace mucking
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+# Daemon needs to read /sys for iw + write log file
+ReadWritePaths=/var/log/ghostport
+
+[Install]
+WantedBy=multi-user.target

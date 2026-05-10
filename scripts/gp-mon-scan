@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# gp-mon-scan — privileged helper: passive WiFi scan on a non-AP radio.
+#
+# Built for T-0214 — gp-sonar-detect MUST NOT scan on the AP interface
+# (causes hostapd to stop beaconing → clients drop to 1 MBit/s rate
+# → gaming sessions wedge). This helper takes a NON-AP iface and runs
+# 'iw dev <iface> scan passive' on it, refusing the AP iface as defense
+# in depth.
+#
+# Note: an unassociated managed-mode iface can run scans directly. We
+# do NOT need to flip the iface to monitor mode (mt7921 returns -95 on
+# scan-while-monitor anyway). This keeps the helper minimal.
+#
+# Usage:
+#   gp-mon-scan <iface>      run scan, emit iw output to stdout
+#   gp-mon-scan --help       this message
+#
+# Exit codes:
+#   0  scan completed
+#   1  bad input / iface missing / refused (AP iface)
+#   2  iw scan failed
+
+set -uo pipefail
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+  sed -n '2,/^set -uo/p' "$0" | sed 's/^# \{0,1\}//; /^set -uo/d'
+  exit 0
+fi
+
+IFACE="${1:-}"
+[ -z "$IFACE" ] && { echo "usage: gp-mon-scan <iface>" >&2; exit 1; }
+
+# Sanitize iface name (alphanumeric + - + _ only)
+case "$IFACE" in
+  *[!a-zA-Z0-9_-]*) echo "gp-mon-scan: invalid iface name" >&2; exit 1 ;;
+esac
+
+# Refuse to scan on the AP iface (defense in depth — gp-sonar-detect
+# already filters these out, but a misuse from elsewhere shouldn't crash gaming)
+AP_IFACE=$(awk -F'=' '/^interface=/ {print $2; exit}' /etc/hostapd/hostapd.conf 2>/dev/null | tr -d '[:space:]')
+if [ -n "$AP_IFACE" ] && [ "$IFACE" = "$AP_IFACE" ]; then
+  echo "gp-mon-scan: refusing to scan AP interface $AP_IFACE" >&2
+  exit 1
+fi
+
+# Verify iface exists + is not in AP type
+if ! /usr/sbin/ip link show "$IFACE" >/dev/null 2>&1; then
+  echo "gp-mon-scan: iface $IFACE not found" >&2
+  exit 1
+fi
+TYPE=$(/usr/sbin/iw dev "$IFACE" info 2>/dev/null | awk '/type/ {print $2; exit}')
+if [ "$TYPE" = "AP" ]; then
+  echo "gp-mon-scan: $IFACE is in AP mode; refusing" >&2
+  exit 1
+fi
+
+# Run passive scan
+/usr/sbin/iw dev "$IFACE" scan passive
+exit $?

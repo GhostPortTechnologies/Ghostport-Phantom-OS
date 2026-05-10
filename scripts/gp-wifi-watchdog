@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""gp-wifi-watchdog — detect + auto-recover brcmfmac AP TX-wedge.
+
+Pi 5 brcmfmac (built-in radio) silently wedges its TX path under
+sustained heavy traffic — tx_bitrate floors at 1.0 MBit/s, tx_failed
+climbs, ARP becomes INCOMPLETE. RX still works, so the station appears
+"connected" but can't actually send. Recovery is a targeted
+hostapd_cli deauthenticate; the station re-associates and rate
+negotiation resets.
+
+This daemon polls every 30s, detects the wedge, and runs the
+recovery automatically. Rate-limited to one recovery per MAC per
+5 minutes so a station that won't re-associate doesn't loop.
+
+Origin: T-0215. Witnessed twice in operator's 2026-05-09 session.
+
+Usage:
+  gp-wifi-watchdog            run as daemon (foreground; systemd runs it)
+  gp-wifi-watchdog --check    one-shot status report (no action)
+  gp-wifi-watchdog --help     this message
+
+Config:
+  IFACE                wlan0 (AP interface)
+  POLL_INTERVAL_SEC    30
+  RECOVERY_COOLDOWN    300 (per MAC)
+  WEDGE_BITRATE_FLOOR  6.0 MBit/s
+  WEDGE_FAILED_DELTA   3 (tx_failed must climb by this much between polls)
+  LOG_FILE             /var/log/ghostport/wifi-recoveries.json
+"""
+
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+
+IFACE = "wlan0"
+POLL_INTERVAL_SEC = 30
+RECOVERY_COOLDOWN = 300
+WEDGE_BITRATE_FLOOR = 6.0   # MBit/s
+WEDGE_FAILED_DELTA = 3
+LOG_DIR = "/var/log/ghostport"
+LOG_FILE = os.path.join(LOG_DIR, "wifi-recoveries.json")
+
+
+def _now_iso():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def parse_station_dump(text):
+    """Parse 'iw dev wlan0 station dump' into [{mac, tx_bitrate, tx_failed, inactive}, ...]."""
+    stations = []
+    current = None
+    for line in text.splitlines():
+        m = re.match(r"^Station ([0-9a-f:]+)\b", line, re.I)
+        if m:
+            if current:
+                stations.append(current)
+            current = {"mac": m.group(1).lower()}
+            continue
+        if current is None:
+            continue
+        line = line.strip()
+        if line.startswith("tx bitrate:"):
+            br = re.search(r"([\d.]+)\s*MBit/s", line)
+            if br:
+                current["tx_bitrate"] = float(br.group(1))
+        elif line.startswith("tx failed:"):
+            current["tx_failed"] = int(line.split(":", 1)[1].strip())
+        elif line.startswith("inactive time:"):
+            current["inactive_ms"] = int(re.search(r"(\d+)", line).group(1))
+    if current:
+        stations.append(current)
+    return stations
+
+
+def parse_arp_state(text, mac):
+    """Return ARP state for the given MAC, or 'NONE' if not present."""
+    mac = mac.lower()
+    for line in text.splitlines():
+        if mac in line.lower():
+            # Last whitespace-token is the state (REACHABLE, STALE, INCOMPLETE, FAILED, etc.)
+            tokens = line.strip().split()
+            if tokens:
+                return tokens[-1]
+    return "NONE"
+
+
+def run(cmd, check=False):
+    """subprocess.run shim with timeout + stderr capture."""
+    return subprocess.run(  # noqa: S603
+        cmd, capture_output=True, text=True, check=check, timeout=10
+    )
+
+
+def collect_stations():
+    """Return [{mac, tx_bitrate, tx_failed, inactive_ms, arp}, ...] for all associated stations."""
+    iw = run(["iw", "dev", IFACE, "station", "dump"])
+    if iw.returncode != 0:
+        return []
+    arp = run(["ip", "neigh", "show", "dev", IFACE])
+    arp_text = arp.stdout if arp.returncode == 0 else ""
+    stations = parse_station_dump(iw.stdout)
+    for s in stations:
+        s["arp"] = parse_arp_state(arp_text, s["mac"])
+    return stations
+
+
+def is_wedged(station, prev_failed):
+    """True if station is in TX-wedge state per T-0215 criteria."""
+    bitrate = station.get("tx_bitrate", 99.0)
+    failed = station.get("tx_failed", 0)
+    arp = station.get("arp", "NONE")
+    if bitrate > WEDGE_BITRATE_FLOOR:
+        return False
+    if arp not in ("INCOMPLETE", "FAILED"):
+        return False
+    if prev_failed is None:
+        # No prior sample; require ARP-broken + bitrate-floor as enough signal
+        return True
+    if failed - prev_failed < WEDGE_FAILED_DELTA:
+        return False
+    return True
+
+
+def deauthenticate(mac):
+    """Run hostapd_cli deauthenticate <mac>. Returns (rc, output)."""
+    cmd = ["hostapd_cli", "-i", IFACE, "deauthenticate", mac]
+    res = run(cmd)
+    return res.returncode, (res.stdout + res.stderr).strip()
+
+
+def log_recovery(mac, station_snapshot, hostapd_rc, hostapd_out):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        entry = {
+            "ts": _now_iso(),
+            "mac": mac,
+            "station": station_snapshot,
+            "hostapd_rc": hostapd_rc,
+            "hostapd_output": hostapd_out,
+        }
+        with open(LOG_FILE, "a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        sys.stderr.write(f"[gp-wifi-watchdog] log failed: {exc}\n")
+
+
+def cmd_check():
+    """One-shot status report. No action."""
+    stations = collect_stations()
+    if not stations:
+        print("No associated stations.")
+        return 0
+    print(f"{'MAC':19}  {'TX MBit/s':>9}  {'tx_failed':>9}  {'inactive_ms':>11}  ARP")
+    for s in stations:
+        print(f"{s['mac']:19}  "
+              f"{s.get('tx_bitrate', 0):>9.1f}  "
+              f"{s.get('tx_failed', 0):>9}  "
+              f"{s.get('inactive_ms', 0):>11}  "
+              f"{s.get('arp', '?')}")
+    wedged = [s for s in stations if is_wedged(s, None)]
+    if wedged:
+        print(f"\nWEDGED ({len(wedged)}): {[s['mac'] for s in wedged]}")
+    return 0
+
+
+def cmd_daemon():
+    """Run the watchdog loop. Single-pass on first iteration (no delta data),
+    then steady-state with tx_failed delta tracking."""
+    if shutil.which("hostapd_cli") is None:
+        sys.stderr.write("[gp-wifi-watchdog] hostapd_cli not found; cannot recover\n")
+        return 2
+    if shutil.which("iw") is None:
+        sys.stderr.write("[gp-wifi-watchdog] iw not found; cannot poll\n")
+        return 2
+
+    last_failed = {}    # mac -> last tx_failed
+    last_recovery = {}  # mac -> ts of last deauth
+    sys.stdout.write(f"[gp-wifi-watchdog] daemon up (iface={IFACE} poll={POLL_INTERVAL_SEC}s)\n")
+    sys.stdout.flush()
+
+    def shutdown(*_):
+        sys.stdout.write("[gp-wifi-watchdog] shutting down\n")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
+
+    while True:
+        try:
+            stations = collect_stations()
+        except subprocess.TimeoutExpired:
+            sys.stderr.write("[gp-wifi-watchdog] iw/ip timed out; skipping cycle\n")
+            time.sleep(POLL_INTERVAL_SEC)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[gp-wifi-watchdog] poll error: {exc}\n")
+            time.sleep(POLL_INTERVAL_SEC)
+            continue
+
+        now = time.time()
+        for s in stations:
+            mac = s["mac"]
+            prev = last_failed.get(mac)
+            wedged = is_wedged(s, prev)
+            last_failed[mac] = s.get("tx_failed", 0)
+
+            if not wedged:
+                continue
+            cooldown_left = RECOVERY_COOLDOWN - (now - last_recovery.get(mac, 0))
+            if cooldown_left > 0:
+                sys.stdout.write(
+                    f"[gp-wifi-watchdog] {mac} wedged but cooldown active "
+                    f"({cooldown_left:.0f}s left); skipping\n"
+                )
+                continue
+            sys.stdout.write(f"[gp-wifi-watchdog] {mac} WEDGED — recovering\n")
+            sys.stdout.flush()
+            rc, out = deauthenticate(mac)
+            log_recovery(mac, s, rc, out)
+            last_recovery[mac] = now
+            if rc != 0:
+                sys.stderr.write(
+                    f"[gp-wifi-watchdog] hostapd_cli deauth failed rc={rc}: {out}\n"
+                )
+
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help", "help"):
+        print(__doc__ or "")
+        return 0
+    if args and args[0] == "--check":
+        return cmd_check()
+    return cmd_daemon()
+
+
+if __name__ == "__main__":
+    sys.exit(main() or 0)
