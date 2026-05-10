@@ -108,14 +108,23 @@ for d in data.get('devices', []):
     # Always: bypass mode-specific drops in the forward chain.
     print(f'insert rule inet filter forward iifname \"{LAN_IF}\" ether saddr {mac} counter accept comment \"passthrough:{label}\"')
     if via == 'isp':
-        # Mark inbound packets from this MAC so the routing decision picks table 200.
-        print(f'add rule inet filter route_via_isp_mangle iifname \"{LAN_IF}\" ether saddr {mac} counter mark set {MARK} comment \"route_via:isp:{label}\"')
+        # Tag this device's outbound packets two ways:
+        #   meta mark — drives routing decision to table 200 (eth0 exit)
+        #   ct mark   — preserved by conntrack on BOTH directions of the
+        #               connection, so return packets can be matched even
+        #               though their ether daddr isn't set in forward hook
+        #               (the kernel sets egress L2 MAC after FORWARD via
+        #               dev_queue_xmit; ether daddr matching here was the
+        #               cause of dropped TCP returns — see 2026-05-10 fix).
+        print(f'add rule inet filter route_via_isp_mangle iifname \"{LAN_IF}\" ether saddr {mac} counter meta mark set {MARK} ct mark set {MARK} comment \"route_via:isp:{label}\"')
         # Allow the marked traffic to exit WAN past the killswitch (priority -10, policy drop).
         print(f'insert rule inet filter killswitch meta mark {MARK} oifname \"{WAN_IF}\" counter accept comment \"route_via:isp:{label}\"')
-        print(f'insert rule inet filter killswitch oifname \"{LAN_IF}\" ether daddr {mac} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
+        # Return path: match by ct mark (preserved by conntrack on the reply
+        # direction). Reliable in the forward hook; ether daddr is not.
+        print(f'insert rule inet filter killswitch oifname \"{LAN_IF}\" ct mark {MARK} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
         # Allow LAN->WAN forward + return path explicitly.
         print(f'insert rule inet filter forward iifname \"{LAN_IF}\" ether saddr {mac} oifname \"{WAN_IF}\" counter accept comment \"route_via:isp:{label}-fwd\"')
-        print(f'insert rule inet filter forward iifname \"{WAN_IF}\" oifname \"{LAN_IF}\" ether daddr {mac} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
+        print(f'insert rule inet filter forward iifname \"{WAN_IF}\" oifname \"{LAN_IF}\" ct mark {MARK} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
         # SNAT marked traffic to the WAN interface IP.
         print(f'add rule inet nat route_via_isp_snat meta mark {MARK} oifname \"{WAN_IF}\" counter masquerade comment \"route_via:isp:{label}\"')
 "
