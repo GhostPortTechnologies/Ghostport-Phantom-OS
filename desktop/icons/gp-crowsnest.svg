@@ -7,30 +7,30 @@
 </defs>
 <g id="surface6">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <g clip-path="url(#circleClip)">
 
 <!-- Water waves -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;" d="M 4 100 C 14 96 24 96 34 100 C 44 104 54 104 64 100 C 74 96 84 96 94 100 C 104 104 114 104 124 100"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.18;" d="M 4 110 C 16 106 28 106 40 110 C 52 114 64 114 76 110 C 88 106 100 106 112 110"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.12;" d="M 10 120 C 22 116 34 116 46 120 C 58 124 70 124 82 120 C 94 116 106 116 118 120"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.25;" d="M 4 100 C 14 96 24 96 34 100 C 44 104 54 104 64 100 C 74 96 84 96 94 100 C 104 104 114 104 124 100"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.18;" d="M 4 110 C 16 106 28 106 40 110 C 52 114 64 114 76 110 C 88 106 100 106 112 110"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.12;" d="M 10 120 C 22 116 34 116 46 120 C 58 124 70 124 82 120 C 94 116 106 116 118 120"/>
 
 <!-- Mast -->
-<path style="fill:none;stroke-width:5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" d="M 64 118 L 64 16"/>
+<path style="fill:none;stroke-width:5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" d="M 64 118 L 64 16"/>
 
 
 <!-- Barrel — solid, bold -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" d="M 38 60 C 36 56 36 40 38 36 L 38 36 Q 64 32 90 36 C 92 40 92 56 90 60 Q 64 64 38 60"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" d="M 38 60 C 36 56 36 40 38 36 L 38 36 Q 64 32 90 36 C 92 40 92 56 90 60 Q 64 64 38 60"/>
 
 <!-- Barrel hoop -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;" d="M 37 48 Q 64 52 91 48"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;" d="M 37 48 Q 64 52 91 48"/>
 
 <!-- Barrel top rim -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" d="M 38 36 Q 64 32 90 36"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;" d="M 38 36 Q 64 32 90 36"/>
 
 
 <!-- Flag at mast top -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 64 16 L 80 12 L 78 18 L 82 24 L 64 20 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 64 16 L 80 12 L 78 18 L 82 24 L 64 20 Z"/>
 
 </g>
 </g>

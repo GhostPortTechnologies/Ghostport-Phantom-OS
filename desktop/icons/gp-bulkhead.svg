@@ -8,64 +8,64 @@
 <g id="surface6">
 
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 
 <g clip-path="url(#circleClip)">
 
 <!-- Hinges on left side of door frame (behind frame, so they poke out) -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 18 38 L 30 38 L 30 50 L 18 50 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 18 80 L 30 80 L 30 92 L 18 92 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 18 38 L 30 38 L 30 50 L 18 50 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 18 80 L 30 80 L 30 92 L 18 92 Z"/>
 
 <!-- Hinge pin dots -->
-<circle style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke:none;" cx="24" cy="44" r="2"/>
-<circle style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke:none;" cx="24" cy="86" r="2"/>
+<circle style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke:none;" cx="24" cy="44" r="2"/>
+<circle style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke:none;" cx="24" cy="86" r="2"/>
 
 <!-- Outer door frame: D-shape (rounded top, flat bottom) — pulled in to stay inside circle -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.15;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" d="M 26 44 Q 26 22 48 22 L 80 22 Q 102 22 102 44 L 102 102 L 26 102 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.15;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" d="M 26 44 Q 26 22 48 22 L 80 22 Q 102 22 102 44 L 102 102 L 26 102 Z"/>
 
 <!-- Inner door panel border (inset recess) -->
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.55;" d="M 34 46 Q 34 30 48 30 L 80 30 Q 94 30 94 46 L 94 96 L 34 96 Z"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.55;" d="M 34 46 Q 34 30 48 30 L 80 30 Q 94 30 94 46 L 94 96 L 34 96 Z"/>
 
 <!-- Rivets across top arc -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="44" cy="26" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="64" cy="22" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="84" cy="26" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="44" cy="26" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="64" cy="22" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="84" cy="26" r="2"/>
 
 <!-- Rivets along right edge -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="98" cy="54" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="98" cy="82" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="98" cy="54" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="98" cy="82" r="2"/>
 
 <!-- Rivets along bottom edge -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="44" cy="98" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="64" cy="98" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" cx="84" cy="98" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="44" cy="98" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="64" cy="98" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" cx="84" cy="98" r="2"/>
 
 <!-- Wheel outer rim (dogging wheel) -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.1;stroke-width:3.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" cx="64" cy="62" r="22"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.1;stroke-width:3.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" cx="64" cy="62" r="22"/>
 
 <!-- Wheel inner ring (recess detail) -->
-<circle style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.45;" cx="64" cy="62" r="16"/>
+<circle style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.45;" cx="64" cy="62" r="16"/>
 
 <!-- Wheel spokes — 4 primary (cardinal) -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" d="M 64 44 L 64 80 M 46 62 L 82 62"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" d="M 64 44 L 64 80 M 46 62 L 82 62"/>
 
 <!-- Wheel spokes — 4 secondary (diagonal, thinner) -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;" d="M 51 49 L 77 75 M 77 49 L 51 75"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;" d="M 51 49 L 77 75 M 77 49 L 51 75"/>
 
 <!-- Wheel hub -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;" cx="64" cy="62" r="5.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;" cx="64" cy="62" r="5.5"/>
 
 <!-- Hub bolt center dot -->
-<circle style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke:none;" cx="64" cy="62" r="2"/>
+<circle style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke:none;" cx="64" cy="62" r="2"/>
 
 <!-- Handle grip nubs on wheel rim (4 cardinal) -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="64" cy="40" r="3"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="86" cy="62" r="3"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="64" cy="84" r="3"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="42" cy="62" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="64" cy="40" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="86" cy="62" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="64" cy="84" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="42" cy="62" r="3"/>
 
 <!-- Coaming/threshold bar at bottom (raised step-over) -->
-<path style="fill:none;stroke-width:4;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;" d="M 26 108 L 102 108"/>
+<path style="fill:none;stroke-width:4;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;" d="M 26 108 L 102 108"/>
 
 </g>
 </g>

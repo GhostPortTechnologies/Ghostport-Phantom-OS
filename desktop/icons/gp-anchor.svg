@@ -2,33 +2,33 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="128pt" height="128pt" viewBox="0 0 128 128" version="1.1">
 <g id="surface16">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <!-- Chain links — coming down from top -->
 <!-- Link 1 — top, horizontal oval -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 58 14 C 58 11 70 11 70 14 C 70 17 58 17 58 14"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 58 14 C 58 11 70 11 70 14 C 70 17 58 17 58 14"/>
 <!-- Link 2 — vertical oval -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.55;stroke-miterlimit:10;" d="M 61 16 C 58 16 58 24 61 24 C 64 24 67 24 67 24 C 70 24 70 16 67 16"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.55;stroke-miterlimit:10;" d="M 61 16 C 58 16 58 24 61 24 C 64 24 67 24 67 24 C 70 24 70 16 67 16"/>
 <!-- Link 3 — horizontal oval -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 58 23 C 58 20 70 20 70 23 C 70 26 58 26 58 23"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 58 23 C 58 20 70 20 70 23 C 70 26 58 26 58 23"/>
 <!-- Ring at top of anchor — where chain attaches -->
-<circle style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;" cx="64" cy="34" r="6"/>
+<circle style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;" cx="64" cy="34" r="6"/>
 <!-- Shank — vertical shaft -->
-<path style="fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 40 L 64 98"/>
+<path style="fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 40 L 64 98"/>
 <!-- Stock — horizontal crossbar near top -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 38 52 L 90 52"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 38 52 L 90 52"/>
 <!-- Stock end caps -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" cx="38" cy="52" r="3"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" cx="90" cy="52" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" cx="38" cy="52" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" cx="90" cy="52" r="3"/>
 <!-- Crown — curved arms at bottom -->
 <!-- Left arm/fluke -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 98 C 54 98 40 92 32 82"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 98 C 54 98 40 92 32 82"/>
 <!-- Left fluke tip — pointed blade -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 32 82 L 26 76"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 32 82 L 26 76"/>
 <!-- Right arm/fluke -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 98 C 74 98 88 92 96 82"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:1;stroke-miterlimit:10;" d="M 64 98 C 74 98 88 92 96 82"/>
 <!-- Right fluke tip — pointed blade -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 96 82 L 102 76"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 96 82 L 102 76"/>
 <!-- Crown point at bottom -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" cx="64" cy="100" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke:none;" cx="64" cy="100" r="3"/>
 </g>
 </svg>

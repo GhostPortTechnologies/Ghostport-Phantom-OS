@@ -7,13 +7,13 @@
 </defs>
 <g id="surface46">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <g clip-path="url(#circleClip)">
 
 <!-- === GREAT WHITE SHARK — front-facing view === -->
 
 <!-- Body/head mass — wide tapered snout shape -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.08;stroke:none;" d="M 64 8 C 40 8 18 30 18 62 C 18 82 28 100 42 112 C 50 118 58 122 64 122 C 70 122 78 118 86 112 C 100 100 110 82 110 62 C 110 30 88 8 64 8"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.08;stroke:none;" d="M 64 8 C 40 8 18 30 18 62 C 18 82 28 100 42 112 C 50 118 58 122 64 122 C 70 122 78 118 86 112 C 100 100 110 82 110 62 C 110 30 88 8 64 8"/>
 
 
 
@@ -21,88 +21,88 @@
 
 <!-- === SPIDER EYES — 7 eyes in clustered arc === -->
 <!-- Large center pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke-width:1.5;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;" cx="56" cy="58" r="5"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke-width:1.5;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;" cx="72" cy="58" r="5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke-width:1.5;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;" cx="56" cy="58" r="5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke-width:1.5;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;" cx="72" cy="58" r="5"/>
 <!-- Pupils — large pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="56" cy="58" r="2.5"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="72" cy="58" r="2.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="56" cy="58" r="2.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="72" cy="58" r="2.5"/>
 <!-- Medium outer pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke-width:1.5;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;" cx="42" cy="54" r="4"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke-width:1.5;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;" cx="86" cy="54" r="4"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke-width:1.5;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;" cx="42" cy="54" r="4"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke-width:1.5;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;" cx="86" cy="54" r="4"/>
 <!-- Pupils — medium pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="42" cy="54" r="2"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="86" cy="54" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="42" cy="54" r="2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="86" cy="54" r="2"/>
 <!-- Small upper pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke-width:1;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;" cx="50" cy="48" r="3"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke-width:1;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;" cx="78" cy="48" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke-width:1;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;" cx="50" cy="48" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke-width:1;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;" cx="78" cy="48" r="3"/>
 <!-- Pupils — small pair -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="50" cy="48" r="1.5"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="78" cy="48" r="1.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="50" cy="48" r="1.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="78" cy="48" r="1.5"/>
 <!-- Tiny top center eye -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.6;stroke-width:1;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;" cx="64" cy="44" r="2.5"/>
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:1;stroke:none;" cx="64" cy="44" r="1.2"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.6;stroke-width:1;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;" cx="64" cy="44" r="2.5"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:1;stroke:none;" cx="64" cy="44" r="1.2"/>
 
 <!-- === MOUTH — wide open, showing rows of teeth === -->
 <!-- Upper jaw arc -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 26 87 C 34 81 48 77 64 77 C 80 77 94 81 102 87"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 26 87 C 34 81 48 77 64 77 C 80 77 94 81 102 87"/>
 
 <!-- Lower jaw arc — dropped open -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 28 91 C 36 103 48 111 64 111 C 80 111 92 103 100 91"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 28 91 C 36 103 48 111 64 111 C 80 111 92 103 100 91"/>
 
 <!-- Mouth void — dark interior -->
-<path style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:0.7;stroke:none;" d="M 30 89 C 38 83 50 79 64 79 C 78 79 90 83 98 89 C 94 99 80 109 64 109 C 48 109 34 99 30 89"/>
+<path style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:0.7;stroke:none;" d="M 30 89 C 38 83 50 79 64 79 C 78 79 90 83 98 89 C 94 99 80 109 64 109 C 48 109 34 99 30 89"/>
 
 <!-- Jaw connection lines — left -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 26 87 C 26 89 27 91 28 91"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 26 87 C 26 89 27 91 28 91"/>
 <!-- Jaw connection lines — right -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 102 87 C 102 89 101 91 100 91"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 102 87 C 102 89 101 91 100 91"/>
 
 <!-- === UPPER TEETH — triangular, serrated, pointing down === -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.85;stroke:none;" d="M 34 85 L 36 95 L 38 85 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 40 83 L 43 95 L 46 83 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 48 81 L 51 93 L 54 81 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.95;stroke:none;" d="M 56 79 L 59 93 L 62 79 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.95;stroke:none;" d="M 66 79 L 69 93 L 72 79 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 74 81 L 77 93 L 80 81 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.9;stroke:none;" d="M 82 83 L 85 95 L 88 83 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.85;stroke:none;" d="M 90 85 L 92 95 L 94 85 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.85;stroke:none;" d="M 34 85 L 36 95 L 38 85 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 40 83 L 43 95 L 46 83 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 48 81 L 51 93 L 54 81 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.95;stroke:none;" d="M 56 79 L 59 93 L 62 79 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.95;stroke:none;" d="M 66 79 L 69 93 L 72 79 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 74 81 L 77 93 L 80 81 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.9;stroke:none;" d="M 82 83 L 85 95 L 88 83 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.85;stroke:none;" d="M 90 85 L 92 95 L 94 85 Z"/>
 
 <!-- === LOWER TEETH — pointing up from lower jaw === -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 38 103 L 40 93 L 42 103 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.75;stroke:none;" d="M 46 105 L 49 95 L 52 105 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" d="M 54 107 L 57 95 L 60 107 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" d="M 68 107 L 71 95 L 74 107 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.75;stroke:none;" d="M 76 105 L 79 95 L 82 105 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 86 103 L 88 93 L 90 103 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 38 103 L 40 93 L 42 103 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.75;stroke:none;" d="M 46 105 L 49 95 L 52 105 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke:none;" d="M 54 107 L 57 95 L 60 107 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke:none;" d="M 68 107 L 71 95 L 74 107 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.75;stroke:none;" d="M 76 105 L 79 95 L 82 105 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 86 103 L 88 93 L 90 103 Z"/>
 
 <!-- === GILL SLITS — 3 per side, faint curved lines === -->
 <!-- Left gills -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 22 77 C 20 81 20 87 22 91"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 18 75 C 16 81 16 89 18 93"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.18;stroke-miterlimit:10;" d="M 14 73 C 12 81 12 91 14 95"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 22 77 C 20 81 20 87 22 91"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 18 75 C 16 81 16 89 18 93"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.18;stroke-miterlimit:10;" d="M 14 73 C 12 81 12 91 14 95"/>
 <!-- Right gills -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 106 77 C 108 81 108 87 106 91"/>
-<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 110 75 C 112 81 112 89 110 93"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.18;stroke-miterlimit:10;" d="M 114 73 C 116 81 116 91 114 95"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 106 77 C 108 81 108 87 106 91"/>
+<path style="fill:none;stroke-width:1.8;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.25;stroke-miterlimit:10;" d="M 110 75 C 112 81 112 89 110 93"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.18;stroke-miterlimit:10;" d="M 114 73 C 116 81 116 91 114 95"/>
 
 
 
 <!-- === TATTERED CLOTH — strips dangling inward from circle border === -->
 <!-- Top — hanging down -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" d="M 40 2 L 38 18 L 42 16 L 44 2 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.5;stroke:none;" d="M 54 2 L 50 24 L 54 20 L 58 2 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" d="M 68 2 L 70 22 L 74 18 L 72 2 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.45;stroke:none;" d="M 82 4 L 84 20 L 88 16 L 86 4 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.4;stroke:none;" d="M 40 2 L 38 18 L 42 16 L 44 2 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.5;stroke:none;" d="M 54 2 L 50 24 L 54 20 L 58 2 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.35;stroke:none;" d="M 68 2 L 70 22 L 74 18 L 72 2 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.45;stroke:none;" d="M 82 4 L 84 20 L 88 16 L 86 4 Z"/>
 
 <!-- Top-left — angled inward -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" d="M 14 18 L 24 32 L 28 28 L 18 14 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.5;stroke:none;" d="M 6 32 L 20 44 L 24 40 L 10 28 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" d="M 24 6 L 32 22 L 36 18 L 28 4 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.4;stroke:none;" d="M 14 18 L 24 32 L 28 28 L 18 14 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.5;stroke:none;" d="M 6 32 L 20 44 L 24 40 L 10 28 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.35;stroke:none;" d="M 24 6 L 32 22 L 36 18 L 28 4 Z"/>
 
 <!-- Top-right — angled inward -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.4;stroke:none;" d="M 114 18 L 104 32 L 100 28 L 110 14 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.5;stroke:none;" d="M 122 32 L 108 44 L 104 40 L 118 28 Z"/>
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.35;stroke:none;" d="M 104 6 L 96 22 L 92 18 L 100 4 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.4;stroke:none;" d="M 114 18 L 104 32 L 100 28 L 110 14 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.5;stroke:none;" d="M 122 32 L 108 44 L 104 40 L 118 28 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.35;stroke:none;" d="M 104 6 L 96 22 L 92 18 L 100 4 Z"/>
 
 
 

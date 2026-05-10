@@ -7,109 +7,109 @@
 </defs>
 <g id="surface46">
 <!-- Background circle -->
-<path style="fill-rule:nonzero;fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
+<path style="fill-rule:nonzero;fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 126 64 C 126 98.242188 98.242188 126 64 126 C 29.757812 126 2 98.242188 2 64 C 2 29.757812 29.757812 2 64 2 C 98.242188 2 126 29.757812 126 64 "/>
 <g clip-path="url(#circleClip)">
 
 <!-- === SKULL VOLUME FILL === -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.1;stroke:none;" d="M 64 14 C 42 14 22 30 22 54 C 22 68 28 78 34 82 L 34 84 L 94 84 C 100 78 106 68 106 54 C 106 30 86 14 64 14"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.1;stroke:none;" d="M 64 14 C 42 14 22 30 22 54 C 22 68 28 78 34 82 L 34 84 L 94 84 C 100 78 106 68 106 54 C 106 30 86 14 64 14"/>
 
 <!-- === BANDANNA — tied cloth across cranium === -->
 <!-- Bandanna fill — covers dome above brow line -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.2;stroke:none;" d="M 28 42 C 30 32 38 22 50 16 C 58 12 70 12 78 16 C 90 22 98 32 100 42 C 94 40 84 38 74 38 C 64 38 46 40 28 42"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.2;stroke:none;" d="M 28 42 C 30 32 38 22 50 16 C 58 12 70 12 78 16 C 90 22 98 32 100 42 C 94 40 84 38 74 38 C 64 38 46 40 28 42"/>
 <!-- Bandanna bottom edge — wavy fabric -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 26 44 C 36 40 48 42 58 40 C 68 38 80 40 90 38 C 96 38 100 40 102 42"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 26 44 C 36 40 48 42 58 40 C 68 38 80 40 90 38 C 96 38 100 40 102 42"/>
 <!-- Bandanna top edge — follows skull dome -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 28 42 C 30 30 40 20 52 16 C 60 14 68 14 76 16 C 88 20 98 30 100 42"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 28 42 C 30 30 40 20 52 16 C 60 14 68 14 76 16 C 88 20 98 30 100 42"/>
 <!-- Bandanna fold creases -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 40 36 C 50 32 58 30 66 30 C 74 30 82 32 88 36"/>
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 44 26 C 52 22 60 20 68 20 C 76 22 82 24 86 28"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 40 36 C 50 32 58 30 66 30 C 74 30 82 32 88 36"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 44 26 C 52 22 60 20 68 20 C 76 22 82 24 86 28"/>
 <!-- Bandanna knot — right side -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.3;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 100 42 C 104 40 108 42 108 46 C 108 50 104 50 102 48 C 100 46 100 44 100 42"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.3;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 100 42 C 104 40 108 42 108 46 C 108 50 104 50 102 48 C 100 46 100 44 100 42"/>
 <!-- Bandanna tail 1 — hanging, drifting slightly (underwater) -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 106 48 C 110 54 112 62 110 70"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 106 48 C 110 54 112 62 110 70"/>
 <!-- Bandanna tail 2 — shorter -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 108 46 C 114 50 116 56 114 62"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.4;stroke-miterlimit:10;" d="M 108 46 C 114 50 116 56 114 62"/>
 
 <!-- === CRANIUM OUTLINE — wide dome, open at bottom for jaw === -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 28 82 C 22 76 18 66 20 54 C 22 40 30 30 42 22 C 52 16 58 14 64 14 C 70 14 76 16 86 22 C 98 30 106 40 108 54 C 110 66 106 76 100 82"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 28 82 C 22 76 18 66 20 54 C 22 40 30 30 42 22 C 52 16 58 14 64 14 C 70 14 76 16 86 22 C 98 30 106 40 108 54 C 110 66 106 76 100 82"/>
 
 <!-- === BROW RIDGE — heavy bar above eyes === -->
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 28 48 C 34 44 44 42 54 42 C 64 42 74 42 84 42 C 94 44 100 48 100 48"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 28 48 C 34 44 44 42 54 42 C 64 42 74 42 84 42 C 94 44 100 48 100 48"/>
 
 <!-- === LEFT EYE SOCKET — large dark void === -->
-<path style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 34 52 C 34 48 38 46 44 46 C 50 46 54 48 56 50 C 58 54 56 58 54 60 C 50 62 42 62 38 62 C 34 60 32 56 34 52"/>
+<path style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 34 52 C 34 48 38 46 44 46 C 50 46 54 48 56 50 C 58 54 56 58 54 60 C 50 62 42 62 38 62 C 34 60 32 56 34 52"/>
 
 <!-- === RIGHT EYE SOCKET — large dark void === -->
-<path style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 72 52 C 72 48 76 46 82 46 C 88 46 92 48 94 50 C 96 54 94 58 92 60 C 88 62 80 62 76 62 C 72 60 70 56 72 52"/>
+<path style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.9;stroke-miterlimit:10;" d="M 72 52 C 72 48 76 46 82 46 C 88 46 92 48 94 50 C 96 54 94 58 92 60 C 88 62 80 62 76 62 C 72 60 70 56 72 52"/>
 
 <!-- === NASAL APERTURE — inverted teardrop, narrow top, wide bottom === -->
-<path style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:1;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 62 60 C 63 58 65 58 66 60 C 68 64 72 70 70 76 C 68 80 60 80 58 76 C 56 70 60 64 62 60"/>
+<path style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:1;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 62 60 C 63 58 65 58 66 60 C 68 64 72 70 70 76 C 68 80 60 80 58 76 C 56 70 60 64 62 60"/>
 <!-- Septum -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 64 60 L 64 78"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.35;stroke-miterlimit:10;" d="M 64 60 L 64 78"/>
 <!-- Nasal spine — sharp point at bottom -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 62 78 L 64 82 L 66 78"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 62 78 L 64 82 L 66 78"/>
 
 <!-- === ZYGOMATIC ARCHES (cheekbones) === -->
 <!-- Left cheekbone -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 32 60 C 28 64 26 70 26 76 C 26 80 28 82 28 82"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 32 60 C 28 64 26 70 26 76 C 26 80 28 82 28 82"/>
 <!-- Right cheekbone -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 96 60 C 100 64 102 70 102 76 C 102 80 100 82 100 82"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.6;stroke-miterlimit:10;" d="M 96 60 C 100 64 102 70 102 76 C 102 80 100 82 100 82"/>
 
 <!-- === MAXILLA (upper jaw) + TEETH === -->
 <!-- Upper jaw line -->
-<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 34 82 C 40 80 50 80 64 80 C 78 80 88 80 94 82"/>
+<path style="fill:none;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.7;stroke-miterlimit:10;" d="M 34 82 C 40 80 50 80 64 80 C 78 80 88 80 94 82"/>
 
 <!-- Upper teeth — solid filled, hanging down from jaw line -->
 <!-- Tooth 1 — left molar -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 38 82 L 38 90 L 43 90 L 43 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 38 82 L 38 90 L 43 90 L 43 82 Z"/>
 <!-- GAP — missing tooth -->
 <!-- Tooth 2 — incisor, chipped -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.75;stroke:none;" d="M 49 82 L 49 88 L 53 89 L 53 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.75;stroke:none;" d="M 49 82 L 49 88 L 53 89 L 53 82 Z"/>
 <!-- Tooth 3 — canine, longer -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" d="M 55 82 L 55 92 L 59 91 L 59 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke:none;" d="M 55 82 L 55 92 L 59 91 L 59 82 Z"/>
 <!-- GAP — missing tooth (big gap in front) -->
 <!-- GAP — another missing -->
 <!-- Tooth 4 — canine right -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.8;stroke:none;" d="M 69 82 L 69 92 L 73 91 L 73 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.8;stroke:none;" d="M 69 82 L 69 92 L 73 91 L 73 82 Z"/>
 <!-- Tooth 5 — premolar -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 75 82 L 75 88 L 79 88 L 79 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 75 82 L 75 88 L 79 88 L 79 82 Z"/>
 <!-- GAP — missing -->
 <!-- Tooth 6 — right molar -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.65;stroke:none;" d="M 85 82 L 85 89 L 90 89 L 90 82 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.65;stroke:none;" d="M 85 82 L 85 89 L 90 89 L 90 82 Z"/>
 
 <!-- === MOUTH GAP — dark void between upper and lower jaw === -->
-<path style="fill:rgb(2.352941%,3.921569%,2.352941%);fill-opacity:0.6;stroke:none;" d="M 36 88 C 44 92 54 94 64 94 C 74 94 84 92 92 88 L 92 98 C 84 96 74 96 64 96 C 54 96 44 96 36 98 Z"/>
+<path style="fill:rgb(3.137255%,2.352941%,3.921569%);fill-opacity:0.6;stroke:none;" d="M 36 88 C 44 92 54 94 64 94 C 74 94 84 92 92 88 L 92 98 C 84 96 74 96 64 96 C 54 96 44 96 36 98 Z"/>
 
 <!-- === MANDIBLE (lower jaw) — separate, dropped open === -->
 <!-- Mandible body — U-shape -->
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 36 96 C 34 94 32 90 30 86 L 30 82"/>
-<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 36 96 C 38 102 44 108 52 112 C 58 114 70 114 76 112 C 84 108 90 102 92 96"/>
-<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 92 96 C 94 94 96 90 98 86 L 98 82"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 36 96 C 34 94 32 90 30 86 L 30 82"/>
+<path style="fill:none;stroke-width:3.5;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 36 96 C 38 102 44 108 52 112 C 58 114 70 114 76 112 C 84 108 90 102 92 96"/>
+<path style="fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.85;stroke-miterlimit:10;" d="M 92 96 C 94 94 96 90 98 86 L 98 82"/>
 <!-- Chin bump -->
-<circle style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.25;stroke:none;" cx="64" cy="114" r="3"/>
+<circle style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.25;stroke:none;" cx="64" cy="114" r="3"/>
 
 <!-- Lower teeth — fewer remaining, pointing UP from mandible -->
 <!-- Tooth A — left side -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.65;stroke:none;" d="M 44 100 L 44 96 L 48 96 L 49 100 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.65;stroke:none;" d="M 44 100 L 44 96 L 48 96 L 49 100 Z"/>
 <!-- GAP — big gap -->
 <!-- Tooth B — slightly crooked -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 56 102 L 55 96 L 59 96 L 60 101 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 56 102 L 55 96 L 59 96 L 60 101 Z"/>
 <!-- GAP — center missing -->
 <!-- Tooth C — right of center -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.7;stroke:none;" d="M 70 101 L 69 96 L 73 96 L 72 102 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.7;stroke:none;" d="M 70 101 L 69 96 L 73 96 L 72 102 Z"/>
 <!-- GAP -->
 <!-- Tooth D — right side -->
-<path style="fill:rgb(22.352941%,100.000000%,56.078431%);fill-opacity:0.6;stroke:none;" d="M 80 100 L 80 96 L 84 96 L 84 100 Z"/>
+<path style="fill:rgb(87.843137%,25.098039%,98.431373%);fill-opacity:0.6;stroke:none;" d="M 80 100 L 80 96 L 84 96 L 84 100 Z"/>
 
 <!-- Lower jaw tooth line -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 40 100 C 50 98 58 98 64 98 C 70 98 78 98 88 100"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.5;stroke-miterlimit:10;" d="M 40 100 C 50 98 58 98 64 98 C 70 98 78 98 88 100"/>
 
 <!-- === SKULL WEATHERING === -->
 <!-- Crack — starts above bandanna, continues below onto forehead -->
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 50 16 C 48 20 50 26 48 32"/>
-<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 48 42 C 46 44 48 46 46 48"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 50 16 C 48 20 50 26 48 32"/>
+<path style="fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.3;stroke-miterlimit:10;" d="M 48 42 C 46 44 48 46 46 48"/>
 <!-- Crack branch -->
-<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(22.352941%,100.000000%,56.078431%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 48 44 C 52 46 54 48 54 50"/>
+<path style="fill:none;stroke-width:1.5;stroke-linecap:round;stroke:rgb(87.843137%,25.098039%,98.431373%);stroke-opacity:0.2;stroke-miterlimit:10;" d="M 48 44 C 52 46 54 48 54 50"/>
 
 </g>
 </g>
