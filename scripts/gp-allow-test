@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# gp-allow-test — exercise the T-0207 Layer A test plan in one shot.
+#
+# Section A (safe, no live impact) runs by default. Pass --device <MAC>
+# --label <NAME> to also run Section B (real flip → exit-IP check) and
+# Section C (revert). Section B will cause a brief LAN blip for ALL clients
+# (conntrack flush + mode reapply ~2 seconds).
+#
+# Usage
+#   gp-allow-test                                 # Section A only
+#   gp-allow-test --device AA:BB:CC:DD:EE:FF --label TestRoku
+#   gp-allow-test --device ... --label ... --skip-revert   # leave it flipped
+#
+# Exit code: 0 if every test PASSes, 1 otherwise.
+
+set -uo pipefail
+
+ACC=$'\033[1;32m'
+DIM=$'\033[2m'
+ERR=$'\033[1;31m'
+WRN=$'\033[1;33m'
+RST=$'\033[0m'
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '2,/^set -uo/p' "$0" | sed 's/^# \{0,1\}//; /^set -uo/d'
+  exit 0
+fi
+
+DEVICE=""
+LABEL=""
+SKIP_REVERT=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --device) DEVICE="$2"; shift 2 ;;
+    --label)  LABEL="$2"; shift 2 ;;
+    --skip-revert) SKIP_REVERT=1; shift ;;
+    *) echo "unknown arg: $1" >&2; exit 2 ;;
+  esac
+done
+
+PASS=0
+FAIL=0
+FAIL_NAMES=()
+
+ok()   { printf '  %s✓%s %s\n' "$ACC" "$RST" "$1"; PASS=$((PASS+1)); }
+bad()  { printf '  %s✗%s %s — %s\n' "$ERR" "$RST" "$1" "$2"; FAIL=$((FAIL+1)); FAIL_NAMES+=("$1"); }
+warn() { printf '  %s!%s %s\n' "$WRN" "$RST" "$1"; }
+section() { printf '\n%s== %s ==%s\n' "$ACC" "$1" "$RST"; }
+
+# ─── Section A — safe / no live impact ──────────────────────────────────────
+section "A. Static checks"
+
+# A1. CLI shape
+if gp-allow --help >/dev/null 2>&1; then ok "A1a gp-allow --help works"; else bad "A1a gp-allow --help" "non-zero exit"; fi
+if gp-allow list 2>/dev/null | grep -qE 'via (tunnel|isp)'; then ok "A1b list shows route_via column"; else bad "A1b list column" "no 'via tunnel|isp' string in list output"; fi
+
+# A2. Regenerate cleanly + nft fragment grammar
+if gp-allow regenerate >/dev/null 2>&1; then ok "A2a gp-allow regenerate"; else bad "A2a regenerate" "non-zero exit"; fi
+if sudo nft -c -f /etc/ghostport/custom-rules.nft 2>/dev/null; then ok "A2b custom-rules.nft passes nft -c"; else bad "A2b nft dry-run" "see sudo nft -c -f /etc/ghostport/custom-rules.nft"; fi
+
+# A3. Live ruleset has the bypass chains (regenerate just re-added them, so this
+# tolerates the mode-reapply-wipes-custom-rules drift seen 2026-05-09).
+if sudo nft list chain inet filter route_via_isp_mangle >/dev/null 2>&1; then
+  ok "A3a route_via_isp_mangle chain exists"
+else
+  bad "A3a route_via_isp_mangle missing" "ran regenerate but chain not in live ruleset — non-gp-mode reapply likely wiped it"
+fi
+if sudo nft list chain inet nat route_via_isp_snat >/dev/null 2>&1; then
+  ok "A3b route_via_isp_snat chain exists"
+else
+  bad "A3b route_via_isp_snat missing" "ran regenerate but chain not in live ruleset"
+fi
+
+# A4. ip rule + table 200 state mirrors whether any isp devices exist
+HAS_ISP=$(python3 -c "
+import json
+try:
+    d = json.load(open('/etc/ghostport/passthrough.json'))
+    print(1 if any((x.get('route_via') or '').lower()=='isp' for x in d.get('devices', [])) else 0)
+except Exception:
+    print(0)
+")
+if [[ "$HAS_ISP" == "0" ]]; then
+  if ! ip rule list 2>/dev/null | grep -q "fwmark 0x100"; then ok "A4a no isp devices → no fwmark 0x100 rule"; else bad "A4a stale fwmark rule" "0 isp devices but ip rule fwmark 0x100 still present"; fi
+  if [[ -z "$(ip route show table 200 2>/dev/null)" ]]; then ok "A4b no isp devices → table 200 empty"; else bad "A4b stale table 200" "0 isp devices but table 200 has routes"; fi
+else
+  if ip rule list 2>/dev/null | grep -q "fwmark 0x100"; then ok "A4a isp device(s) present → fwmark 0x100 rule active"; else bad "A4a missing fwmark rule" "$HAS_ISP isp device(s) but no ip rule fwmark 0x100 — run sudo gp-allow apply"; fi
+  if ip route show table 200 2>/dev/null | grep -q "default"; then ok "A4b isp device(s) present → table 200 has default route"; else bad "A4b table 200 missing default" "isp devices present but table 200 has no default route"; fi
+fi
+
+# Summary so far
+if [[ -z "$DEVICE" ]]; then
+  printf '\n%sSection A complete — passed %d, failed %d%s\n' "$DIM" "$PASS" "$FAIL" "$RST"
+  if [[ $FAIL -gt 0 ]]; then
+    printf '%sFailures:%s %s\n' "$ERR" "$RST" "${FAIL_NAMES[*]}"
+    exit 1
+  fi
+  printf '\n%sTo run live flip + revert tests:%s\n' "$ACC" "$RST"
+  printf '  gp-allow-test --device <MAC> --label "TestDevice"\n'
+  exit 0
+fi
+
+# ─── Section B — live flip (REAL behavior change for the chosen device) ─────
+section "B. Live flip — device=$DEVICE label=$LABEL"
+warn "Will cause a brief LAN blip (~2s) for all clients during apply"
+
+# B1. Add as ISP-routed and apply
+WAS_PRESENT=$(gp-allow list 2>/dev/null | grep -ic "$DEVICE" || true)
+if [[ "$WAS_PRESENT" -eq 0 ]]; then
+  if sudo gp-allow add "$DEVICE" "$LABEL" --via isp >/dev/null 2>&1; then ok "B1a added $DEVICE as route_via=isp"; else bad "B1a add" "gp-allow add failed"; fi
+else
+  if sudo gp-allow via "$DEVICE" isp >/dev/null 2>&1; then ok "B1a flipped existing $DEVICE to route_via=isp"; else bad "B1a via" "gp-allow via failed"; fi
+fi
+
+# shellcheck disable=SC2024  # /tmp/gp-allow-apply.log written by user shell, intended
+if sudo gp-allow apply >/tmp/gp-allow-apply.log 2>&1; then
+  ok "B1b gp-allow apply succeeded"
+else
+  bad "B1b apply" "see /tmp/gp-allow-apply.log"
+fi
+sleep 2  # let mode reapply settle
+
+# B2. ip rule + table populated
+if ip rule list 2>/dev/null | grep -q "fwmark 0x100.*lookup 200"; then ok "B2a ip rule fwmark 0x100 → table 200"; else bad "B2a ip rule" "no fwmark 0x100 lookup 200 found"; fi
+if ip route show table 200 2>/dev/null | grep -q "default.*dev eth0"; then ok "B2b table 200 default via eth0"; else bad "B2b table 200" "no default-via-eth0 in table 200"; fi
+
+# B3. Live nft has per-MAC bypass rules (count comments)
+NFT_HITS=$(sudo nft list ruleset 2>/dev/null | grep -c "route_via:isp:$LABEL" || true)
+if [[ "$NFT_HITS" -ge 5 ]]; then
+  ok "B3 nft has $NFT_HITS rules tagged route_via:isp:$LABEL (expected ≥5)"
+else
+  bad "B3 nft rule count" "only $NFT_HITS rules tagged route_via:isp:$LABEL (expected mangle + 2 killswitch + 2 forward + 1 snat = 6)"
+fi
+
+# B4. Mangle chain has the device's mark rule
+if sudo nft list chain inet filter route_via_isp_mangle 2>/dev/null | grep -q "$DEVICE"; then
+  ok "B4 mangle chain marks packets from $DEVICE"
+else
+  bad "B4 mangle missing MAC" "no rule for $DEVICE in route_via_isp_mangle"
+fi
+
+# B5. Exit IP from Pi's perspective: confirm eth0 source IP is reachable
+ETH_SRC=$(curl -s --max-time 5 --interface eth0 https://api.ipify.org 2>/dev/null || true)
+WG_SRC=$(curl -s --max-time 5 --interface wg1 https://api.ipify.org 2>/dev/null || true)
+if [[ -n "$ETH_SRC" && -n "$WG_SRC" && "$ETH_SRC" != "$WG_SRC" ]]; then
+  ok "B5 eth0 exit IP ($ETH_SRC) ≠ wg1 exit IP ($WG_SRC) — device should now show $ETH_SRC"
+else
+  warn "B5 could not determine both exit IPs (eth0=$ETH_SRC wg1=$WG_SRC) — verify manually on the device"
+fi
+printf '       %sON THE TEST DEVICE:%s open https://api.ipify.org — should show %s\n' "$ACC" "$RST" "${ETH_SRC:-your eth0 public IP}"
+
+# B7. Killswitch still has policy=drop with our route_via inserts at top
+KILL_DROP=$(sudo nft list chain inet filter killswitch 2>/dev/null | grep -c "policy drop" || true)
+KILL_RVI=$(sudo nft list chain inet filter killswitch 2>/dev/null | grep -c "route_via:isp:$LABEL" || true)
+if [[ "$KILL_DROP" -ge 1 && "$KILL_RVI" -ge 2 ]]; then
+  ok "B7 killswitch policy=drop intact + has $KILL_RVI route_via inserts"
+else
+  bad "B7 killswitch state" "policy-drop=$KILL_DROP route_via-inserts=$KILL_RVI"
+fi
+
+# ─── Section C — revert ─────────────────────────────────────────────────────
+if [[ "$SKIP_REVERT" -eq 1 ]]; then
+  warn "Section C skipped (--skip-revert); device $DEVICE remains route_via=isp"
+else
+  section "C. Revert"
+  if sudo gp-allow via "$DEVICE" tunnel >/dev/null 2>&1; then ok "C1a flipped $DEVICE back to tunnel"; else bad "C1a via tunnel" "gp-allow via failed"; fi
+  # shellcheck disable=SC2024  # /tmp/gp-allow-apply.log written by user shell, intended
+if sudo gp-allow apply >/tmp/gp-allow-apply.log 2>&1; then ok "C1b apply succeeded"; else bad "C1b apply" "see /tmp/gp-allow-apply.log"; fi
+  sleep 2
+  if ! ip rule list 2>/dev/null | grep -q "fwmark 0x100"; then ok "C2a ip rule fwmark 0x100 torn down"; else bad "C2a ip rule still present" "expected no fwmark 0x100"; fi
+  if [[ -z "$(ip route show table 200 2>/dev/null)" ]]; then ok "C2b table 200 emptied"; else bad "C2b table 200 not empty" "$(ip route show table 200)"; fi
+  if [[ "$WAS_PRESENT" -eq 0 ]]; then
+    if sudo gp-allow remove "$DEVICE" >/dev/null 2>&1; then ok "C5 removed test device $DEVICE from passthrough.json"; else bad "C5 remove" "gp-allow remove failed"; fi
+    sudo gp-allow apply >/dev/null 2>&1 || true
+  fi
+fi
+
+# ─── Final summary ──────────────────────────────────────────────────────────
+section "Summary"
+printf '  passed: %s%d%s   failed: %s%d%s\n' "$ACC" "$PASS" "$RST" "$ERR" "$FAIL" "$RST"
+if [[ $FAIL -gt 0 ]]; then
+  printf '%sFailures:%s %s\n' "$ERR" "$RST" "${FAIL_NAMES[*]}"
+  exit 1
+fi
+printf '%sAll tests passed.%s\n' "$ACC" "$RST"

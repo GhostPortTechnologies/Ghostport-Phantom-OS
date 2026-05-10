@@ -4823,6 +4823,66 @@ app.post("/api/wan/wireless", async (req, res) => {
 });
 
 
+// ── passthrough trusted devices (T-0207 Layer A / T-0211) ──────
+// Exposes the gp-allow CLI to the dashboard so non-CLI operators
+// can flip a per-device route between tunnel and ISP.
+//
+// GET  /api/passthrough           — read /etc/ghostport/passthrough.json
+// POST /api/passthrough/via       — { mac, target } → gp-allow via
+// POST /api/passthrough/apply     — gp-allow apply
+
+const PASSTHROUGH_FILE = "/etc/ghostport/passthrough.json";
+const MAC_RE = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/;
+
+app.get("/api/passthrough", (req, res) => {
+  try {
+    const raw = fs.readFileSync(PASSTHROUGH_FILE, "utf8");
+    const data = JSON.parse(raw);
+    res.json({ ok: true, devices: Array.isArray(data.devices) ? data.devices : [] });
+  } catch (e) {
+    if (e.code === "ENOENT") {
+      // No passthrough configured yet — empty list, not an error
+      return res.json({ ok: true, devices: [] });
+    }
+    res.status(500).json({ ok: false, error: "Cannot read passthrough.json" });
+  }
+});
+
+app.post("/api/passthrough/via", async (req, res) => {
+  try {
+    const { mac, target } = req.body || {};
+    if (!mac || !MAC_RE.test(mac)) {
+      return res.status(400).json({ ok: false, error: "Invalid MAC" });
+    }
+    if (target !== "tunnel" && target !== "isp") {
+      return res.status(400).json({ ok: false, error: "target must be 'tunnel' or 'isp'" });
+    }
+    // Shell-quoted MAC (already validated to MAC shape — no shell metacharacters possible)
+    const result = await run(`sudo -n gp-allow via ${mac} ${target}`, 10000);
+    if (!result.ok) {
+      return res.status(500).json({ ok: false, error: (result.err || result.out || "").slice(0, 200) });
+    }
+    logActivity("passthrough", `route_via ${target} for ${mac}`);
+    res.json({ ok: true, message: result.out });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to update route_via" });
+  }
+});
+
+app.post("/api/passthrough/apply", async (req, res) => {
+  try {
+    const result = await run("sudo -n gp-allow apply", 30000);
+    if (!result.ok) {
+      return res.status(500).json({ ok: false, error: (result.err || result.out || "").slice(0, 200) });
+    }
+    logActivity("passthrough", "applied to firewall");
+    res.json({ ok: true, message: result.out });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Failed to apply passthrough" });
+  }
+});
+
+
 // ── fleet checkin (periodic command polling) ────────────────
 
 const FLEET_CHECKIN_INTERVAL = 60000; // 1 minute

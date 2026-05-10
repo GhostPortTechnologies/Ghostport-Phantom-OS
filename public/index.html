@@ -2367,6 +2367,28 @@
         </div>
       </div>
 
+      <!-- T-0207/T-0211: Trusted Devices — per-device route_via toggle -->
+      <div class="section-label" id="section-trusted-devices" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> TRUSTED DEVICES</div>
+      <div class="arsenal-card">
+        <div class="arsenal-header">
+          <span class="arsenal-icon">🛡️</span>
+          <span class="arsenal-name">Trusted Devices</span>
+          <div class="arsenal-toggle">
+            <span class="arsenal-status" id="trusted-status">---</span>
+          </div>
+        </div>
+        <div class="arsenal-desc">
+          Devices listed here bypass mode-specific privacy filters (DoH-IP, DoT, DNS forcing). Choose <b>Tunnel</b> for full privacy, or <b>ISP</b> to expose this device's residential IP for streaming services that block datacenter IPs.
+        </div>
+        <div id="trusted-warning" style="font-size:10px;color:#e0a040;margin-top:6px;display:none">⚠ One or more devices is set to ISP — your residential IP is visible to those destinations. Use only for non-sensitive streaming/gaming devices.</div>
+        <div id="trusted-list" style="margin-top:10px;font-size:11px">Loading...</div>
+        <div style="display:flex;gap:6px;margin-top:10px">
+          <button class="arsenal-btn" onclick="window._trustedApply()">APPLY</button>
+          <button class="arsenal-btn" style="background:var(--bg3)" onclick="window._trustedLoad()">REFRESH</button>
+          <span id="trusted-msg" style="font-size:10px;align-self:center;color:var(--text-dim)"></span>
+        </div>
+      </div>
+
       <!-- WireGuard Setup -->
       <div class="section-label tech-only" id="section-wireguard-vpn" style="margin-top:20px" onclick="toggleSection(this)"><span class="section-chevron">▸</span> WIREGUARD VPN</div>
       <div class="arsenal-card tech-only">
@@ -4432,6 +4454,129 @@ AllowedIPs = 0.0.0.0/0"></textarea>
     formEl = document.getElementById('bedtime-form');
     statusEl = document.getElementById('bt-form-status');
     if (listEl) load();
+  })();
+
+  // ── T-0207/T-0211: Trusted Devices ──────────────────────────────
+  (function() {
+    var listEl = null;
+    var msgEl = null;
+    var statusEl = null;
+    var warnEl = null;
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function render(devices) {
+      if (!listEl) return;
+      var anyIsp = false;
+      if (!devices.length) {
+        listEl.innerHTML = '<div style="color:var(--text-dim);font-style:italic">No trusted devices yet. Add via Bulkhead → Trusted Devices.</div>';
+        if (warnEl) warnEl.style.display = 'none';
+        if (statusEl) statusEl.textContent = '0';
+        return;
+      }
+      var h = '';
+      devices.forEach(function(d) {
+        var via = d.route_via === 'isp' ? 'isp' : 'tunnel';
+        if (via === 'isp') anyIsp = true;
+        h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">';
+        h += '<div style="flex:1">';
+        h += '<div style="color:var(--green);font-size:11px">' + esc(d.label || '(no label)') + '</div>';
+        h += '<div style="color:var(--text-dim);font-size:9px;font-family:Courier New,monospace">' + esc(d.mac) + '</div>';
+        h += '</div>';
+        h += '<select onchange="window._trustedSetVia(\'' + esc(d.mac) + '\', this.value)" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:3px 6px;font-size:11px">';
+        h += '<option value="tunnel"' + (via === 'tunnel' ? ' selected' : '') + '>Tunnel (private)</option>';
+        h += '<option value="isp"' + (via === 'isp' ? ' selected' : '') + '>ISP (residential)</option>';
+        h += '</select>';
+        h += '</div>';
+      });
+      listEl.innerHTML = h;
+      if (warnEl) warnEl.style.display = anyIsp ? 'block' : 'none';
+      if (statusEl) statusEl.textContent = devices.length;
+    }
+
+    window._trustedLoad = async function() {
+      try {
+        var res = await fetch('/api/passthrough', { credentials: 'same-origin' });
+        var data = await res.json();
+        if (data.ok) {
+          render(data.devices || []);
+        } else {
+          listEl.innerHTML = '<div style="color:#ff6666">Load failed: ' + esc(data.error || 'unknown') + '</div>';
+        }
+      } catch (e) {
+        listEl.innerHTML = '<div style="color:#ff6666">Load error: ' + esc(e.message) + '</div>';
+      }
+    };
+
+    window._trustedSetVia = async function(mac, target) {
+      if (msgEl) {
+        msgEl.style.color = 'var(--text-dim)';
+        msgEl.textContent = 'Setting ' + mac + ' → ' + target + '...';
+      }
+      try {
+        var res = await fetch('/api/passthrough/via', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac: mac, target: target })
+        });
+        var data = await res.json();
+        if (data.ok) {
+          if (msgEl) msgEl.textContent = 'Saved. Click APPLY to push to firewall.';
+          window._trustedLoad();
+        } else {
+          if (msgEl) {
+            msgEl.style.color = '#ff6666';
+            msgEl.textContent = 'Error: ' + (data.error || 'unknown');
+          }
+        }
+      } catch (e) {
+        if (msgEl) {
+          msgEl.style.color = '#ff6666';
+          msgEl.textContent = 'Network error: ' + e.message;
+        }
+      }
+    };
+
+    window._trustedApply = async function() {
+      if (msgEl) {
+        msgEl.style.color = 'var(--text-dim)';
+        msgEl.textContent = 'Applying... (brief LAN blip)';
+      }
+      try {
+        var res = await fetch('/api/passthrough/apply', {
+          method: 'POST',
+          credentials: 'same-origin'
+        });
+        var data = await res.json();
+        if (data.ok) {
+          if (msgEl) {
+            msgEl.style.color = 'var(--green)';
+            msgEl.textContent = 'Applied. Live in firewall.';
+          }
+        } else {
+          if (msgEl) {
+            msgEl.style.color = '#ff6666';
+            msgEl.textContent = 'Apply failed: ' + (data.error || 'unknown');
+          }
+        }
+      } catch (e) {
+        if (msgEl) {
+          msgEl.style.color = '#ff6666';
+          msgEl.textContent = 'Network error: ' + e.message;
+        }
+      }
+    };
+
+    listEl = document.getElementById('trusted-list');
+    msgEl = document.getElementById('trusted-msg');
+    statusEl = document.getElementById('trusted-status');
+    warnEl = document.getElementById('trusted-warning');
+    if (listEl) window._trustedLoad();
   })();
 
   loadWifiConfig();

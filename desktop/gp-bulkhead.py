@@ -583,6 +583,49 @@ class BulkheadApp(GhostPortApp):
         # by the time the user clicks over to it.
         GLib.idle_add(self._load_dns_rules)
 
+        # ── Tab 3: Trusted Devices — passthrough.json + route_via picker (T-0209) ──
+        trusted_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        trusted_page.set_margin_top(12)
+        trusted_page.set_margin_bottom(12)
+        trusted_page.set_margin_start(12)
+        trusted_page.set_margin_end(12)
+
+        trusted_intro = Gtk.Label()
+        trusted_intro.set_markup(
+            "<b>Trusted Devices</b> bypass mode-specific privacy filters "
+            "(DoH-IP, DoT, DNS forcing). Route via tunnel keeps tunnel "
+            "privacy; route via <i>ISP</i> exposes the device's residential "
+            "IP to the destination — only enable for streaming services that "
+            "block datacenter IPs."
+        )
+        trusted_intro.set_line_wrap(True)
+        trusted_intro.set_xalign(0)
+        trusted_page.pack_start(trusted_intro, False, False, 0)
+
+        trusted_scroll = Gtk.ScrolledWindow()
+        trusted_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        trusted_scroll.set_vexpand(True)
+        self.trusted_listbox = Gtk.ListBox()
+        self.trusted_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        trusted_scroll.add(self.trusted_listbox)
+        trusted_page.pack_start(trusted_scroll, True, True, 0)
+
+        trusted_btn_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        trusted_add_btn = self.make_button("+ Add Device", self._on_trusted_add, "gp-btn-primary")
+        trusted_apply_btn = self.make_button("Apply", self._on_trusted_apply, "gp-btn-primary")
+        trusted_apply_btn.set_tooltip_text(
+            "Regenerate /etc/ghostport/custom-rules.nft and reapply current mode "
+            "(brief LAN blip during conntrack flush)"
+        )
+        trusted_refresh_btn = self.make_button("Refresh", self._on_trusted_refresh, "gp-btn")
+        trusted_btn_bar.pack_start(trusted_add_btn, False, False, 0)
+        trusted_btn_bar.pack_start(trusted_apply_btn, False, False, 0)
+        trusted_btn_bar.pack_end(trusted_refresh_btn, False, False, 0)
+        trusted_page.pack_start(trusted_btn_bar, False, False, 0)
+
+        self.tabs.append_page(trusted_page, Gtk.Label(label="Trusted Devices"))
+        GLib.idle_add(self._load_trusted_devices)
+
         # Status bar (shared — reused across both tabs)
         root.pack_start(self.make_status_bar("Loading firewall rules..."), False, False, 0)
 
@@ -731,6 +774,253 @@ class BulkheadApp(GhostPortApp):
             self.set_status(f"reload failed: {(r.stderr or r.stdout).strip()[:80]}")
             return
         self.set_status("DNS reloaded — changes are live")
+
+    # ── Trusted Devices tab handlers (T-0209) ───────────────────────────
+
+    def _load_trusted_devices(self):
+        """Read /etc/ghostport/passthrough.json and rebuild the listbox.
+        Idempotent — safe to call after every Apply / Add / Remove.
+        """
+        # Clear existing rows
+        for child in list(self.trusted_listbox.get_children()):
+            self.trusted_listbox.remove(child)
+
+        try:
+            with open("/etc/ghostport/passthrough.json") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            row = Gtk.ListBoxRow()
+            lbl = Gtk.Label(label=f"Could not read passthrough.json: {exc}")
+            lbl.set_xalign(0)
+            lbl.set_margin_top(12)
+            lbl.set_margin_bottom(12)
+            lbl.set_margin_start(12)
+            row.add(lbl)
+            self.trusted_listbox.add(row)
+            self.trusted_listbox.show_all()
+            return False
+
+        devices = data.get("devices", [])
+        if not devices:
+            row = Gtk.ListBoxRow()
+            lbl = Gtk.Label(
+                label="No trusted devices yet. Click + Add Device to allow a "
+                      "console / TV / IoT through privacy filters."
+            )
+            lbl.set_xalign(0)
+            lbl.set_line_wrap(True)
+            lbl.set_margin_top(12)
+            lbl.set_margin_bottom(12)
+            lbl.set_margin_start(12)
+            row.add(lbl)
+            self.trusted_listbox.add(row)
+            self.trusted_listbox.show_all()
+            return False
+
+        for dev in devices:
+            mac = dev.get("mac", "")
+            label = dev.get("label", "")
+            via = dev.get("route_via", "tunnel")
+            self.trusted_listbox.add(self._build_trusted_row(mac, label, via))
+        self.trusted_listbox.show_all()
+        return False
+
+    def _build_trusted_row(self, mac, label, via):
+        """One row: MAC | label | via dropdown | remove button + privacy disclosure."""
+        row = Gtk.ListBoxRow()
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(8)
+        outer.set_margin_start(8)
+        outer.set_margin_end(8)
+
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        mac_lbl = Gtk.Label()
+        mac_lbl.set_markup(f"<tt>{mac}</tt>")
+        mac_lbl.set_width_chars(18)
+        mac_lbl.set_xalign(0)
+        line.pack_start(mac_lbl, False, False, 0)
+
+        name_lbl = Gtk.Label(label=label)
+        name_lbl.set_width_chars(20)
+        name_lbl.set_xalign(0)
+        line.pack_start(name_lbl, False, False, 0)
+
+        via_combo = Gtk.ComboBoxText()
+        via_combo.append("tunnel", "Tunnel (private)")
+        via_combo.append("isp", "ISP (residential IP exposed)")
+        via_combo.set_active_id(via if via in ("tunnel", "isp") else "tunnel")
+        via_combo.connect("changed", self._on_trusted_via_changed, mac)
+        line.pack_start(via_combo, False, False, 0)
+
+        remove_btn = self.make_button("Remove", lambda _w, m=mac: self._on_trusted_remove(m), "gp-btn-danger")
+        line.pack_end(remove_btn, False, False, 0)
+        outer.pack_start(line, False, False, 0)
+
+        # Privacy disclosure shown only when ISP is selected
+        warning = Gtk.Label()
+        warning.set_xalign(0)
+        warning.set_line_wrap(True)
+        warning.set_markup(
+            "  <span foreground='#e0a040'>⚠ ISP route exposes this device's "
+            "residential IP to the destination. Leave on Tunnel for anything "
+            "sensitive.</span>"
+        )
+        warning.set_visible(via == "isp")
+        warning.set_no_show_all(via != "isp")
+        outer.pack_start(warning, False, False, 0)
+
+        # Keep a reference so we can toggle visibility on dropdown change
+        row._gp_warning = warning  # noqa: SLF001
+        row._gp_mac = mac          # noqa: SLF001
+        row.add(outer)
+        return row
+
+    def _on_trusted_via_changed(self, combo, mac):
+        target = combo.get_active_id()
+        if target not in ("tunnel", "isp"):
+            return
+        # Update warning visibility immediately for snappy UX
+        for row in self.trusted_listbox.get_children():
+            if getattr(row, "_gp_mac", None) == mac:
+                w = getattr(row, "_gp_warning", None)
+                if w is not None:
+                    w.set_visible(target == "isp")
+                    w.set_no_show_all(target != "isp")
+                break
+        # Persist via gp-allow CLI (do NOT rewrite JSON directly)
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-allow", "via", mac, target],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            self.set_status(f"gp-allow via failed: {exc}")
+            return
+        if r.returncode != 0:
+            self.set_status(
+                f"gp-allow via failed: {(r.stderr or r.stdout).strip()[:120]}"
+            )
+            return
+        self.set_status(f"{mac} → {target}. Click Apply to push to firewall.")
+
+    def _on_trusted_remove(self, mac):
+        confirm = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            buttons=Gtk.ButtonsType.YES_NO,
+            text=f"Remove {mac} from trusted devices?",
+        )
+        confirm.format_secondary_text(
+            "After Apply, this device will be subject to mode privacy filters again."
+        )
+        resp = confirm.run()
+        confirm.destroy()
+        if resp != Gtk.ResponseType.YES:
+            return
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-allow", "remove", mac],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            self.set_status(f"gp-allow remove failed: {exc}")
+            return
+        if r.returncode != 0:
+            self.set_status(
+                f"gp-allow remove failed: {(r.stderr or r.stdout).strip()[:120]}"
+            )
+            return
+        self.set_status(f"removed {mac}. Click Apply to push to firewall.")
+        self._load_trusted_devices()
+
+    def _on_trusted_add(self, _btn):
+        dlg = Gtk.Dialog(
+            title="Add Trusted Device",
+            transient_for=self,
+            modal=True,
+        )
+        dlg.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_ADD, Gtk.ResponseType.OK,
+        )
+        box = dlg.get_content_area()
+        box.set_spacing(8)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        mac_lbl = Gtk.Label(label="MAC address (e.g. 2C:9E:00:85:B6:1E)")
+        mac_lbl.set_xalign(0)
+        box.add(mac_lbl)
+        mac_entry = Gtk.Entry()
+        mac_entry.set_placeholder_text("AA:BB:CC:DD:EE:FF")
+        box.add(mac_entry)
+
+        name_lbl = Gtk.Label(label="Label (e.g. PS5, Living Room TV)")
+        name_lbl.set_xalign(0)
+        box.add(name_lbl)
+        name_entry = Gtk.Entry()
+        name_entry.set_placeholder_text("PS5")
+        box.add(name_entry)
+
+        via_lbl = Gtk.Label(label="Route via")
+        via_lbl.set_xalign(0)
+        box.add(via_lbl)
+        via_combo = Gtk.ComboBoxText()
+        via_combo.append("tunnel", "Tunnel (private — default)")
+        via_combo.append("isp", "ISP (residential IP exposed)")
+        via_combo.set_active_id("tunnel")
+        box.add(via_combo)
+
+        dlg.show_all()
+        resp = dlg.run()
+        mac = mac_entry.get_text().strip()
+        label = name_entry.get_text().strip()
+        target = via_combo.get_active_id() or "tunnel"
+        dlg.destroy()
+        if resp != Gtk.ResponseType.OK:
+            return
+        if not mac or not label:
+            self.set_status("Add: MAC and label both required")
+            return
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-allow", "add", mac, label, "--via", target],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            self.set_status(f"gp-allow add failed: {exc}")
+            return
+        if r.returncode != 0:
+            self.set_status(
+                f"gp-allow add failed: {(r.stderr or r.stdout).strip()[:120]}"
+            )
+            return
+        self.set_status(f"added {mac} ({label}, {target}). Click Apply.")
+        self._load_trusted_devices()
+
+    def _on_trusted_apply(self, _btn):
+        self.set_status("Applying trusted devices to firewall...")
+        try:
+            r = subprocess.run(
+                ["sudo", "-n", "gp-allow", "apply"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            self.set_status(f"gp-allow apply failed: {exc}")
+            return
+        if r.returncode != 0:
+            self.set_status(
+                f"gp-allow apply failed: {(r.stderr or r.stdout).strip()[:120]}"
+            )
+            return
+        self.set_status("Trusted devices applied — firewall + routing live.")
+
+    def _on_trusted_refresh(self, _btn):
+        self._load_trusted_devices()
+        self.set_status("Trusted devices refreshed from passthrough.json")
 
     # ── Data Loading ─────────────────────────────────────────────────
 

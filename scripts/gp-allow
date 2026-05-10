@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
-# gp-allow — manage the GhostPort device passthrough allowlist (T-0177)
+# gp-allow — manage the GhostPort device passthrough allowlist (T-0177, T-0207)
 #
 # Devices listed here bypass mode-specific firewall restrictions (DoH-IP
 # blocks, DoT blocks, DNS forcing, etc) so game consoles, smart TVs and
 # other modern QUIC-heavy devices can talk to the internet directly while
 # the rest of the LAN stays under privacy enforcement.
 #
+# T-0207 Layer A — route_via=isp marks a device's packets so they exit the
+# WAN interface (residential ISP IP) instead of the wg1 data tunnel. Lets
+# streaming services that block datacenter IPs see a real residential IP
+# without spoofing anything. Per-device opt-in only; default is tunnel.
+#
 # Source of truth: /etc/ghostport/passthrough.json
 # Generated nft fragment: /etc/ghostport/custom-rules.nft (sourced by gp-mode)
 #
 # Usage
-#   gp-allow add <MAC> <LABEL>   add a device (LABEL is free-text, e.g. "PS5")
+#   gp-allow add <MAC> <LABEL> [--via tunnel|isp]
+#                                add a device (LABEL is free-text, e.g. "PS5")
 #   gp-allow remove <MAC>        remove a device
+#   gp-allow via <MAC> <target>  set route_via to 'tunnel' or 'isp'
 #   gp-allow list                show current allowlist
 #   gp-allow regenerate          rebuild custom-rules.nft from passthrough.json
+#   gp-allow apply               regenerate + reapply current mode (no rollback)
 
 set -uo pipefail
 
@@ -26,6 +34,12 @@ fi
 PASSTHROUGH_JSON="/etc/ghostport/passthrough.json"
 CUSTOM_RULES="/etc/ghostport/custom-rules.nft"
 LAN_IF="wlan0"
+WAN_IF="eth0"
+# T-0207: fwmark 0x100 is the route_via=isp tag. 0x80000/0xff0000 belongs to
+# Tailscale (verified via `ip rule list`); 0x100 is well clear of that mask.
+ROUTE_VIA_ISP_MARK="0x100"
+ROUTE_VIA_ISP_TABLE="200"
+ROUTE_VIA_ISP_RULE_PRIO="100"
 
 # theme
 ACC=$'\033[1;32m'
@@ -52,6 +66,12 @@ ensure_json() {
 # Uses `insert rule` so each device lands at the TOP of the forward chain,
 # bypassing every mode-specific drop further down. gp-mode's apply_custom_rules
 # runs this file on every mode switch, so allowlist persists across switches.
+#
+# T-0207 — route_via=isp devices ALSO get a fwmark + policy-routing setup so
+# their traffic exits eth0 (residential WAN IP) instead of wg1 (datacenter
+# tunnel). Three dedicated chains we own outright (flushed before re-add for
+# idempotency): route_via_isp_mangle (mark) and route_via_isp_snat (masq).
+# Killswitch + forward accepts are inserted into existing chains.
 regenerate() {
   ensure_json
   local tmp
@@ -63,8 +83,18 @@ regenerate() {
     echo "# bypassing all mode-specific drops (DoH-IP, DoT, DNS forcing)."
     echo "# Trusted devices get full unrestricted internet."
     echo
+    # Route-via-isp dedicated chains. flush-then-add keeps reapply idempotent.
+    echo "# T-0207 route_via=isp dedicated chains (always present, may be empty)"
+    echo "add chain inet filter route_via_isp_mangle { type filter hook prerouting priority -150 ; policy accept ; }"
+    echo "flush chain inet filter route_via_isp_mangle"
+    echo "add chain inet nat route_via_isp_snat { type nat hook postrouting priority 90 ; policy accept ; }"
+    echo "flush chain inet nat route_via_isp_snat"
+    echo
     python3 -c "
 import json
+LAN_IF = '$LAN_IF'
+WAN_IF = '$WAN_IF'
+MARK = '$ROUTE_VIA_ISP_MARK'
 try:
     data = json.load(open('$PASSTHROUGH_JSON'))
 except Exception:
@@ -72,9 +102,22 @@ except Exception:
 for d in data.get('devices', []):
     mac = d.get('mac', '').upper().replace('-', ':')
     label = d.get('label', '?').replace(chr(34), '')
+    via = (d.get('route_via') or 'tunnel').lower()
     if not mac:
         continue
-    print(f'insert rule inet filter forward iifname \"$LAN_IF\" ether saddr {mac} counter accept comment \"passthrough:{label}\"')
+    # Always: bypass mode-specific drops in the forward chain.
+    print(f'insert rule inet filter forward iifname \"{LAN_IF}\" ether saddr {mac} counter accept comment \"passthrough:{label}\"')
+    if via == 'isp':
+        # Mark inbound packets from this MAC so the routing decision picks table 200.
+        print(f'add rule inet filter route_via_isp_mangle iifname \"{LAN_IF}\" ether saddr {mac} counter mark set {MARK} comment \"route_via:isp:{label}\"')
+        # Allow the marked traffic to exit WAN past the killswitch (priority -10, policy drop).
+        print(f'insert rule inet filter killswitch meta mark {MARK} oifname \"{WAN_IF}\" counter accept comment \"route_via:isp:{label}\"')
+        print(f'insert rule inet filter killswitch oifname \"{LAN_IF}\" ether daddr {mac} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
+        # Allow LAN->WAN forward + return path explicitly.
+        print(f'insert rule inet filter forward iifname \"{LAN_IF}\" ether saddr {mac} oifname \"{WAN_IF}\" counter accept comment \"route_via:isp:{label}-fwd\"')
+        print(f'insert rule inet filter forward iifname \"{WAN_IF}\" oifname \"{LAN_IF}\" ether daddr {mac} ct state established,related counter accept comment \"route_via:isp:{label}-ret\"')
+        # SNAT marked traffic to the WAN interface IP.
+        print(f'add rule inet nat route_via_isp_snat meta mark {MARK} oifname \"{WAN_IF}\" counter masquerade comment \"route_via:isp:{label}\"')
 "
   } > "$tmp"
   sudo install -m 644 -o root -g root "$tmp" "$CUSTOM_RULES"
@@ -94,9 +137,11 @@ apply_now() {
 }
 
 cmd_add() {
-  local mac label
+  local mac label via
   mac=$(normalize_mac "$1")
   label="${2:-device}"
+  via="${3:-tunnel}"
+  case "$via" in tunnel|isp) ;; *) die "invalid --via target: $via (use tunnel|isp)" ;; esac
   ensure_json
   local out
   out=$(sudo python3 -c "
@@ -107,17 +152,55 @@ mac = '$mac'
 if any(d.get('mac', '').upper() == mac for d in devs):
     print('exists')
 else:
-    devs.append({'mac': mac, 'label': '$label'})
+    entry = {'mac': mac, 'label': '$label'}
+    if '$via' == 'isp':
+        entry['route_via'] = 'isp'
+    devs.append(entry)
     json.dump(data, open('$PASSTHROUGH_JSON', 'w'), indent=2)
     print('added')
 ")
   if [ "$out" = "exists" ]; then
-    printf '%sgp-allow:%s %s already in allowlist\n' "$DIM" "$RST" "$mac"
+    printf '%sgp-allow:%s %s already in allowlist (use %sgp-allow via%s to change route)\n' "$DIM" "$RST" "$mac" "$ACC" "$RST"
   else
     regenerate
     apply_now
-    printf '%sadded%s %s (%s)\n' "$ACC" "$RST" "$mac" "$label"
+    printf '%sadded%s %s (%s) route_via=%s\n' "$ACC" "$RST" "$mac" "$label" "$via"
+    if [ "$via" = "isp" ]; then
+      printf '  %srun%s sudo gp-allow apply %sto activate routing bypass on the live ruleset%s\n' "$ACC" "$RST" "$DIM" "$RST"
+    fi
   fi
+}
+
+cmd_via() {
+  local mac via
+  mac=$(normalize_mac "$1")
+  via="${2:-}"
+  case "$via" in tunnel|isp) ;; *) die "usage: gp-allow via <MAC> tunnel|isp" ;; esac
+  ensure_json
+  local out
+  out=$(sudo python3 -c "
+import json
+data = json.load(open('$PASSTHROUGH_JSON'))
+devs = data.get('devices', [])
+mac = '$mac'
+for d in devs:
+    if d.get('mac', '').upper() == mac:
+        if '$via' == 'tunnel':
+            d.pop('route_via', None)
+        else:
+            d['route_via'] = '$via'
+        json.dump(data, open('$PASSTHROUGH_JSON', 'w'), indent=2)
+        print('updated')
+        break
+else:
+    print('not_found')
+")
+  if [ "$out" = "not_found" ]; then
+    printf '%sgp-allow:%s %s not in allowlist — run %sgp-allow add%s first\n' "$DIM" "$RST" "$mac" "$ACC" "$RST"
+    exit 1
+  fi
+  regenerate
+  printf '%sroute_via=%s%s set on %s — run %ssudo gp-allow apply%s to activate on live ruleset\n' "$ACC" "$via" "$RST" "$mac" "$ACC" "$RST"
 }
 
 cmd_remove() {
@@ -159,18 +242,97 @@ if not devs:
     print('  (allowlist empty)')
 else:
     for d in devs:
-        print(f\"  {d.get('mac', '?'):20}  {d.get('label', '?')}\")"
+        via = d.get('route_via') or 'tunnel'
+        print(f\"  {d.get('mac', '?'):20}  via {via:7}  {d.get('label', '?')}\")"
+}
+
+# T-0207 — set up or tear down the policy routing for route_via=isp devices.
+# fwmark 0x100 → table 200 → default via WAN gateway. Idempotent; runs every
+# `gp-allow apply` so the routing tracks the latest passthrough.json.
+#
+# Boot persistence: this rule + table live in iproute2 state, NOT nftables.
+# They DO survive mode switches (gp-mode flushes nft only) but DO NOT survive
+# reboot. Re-run `sudo gp-allow apply` after boot, or add to gp-mode-boot.
+ensure_route_bypass() {
+  local has_isp
+  has_isp=$(python3 -c "
+import json
+try:
+    d = json.load(open('$PASSTHROUGH_JSON'))
+    print(1 if any((x.get('route_via') or '').lower() == 'isp' for x in d.get('devices', [])) else 0)
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+
+  # Tear down first so isp→tunnel transitions clean up.
+  sudo ip rule del fwmark "$ROUTE_VIA_ISP_MARK" lookup "$ROUTE_VIA_ISP_TABLE" priority "$ROUTE_VIA_ISP_RULE_PRIO" 2>/dev/null || true
+  sudo ip route flush table "$ROUTE_VIA_ISP_TABLE" 2>/dev/null || true
+
+  if [ "$has_isp" = "1" ]; then
+    local gw
+    gw=$(ip route show default dev "$WAN_IF" 2>/dev/null | awk '{print $3}' | head -1)
+    if [ -z "$gw" ]; then
+      printf '%sgp-allow:%s WARNING: no default gateway on %s — route_via=isp will fail\n' "$ERR" "$RST" "$WAN_IF" >&2
+      return 0
+    fi
+    sudo ip rule add fwmark "$ROUTE_VIA_ISP_MARK" lookup "$ROUTE_VIA_ISP_TABLE" priority "$ROUTE_VIA_ISP_RULE_PRIO"
+    sudo ip route replace default via "$gw" dev "$WAN_IF" table "$ROUTE_VIA_ISP_TABLE"
+    printf '%sroute_via=isp%s policy routing active (fwmark %s → %s via %s)\n' "$ACC" "$RST" "$ROUTE_VIA_ISP_MARK" "$WAN_IF" "$gw"
+  fi
+}
+
+# Reapply the current mode so the regenerated custom-rules.nft loads cleanly
+# (full flush+apply by gp-mode, no rollback timer), then ensure ip rule +
+# table 200 setup (lives outside nftables so gp-mode doesn't touch it).
+cmd_apply() {
+  regenerate
+  local mode
+  mode=$(cat /etc/ghostport/current-mode 2>/dev/null || echo isp)
+  case "$mode" in
+    isp|zerotrust|doublehop|zhop) ;;
+    *) die "current mode '$mode' unrecognized — refusing to reapply" ;;
+  esac
+  printf '%sapplying%s mode=%s with regenerated allowlist...\n' "$ACC" "$RST" "$mode"
+  sudo /usr/local/bin/gp-mode "$mode" --no-rollback
+  ensure_route_bypass
+  # Flush conntrack one more time so any pre-existing PS5 streams pick up the
+  # new mark on their next packet (gp-mode already did this, but it ran before
+  # ensure_route_bypass set up the ip rule).
+  sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
 }
 
 # main
+# Parse optional --via flag for `add` so positional args stay backward-compatible.
+parse_add_flags() {
+  ADD_VIA="tunnel"
+  ADD_POS=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --via)
+        [ "$#" -ge 2 ] || die "--via needs an argument (tunnel|isp)"
+        ADD_VIA="$2"; shift 2 ;;
+      --via=*)
+        ADD_VIA="${1#*=}"; shift ;;
+      *)
+        ADD_POS+=("$1"); shift ;;
+    esac
+  done
+}
+
 case "${1:-list}" in
   add)
-    [ "$#" -ge 3 ] || die "usage: gp-allow add <MAC> <LABEL>"
-    cmd_add "$2" "$3"
+    shift
+    parse_add_flags "$@"
+    [ "${#ADD_POS[@]}" -ge 2 ] || die "usage: gp-allow add <MAC> <LABEL> [--via tunnel|isp]"
+    cmd_add "${ADD_POS[0]}" "${ADD_POS[1]}" "$ADD_VIA"
     ;;
   remove|rm|del)
     [ "$#" -eq 2 ] || die "usage: gp-allow remove <MAC>"
     cmd_remove "$2"
+    ;;
+  via)
+    [ "$#" -eq 3 ] || die "usage: gp-allow via <MAC> tunnel|isp"
+    cmd_via "$2" "$3"
     ;;
   list|ls|"")
     cmd_list
@@ -179,6 +341,9 @@ case "${1:-list}" in
     regenerate
     apply_now
     echo "regenerated $CUSTOM_RULES"
+    ;;
+  apply)
+    cmd_apply
     ;;
   *)
     die "unknown command: $1 — try gp-allow --help"

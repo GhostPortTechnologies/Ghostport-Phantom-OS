@@ -27,6 +27,14 @@ restore_rules() { [[ -s "$BACKUP" ]] && sudo $NFT -f "$BACKUP" || true; }
 get_current_mode() { cat "$MODEFILE" 2>/dev/null || echo "isp"; }
 
 CUSTOM_RULES="/etc/ghostport/custom-rules.nft"
+PASSTHROUGH_JSON="/etc/ghostport/passthrough.json"
+# T-0207/T-0210 — fwmark for route_via=isp policy routing. 0x100 is well
+# clear of Tailscale's 0x80000/0xff0000 mask. ip rule + table 200 are owned
+# here so they survive reboot (gp-mode-boot reapplies the saved mode, which
+# calls apply_profile, which calls apply_route_bypass).
+ROUTE_VIA_ISP_MARK="0x100"
+ROUTE_VIA_ISP_TABLE="200"
+ROUTE_VIA_ISP_RULE_PRIO="100"
 
 apply_custom_rules() {
   [[ -f "$CUSTOM_RULES" ]] || return 0
@@ -35,6 +43,39 @@ apply_custom_rules() {
     echo "[gp-mode] Applied custom firewall rules"
   else
     echo "[gp-mode] WARNING: custom-rules.nft failed dry-run, skipped" >&2
+  fi
+}
+
+# T-0207 Layer A — ensure or tear down policy routing for route_via=isp
+# devices. fwmark 0x100 → table 200 → default via WAN gateway. Idempotent;
+# called on every mode switch so the routing tracks the latest passthrough.json.
+apply_route_bypass() {
+  local has_isp=0
+  if [[ -f "$PASSTHROUGH_JSON" ]]; then
+    has_isp=$(python3 -c "
+import json
+try:
+    d = json.load(open('$PASSTHROUGH_JSON'))
+    print(1 if any((x.get('route_via') or '').lower() == 'isp' for x in d.get('devices', [])) else 0)
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+  fi
+
+  sudo ip rule del fwmark "$ROUTE_VIA_ISP_MARK" lookup "$ROUTE_VIA_ISP_TABLE" priority "$ROUTE_VIA_ISP_RULE_PRIO" 2>/dev/null || true
+  sudo ip route flush table "$ROUTE_VIA_ISP_TABLE" 2>/dev/null || true
+
+  if [[ "$has_isp" == "1" ]]; then
+    local wif gw
+    wif=$(wan_if)
+    gw=$(ip route show default dev "$wif" 2>/dev/null | awk '{print $3}' | head -1)
+    if [[ -z "$gw" ]]; then
+      echo "[gp-mode] WARNING: no default gateway on $wif — route_via=isp will fail" >&2
+      return 0
+    fi
+    sudo ip rule add fwmark "$ROUTE_VIA_ISP_MARK" lookup "$ROUTE_VIA_ISP_TABLE" priority "$ROUTE_VIA_ISP_RULE_PRIO"
+    sudo ip route replace default via "$gw" dev "$wif" table "$ROUTE_VIA_ISP_TABLE"
+    echo "[gp-mode] route_via=isp policy routing active (fwmark $ROUTE_VIA_ISP_MARK → $wif via $gw)"
   fi
 }
 
@@ -49,6 +90,7 @@ apply_profile() {
     die "No masquerade rule after applying $f; restored previous ruleset."
   fi
   apply_custom_rules
+  apply_route_bypass
   sudo conntrack -D -s 192.168.50.0/24 2>/dev/null || true
   sudo pihole reloaddns 2>/dev/null || true
 }
