@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# gp-test — regression test entry point for Phantom OS (T-0181)
+#
+# Layer 2 of the gauntlet stack:
+#   gp-prepush   — pre-push secret-leak gauntlet (T-0164)
+#   gp-preflight — system health check (existing)
+#   gp-test      — behavior-regression check (THIS)
+#
+# Read-only by default. Safe to run on production. Use --disruptive to
+# enable mode-cycle checks (currently stubbed; see T-0181 design doc §9).
+#
+# Usage
+#   gp-test                  run all read-only checks
+#   gp-test --disruptive     additionally run mode-cycle checks (NOT YET impl)
+#   gp-test <check-name>     run a single check by name
+#   gp-test --list           list available checks
+#   gp-test --json           emit JSON output (for timer / dashboards)
+#
+# Exit codes
+#   0 — all pass
+#   1 — at least one fail
+#   2 — at least one skip (no fails)
+#   3 — internal script error
+
+set -uo pipefail
+
+# --help guard
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" || "${1:-}" == "help" ]]; then
+  sed -n '2,/^set -uo/p' "$0" | sed 's/^# \{0,1\}//; /^set -uo/d'
+  exit 0
+fi
+
+ACC=$'\033[1;32m'
+WARN=$'\033[1;33m'
+ERR=$'\033[1;31m'
+DIM=$'\033[2m'
+RST=$'\033[0m'
+
+DISRUPTIVE=0
+JSON=0
+ONLY=""
+LIST=0
+for arg in "$@"; do
+  case "$arg" in
+    --disruptive) DISRUPTIVE=1 ;;
+    --json) JSON=1 ;;
+    --list) LIST=1 ;;
+    --*) ;;
+    *) ONLY="$arg" ;;
+  esac
+done
+
+PASS=0
+FAIL=0
+SKIP=0
+declare -a RESULTS=()
+
+record() {
+  local name="$1" code="$2" msg="$3"
+  RESULTS+=("$name|$code|$msg")
+  case "$code" in
+    0) PASS=$((PASS+1)) ;;
+    1) FAIL=$((FAIL+1)) ;;
+    2) SKIP=$((SKIP+1)) ;;
+  esac
+}
+
+# ----- check definitions -----
+
+check_nft_profiles_valid() {
+  local fail=0
+  for prof in /etc/gpmodes/isp.nft /etc/gpmodes/zerotrust.nft \
+              /etc/gpmodes/doublehop.nft /etc/gpmodes/zhop.nft; do
+    if [ ! -r "$prof" ]; then
+      record "nft-profiles-valid" 1 "missing or unreadable: $prof"
+      return 1
+    fi
+    if ! sudo nft -c -f "$prof" 2>/dev/null; then
+      record "nft-profiles-valid" 1 "syntax fail: $prof"
+      fail=1
+    fi
+  done
+  [ "$fail" = 0 ] && record "nft-profiles-valid" 0 "all 4 profiles parse" || return 1
+}
+
+check_active_region_consistent() {
+  # Derive expected endpoint from /etc/ghostport/regions-cache.json so this
+  # check works for any region without hardcoding infrastructure IPs (a
+  # SECRET-SAFETY-SOP §11.2.3 disclosure when this script ships in the
+  # public repo).
+  local state="/etc/ghostport/active-region.json"
+  local conf="/etc/wireguard/wg1.conf"
+  local cache="/etc/ghostport/regions-cache.json"
+  [ ! -r "$state" ] && { record "active-region-consistent" 2 "no active-region.json"; return; }
+  if ! sudo test -r "$conf"; then
+    record "active-region-consistent" 2 "wg1.conf not present"; return
+  fi
+  local id
+  id=$(python3 -c "import json; print(json.load(open('$state'))['id'])" 2>/dev/null) || \
+    { record "active-region-consistent" 1 "active-region.json unparseable"; return; }
+  local ep
+  ep=$(sudo awk -F'=' '/^Endpoint/ {gsub(/ /,"",$2); print $2; exit}' "$conf" 2>/dev/null)
+  if [ ! -r "$cache" ]; then
+    record "active-region-consistent" 2 "no regions-cache.json (run gp-region refresh)"
+    return
+  fi
+  local expected_ep expected_ip
+  expected_ep=$(jq -r --arg id "$id" '.regions[] | select(.id == $id) | .endpoint' "$cache" 2>/dev/null | head -1)
+  if [ -z "$expected_ep" ] || [ "$expected_ep" = "null" ]; then
+    record "active-region-consistent" 2 "region id=$id not in cache"
+    return
+  fi
+  expected_ip="${expected_ep%:*}"
+  if [[ "$ep" == "$expected_ip:"* ]]; then
+    record "active-region-consistent" 0 "$id ↔ $expected_ip ✓ (from cache)"
+  else
+    record "active-region-consistent" 1 "id=$id expected $expected_ip but conf has $ep"
+  fi
+}
+
+check_mode_consistent() {
+  local saved filter_table fwd_policy
+  saved=$(cat /etc/ghostport/current-mode 2>/dev/null) || \
+    { record "mode-consistent" 1 "no current-mode file"; return; }
+  filter_table=$(sudo nft list table inet filter 2>/dev/null)
+  if [ -z "$filter_table" ]; then
+    record "mode-consistent" 1 "table inet filter not loaded"; return
+  fi
+  # Pull the policy of the forward chain (handles 'priority filter' alias and 'priority 0').
+  fwd_policy=$(printf '%s\n' "$filter_table" | awk '
+    /^[[:space:]]*chain forward[[:space:]]*\{/ { seen=1; next }
+    seen && /policy [a-z]+;/ { match($0, /policy [a-z]+/); print substr($0, RSTART+7, RLENGTH-7); exit }
+  ')
+  case "$saved" in
+    isp)
+      [ "$fwd_policy" = "accept" ] && record "mode-consistent" 0 "isp mode (forward policy=accept)" || \
+        record "mode-consistent" 1 "current-mode=isp but inet filter forward policy=$fwd_policy"
+      ;;
+    zerotrust|doublehop|zhop)
+      [ "$fwd_policy" = "drop" ] && record "mode-consistent" 0 "$saved mode (forward policy=drop)" || \
+        record "mode-consistent" 1 "current-mode=$saved but inet filter forward policy=$fwd_policy"
+      ;;
+    *) record "mode-consistent" 2 "unknown mode '$saved'" ;;
+  esac
+}
+
+check_killswitch_present() {
+  local saved ruleset
+  saved=$(cat /etc/ghostport/current-mode 2>/dev/null)
+  case "$saved" in
+    doublehop|zhop)
+      ruleset=$(sudo nft list ruleset 2>/dev/null)
+      if [[ "$ruleset" == *"chain killswitch"* ]]; then
+        record "killswitch-present" 0 "killswitch chain present in $saved"
+      else
+        record "killswitch-present" 1 "$saved mode but no killswitch chain"
+      fi
+      ;;
+    *) record "killswitch-present" 2 "killswitch only required in doublehop/zhop (mode=$saved)" ;;
+  esac
+}
+
+check_passthrough_json_valid() {
+  local pj="/etc/ghostport/passthrough.json"
+  local cr="/etc/ghostport/custom-rules.nft"
+  [ ! -r "$pj" ] && { record "passthrough-json-valid" 2 "no passthrough.json (skip)"; return; }
+  if ! python3 -c "import json; d=json.load(open('$pj')); assert 'devices' in d" 2>/dev/null; then
+    record "passthrough-json-valid" 1 "passthrough.json malformed"; return
+  fi
+  local n
+  n=$(python3 -c "import json; print(len(json.load(open('$pj'))['devices']))" 2>/dev/null)
+  if [ "$n" = "0" ]; then
+    record "passthrough-json-valid" 0 "passthrough.json valid (0 devices)"; return
+  fi
+  if [ ! -r "$cr" ]; then
+    record "passthrough-json-valid" 1 "$n device(s) in JSON but no custom-rules.nft"; return
+  fi
+  local rules_count
+  # Count only passthrough-comment rules. T-0207 added route_via:isp rules
+  # to the same file (with comment "route_via:isp:..."); those should not
+  # be confused for passthrough entries when validating device parity.
+  rules_count=$(grep -c 'comment "passthrough:' "$cr" 2>/dev/null || echo 0)
+  if [ "$rules_count" = "$n" ]; then
+    record "passthrough-json-valid" 0 "$n device(s), $rules_count passthrough rule(s) — match"
+  else
+    record "passthrough-json-valid" 1 "$n device(s) but $rules_count passthrough rule(s) — out of sync (run gp-allow regenerate)"
+  fi
+}
+
+check_dns_path_correct() {
+  local saved
+  saved=$(cat /etc/ghostport/current-mode 2>/dev/null)
+  case "$saved" in
+    isp|zerotrust)
+      if ss -lnu 2>/dev/null | grep -q "127.0.0.1:5053"; then
+        record "dns-path-correct" 0 "$saved mode → cloudflared on 127.0.0.1:5053 listening ✓"
+      else
+        record "dns-path-correct" 1 "$saved mode but no cloudflared listening on 5053"
+      fi
+      ;;
+    doublehop|zhop)
+      record "dns-path-correct" 2 "$saved mode → DNS via wg1 unbound (10.66.67.1:53) — needs in-tunnel probe; not auto-checked"
+      ;;
+    *) record "dns-path-correct" 2 "unknown mode '$saved'" ;;
+  esac
+}
+
+check_pihole_leases_readable() {
+  if command -v gp-leases >/dev/null 2>&1; then
+    if gp-leases >/dev/null 2>&1; then
+      record "pihole-leases-readable" 0 "gp-leases returns lease data"
+    else
+      record "pihole-leases-readable" 1 "gp-leases failed"
+    fi
+  elif [ -r /etc/pihole/dhcp.leases ]; then
+    record "pihole-leases-readable" 0 "/etc/pihole/dhcp.leases directly readable"
+  else
+    record "pihole-leases-readable" 1 "no gp-leases helper and lease file unreadable"
+  fi
+}
+
+check_tailscale_up() {
+  if ! command -v tailscale >/dev/null 2>&1; then
+    record "tailscale-up" 2 "tailscale not installed (customer image?)"; return
+  fi
+  if ip -4 addr show tailscale0 2>/dev/null | grep -q "inet "; then
+    record "tailscale-up" 0 "tailscale0 has IPv4"
+  else
+    record "tailscale-up" 1 "tailscale0 missing IPv4"
+  fi
+}
+
+check_wg_mtu_1380() {
+  local saved
+  saved=$(cat /etc/ghostport/current-mode 2>/dev/null)
+  case "$saved" in
+    doublehop|zhop)
+      local mtu0 mtu1
+      mtu0=$(ip -o link show wg0 2>/dev/null | grep -oE "mtu [0-9]+" | awk '{print $2}')
+      mtu1=$(ip -o link show wg1 2>/dev/null | grep -oE "mtu [0-9]+" | awk '{print $2}')
+      if [ "$mtu0" = "1380" ] && [ "$mtu1" = "1380" ]; then
+        record "wg-mtu-1380" 0 "wg0 + wg1 MTU = 1380 ✓"
+      else
+        record "wg-mtu-1380" 1 "wg0 mtu=$mtu0 wg1 mtu=$mtu1 (expected 1380 each)"
+      fi
+      ;;
+    *) record "wg-mtu-1380" 2 "tunnel MTU only relevant in tunnel modes (mode=$saved)" ;;
+  esac
+}
+
+check_mode_boot_no_surprise() {
+  # gp-mode-boot has NO --dry-run flag — invoking it re-applies the mode.
+  # Instead, read MODEFILE and check it's a valid value gp-mode-boot would honor.
+  local mb="/usr/local/bin/gp-mode-boot"
+  if [ ! -x "$mb" ]; then
+    record "mode-boot-no-surprise" 2 "gp-mode-boot not installed"; return
+  fi
+  local saved
+  saved=$(cat /etc/ghostport/current-mode 2>/dev/null) || \
+    { record "mode-boot-no-surprise" 1 "no current-mode file (boot would fall back to isp)"; return; }
+  case "$saved" in
+    isp|zerotrust|doublehop|zhop)
+      record "mode-boot-no-surprise" 0 "current-mode='$saved' is a valid boot target"
+      ;;
+    *)
+      record "mode-boot-no-surprise" 1 "current-mode='$saved' is invalid (boot would force isp)"
+      ;;
+  esac
+}
+
+# ----- registry -----
+declare -a CHECKS=(
+  nft_profiles_valid
+  active_region_consistent
+  mode_consistent
+  killswitch_present
+  passthrough_json_valid
+  dns_path_correct
+  pihole_leases_readable
+  tailscale_up
+  wg_mtu_1380
+  mode_boot_no_surprise
+)
+
+if [ "$LIST" = 1 ]; then
+  for c in "${CHECKS[@]}"; do echo "${c//_/-}"; done
+  exit 0
+fi
+
+# ----- run -----
+for c in "${CHECKS[@]}"; do
+  display="${c//_/-}"
+  if [ -n "$ONLY" ] && [ "$ONLY" != "$display" ]; then continue; fi
+  "check_$c" || true
+done
+
+if [ "$DISRUPTIVE" = 1 ]; then
+  printf '%s[gp-test] --disruptive: mode-cycle checks not yet implemented (T-0181 follow-up)%s\n' "$WARN" "$RST" >&2
+fi
+
+# ----- output -----
+if [ "$JSON" = 1 ]; then
+  printf '{"pass":%d,"fail":%d,"skip":%d,"checks":[' "$PASS" "$FAIL" "$SKIP"
+  first=1
+  for r in "${RESULTS[@]}"; do
+    IFS='|' read -r n c m <<<"$r"
+    [ "$first" = 0 ] && printf ','
+    first=0
+    case "$c" in 0) s=pass;; 1) s=fail;; 2) s=skip;; esac
+    printf '{"name":"%s","status":"%s","msg":"%s"}' "$n" "$s" "${m//\"/\\\"}"
+  done
+  printf ']}\n'
+else
+  printf '%sgp-test%s — regression check\n' "$ACC" "$RST"
+  printf '%s──────────────────────────────────────%s\n' "$DIM" "$RST"
+  for r in "${RESULTS[@]}"; do
+    IFS='|' read -r n c m <<<"$r"
+    case "$c" in
+      0) printf '  %s✓%s %-30s %s%s%s\n' "$ACC" "$RST" "$n" "$DIM" "$m" "$RST" ;;
+      1) printf '  %s✗%s %-30s %s%s%s\n' "$ERR" "$RST" "$n" "$ERR" "$m" "$RST" ;;
+      2) printf '  %s○%s %-30s %s%s%s\n' "$WARN" "$RST" "$n" "$DIM" "$m" "$RST" ;;
+    esac
+  done
+  printf '%s──────────────────────────────────────%s\n' "$DIM" "$RST"
+  printf 'pass=%d fail=%d skip=%d\n' "$PASS" "$FAIL" "$SKIP"
+fi
+
+if   [ "$FAIL" -gt 0 ]; then exit 1
+elif [ "$SKIP" -gt 0 ]; then exit 2
+else exit 0
+fi
