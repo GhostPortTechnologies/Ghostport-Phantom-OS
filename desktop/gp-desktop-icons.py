@@ -342,7 +342,16 @@ class DesktopCanvas:
         return max(0, min(max_x, x)), max(0, min(max_y, y))
 
     def _clamp_all_to_screen(self):
-        """Pull any saved sprite positions back into visible area."""
+        """Pull any saved sprite positions back into visible area.
+
+        T-0197: refuse to clamp+save when screen geometry is implausible
+        (HDMI unplugged → primary monitor returns 0×0 → every sprite
+        clamps to (0,0) → save_positions writes a corrupt file → on
+        replug + re-exec, every icon stacks at top-left). Bail out if
+        the active monitor is too small to be a real display.
+        """
+        if self.screen_w < 200 or self.screen_h < 200:
+            return
         changed = False
         for sp in self.sprites:
             cx, cy = self._clamp_xy(sp.x, sp.y)

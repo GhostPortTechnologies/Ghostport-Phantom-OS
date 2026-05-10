@@ -1,0 +1,303 @@
+#!/usr/bin/env python3
+"""gp-hdmi-greeter — Easter egg HDMI-replug popup.
+
+When an operator unplugs and replugs HDMI, show a Phantom-themed popup
+styled like the mode-indicator widget tile (green dot + big label +
+small subtitle). Random message from a pool of greetings, privacy
+facts, and goofs.
+
+Origin: T-0200 icon-collapse bug. The collapsed-icon screenshot looked
+enough like a normal mode tile that operator decided to keep that
+visual as the popup style for an HDMI-replug Easter egg.
+
+Fires only on monitor-removed THEN monitor-added (a real hotplug).
+Initial boot adds a monitor without a prior remove — stays silent.
+
+Usage:
+  gp-hdmi-greeter           daemon (foreground)
+  gp-hdmi-greeter --test    fire a popup immediately, no HDMI needed
+  gp-hdmi-greeter --help    this message
+
+Disable: touch ~/.config/ghostport/hdmi-greeter-disabled
+  (sentinel pattern per feedback_widget_library_scope)
+"""
+
+import json
+import math
+import os
+import random
+import signal
+import subprocess
+import sys
+
+import gi
+gi.require_version("Gtk", "3.0")
+gi.require_version("PangoCairo", "1.0")
+from gi.repository import GLib, Gtk, Gdk, Pango, PangoCairo  # noqa: E402
+
+USE_LAYER_SHELL = False
+try:
+    gi.require_version("GtkLayerShell", "0.1")
+    from gi.repository import GtkLayerShell
+    if os.environ.get("WAYLAND_DISPLAY"):
+        USE_LAYER_SHELL = True
+except (ValueError, ImportError):
+    pass
+
+THEME_FILE = "/etc/phantom/theme.json"
+DEFAULT_ACCENT = "#39ff8f"
+DISABLE_SENTINEL = os.path.expanduser("~/.config/ghostport/hdmi-greeter-disabled")
+POPUP_LIFETIME_MS = 6000
+HOTPLUG_DEBOUNCE_MS = 800
+
+# Punchy single-line messages. Mix of greetings, privacy facts, and goofs.
+MESSAGES = [
+    "WELCOME BACK",
+    "STOP THE PARTY HES BACK",
+    "GHOST RETURNS",
+    "MISSED YOU",
+    "STILL PRIVATE",
+    "SHIP IT",
+    "AHOY CAPTAIN",
+    "LOOK ALIVE",
+    "HERES JOHNNY",
+    "LONG TIME NO SEE",
+    # Privacy facts
+    "ISPS SELL DNS",
+    "YOUR TV WATCHES YOU",
+    "4000+ DATA POINTS PER PHONE",
+    "INCOGNITO IS A LIE",
+    "TRACKERS NEVER SLEEP",
+    "EVERY APP SELLS YOU",
+    "YOUR ROUTER LIES USUALLY",
+    "DNS LEAKS BY DEFAULT",
+    "WIFI BROADCASTS YOU",
+    "BIG TECH IS LISTENING",
+]
+
+
+def read_accent():
+    """Read theme color. Tolerates both 'color' (current gp-theme schema)
+    and 'accent' (older / alt name), in that order. Falls back to default
+    green only if neither key is present or file is unreadable."""
+    try:
+        with open(THEME_FILE) as fh:
+            data = json.load(fh)
+        return data.get("color") or data.get("accent") or DEFAULT_ACCENT
+    except (OSError, ValueError):
+        return DEFAULT_ACCENT
+
+
+def _hex_to_rgb_tuple(color):
+    """'#39ff8f' → (57, 255, 143). Tolerant of bad input."""
+    try:
+        c = color.lstrip("#")
+        if len(c) == 3:
+            c = "".join(ch * 2 for ch in c)
+        if len(c) != 6:
+            raise ValueError
+        return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
+    except (ValueError, AttributeError):
+        return (57, 255, 143)  # default green
+
+
+# Comic chat-bubble geometry (px). Tail points down at the GhostPort
+# logo, which lives at the leftmost slot of the dock.
+BUBBLE_W = 280
+BUBBLE_H = 86
+TAIL_W = 22
+TAIL_H = 14
+TAIL_X = 32              # tail tip distance from bubble's left edge
+BUBBLE_RADIUS = 16
+BUBBLE_BORDER = 2
+
+# Anchor offsets — bubble sits above the dock with its tail roughly
+# centered over the GhostPort logo (~24-40px from the screen's left edge).
+BUBBLE_MARGIN_BOTTOM = 80    # clear the 72px dock + breathing room
+BUBBLE_MARGIN_LEFT = 8       # tail at x≈40 from screen edge after this
+
+
+def _draw_bubble(ctx, accent_rgb, msg):
+    """Cairo: draw a comic-style speech bubble (rounded body + tail)
+    as a single closed path, then render the message text inside."""
+    r = BUBBLE_RADIUS
+    bw = BUBBLE_W - BUBBLE_BORDER
+    bh = BUBBLE_H
+    ox = BUBBLE_BORDER / 2
+    oy = BUBBLE_BORDER / 2
+
+    ctx.new_path()
+    # Top-left → top edge → top-right corner
+    ctx.move_to(ox + r, oy)
+    ctx.line_to(ox + bw - r, oy)
+    ctx.arc(ox + bw - r, oy + r, r, -math.pi / 2, 0)
+    # Right edge → bottom-right corner
+    ctx.line_to(ox + bw, oy + bh - r)
+    ctx.arc(ox + bw - r, oy + bh - r, r, 0, math.pi / 2)
+    # Bottom edge — break out into the tail, then back
+    ctx.line_to(ox + TAIL_X + TAIL_W, oy + bh)
+    ctx.line_to(ox + TAIL_X + TAIL_W / 2, oy + bh + TAIL_H)  # tail tip
+    ctx.line_to(ox + TAIL_X, oy + bh)
+    ctx.line_to(ox + r, oy + bh)
+    # Bottom-left corner → left edge → top-left corner
+    ctx.arc(ox + r, oy + bh - r, r, math.pi / 2, math.pi)
+    ctx.line_to(ox, oy + r)
+    ctx.arc(ox + r, oy + r, r, math.pi, 3 * math.pi / 2)
+    ctx.close_path()
+
+    # Fill — near-black, slightly translucent so the desktop hints through
+    ctx.set_source_rgba(0.05, 0.05, 0.05, 0.88)
+    ctx.fill_preserve()
+    # Stroke — accent color
+    ar, ag, ab = accent_rgb
+    ctx.set_source_rgba(ar / 255, ag / 255, ab / 255, 0.95)
+    ctx.set_line_width(BUBBLE_BORDER)
+    ctx.stroke()
+
+    # Text — single bold line, vertically centered in the bubble body
+    inner_w = BUBBLE_W - 28
+
+    layout = PangoCairo.create_layout(ctx)
+    layout.set_font_description(Pango.FontDescription("sans bold 14"))
+    layout.set_alignment(Pango.Alignment.CENTER)
+    layout.set_width(inner_w * Pango.SCALE)
+    layout.set_text(msg, -1)
+    _, msg_h = layout.get_pixel_size()
+
+    ctx.move_to(14, (BUBBLE_H - msg_h) / 2)
+    ctx.set_source_rgba(ar / 255, ag / 255, ab / 255, 0.95)
+    PangoCairo.show_layout(ctx, layout)
+
+
+def show_popup(accent):
+    msg = random.choice(MESSAGES)
+    win = Gtk.Window()
+    win.set_decorated(False)
+    win.set_app_paintable(True)
+    win.set_resizable(False)
+    win.set_default_size(BUBBLE_W, BUBBLE_H + TAIL_H)
+
+    screen = win.get_screen()
+    visual = screen.get_rgba_visual() if screen else None
+    if visual:
+        win.set_visual(visual)
+
+    if USE_LAYER_SHELL:
+        GtkLayerShell.init_for_window(win)
+        GtkLayerShell.set_layer(win, GtkLayerShell.Layer.OVERLAY)
+        GtkLayerShell.set_keyboard_mode(win, GtkLayerShell.KeyboardMode.NONE)
+        # Bottom-left, just above the dock, tail aimed at the GhostPort logo
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.BOTTOM, True)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.LEFT, True)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.TOP, False)
+        GtkLayerShell.set_anchor(win, GtkLayerShell.Edge.RIGHT, False)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.BOTTOM, BUBBLE_MARGIN_BOTTOM)
+        GtkLayerShell.set_margin(win, GtkLayerShell.Edge.LEFT, BUBBLE_MARGIN_LEFT)
+    else:
+        win.set_keep_above(True)
+        win.set_skip_taskbar_hint(True)
+
+    # CSS: window background fully transparent so only the bubble shape
+    # (drawn by Cairo) renders. No box, no border, no padding here.
+    css = b"window { background-color: transparent; }"
+    provider = Gtk.CssProvider()
+    provider.load_from_data(css)
+    Gtk.StyleContext.add_provider_for_screen(
+        screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+    )
+
+    accent_rgb = _hex_to_rgb_tuple(accent)
+    area = Gtk.DrawingArea()
+    area.set_size_request(BUBBLE_W, BUBBLE_H + TAIL_H)
+    area.connect("draw", lambda _w, ctx: _draw_bubble(ctx, accent_rgb, msg))
+    win.add(area)
+    win.show_all()
+
+    def _close():
+        try:
+            win.destroy()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    GLib.timeout_add(POPUP_LIFETIME_MS, _close)
+
+
+class Greeter:
+    """Watches Wayland output topology; fires popup on real hotplug events."""
+
+    def __init__(self):
+        self.accent = read_accent()
+        # had_remove gates the popup so we only fire on remove-then-add
+        # (a real hotplug). Initial boot sees only adds, no popup.
+        self.had_remove = False
+        self.pending = False
+
+        display = Gdk.Display.get_default()
+        if display is None:
+            sys.stderr.write("[gp-hdmi-greeter] no Gdk display; daemon idle\n")
+            return
+        display.connect("monitor-removed", self._on_removed)
+        display.connect("monitor-added", self._on_added)
+
+    def _on_removed(self, _display, _monitor):
+        self.had_remove = True
+
+    def _on_added(self, _display, _monitor):
+        if not self.had_remove:
+            return
+        if self.pending:
+            return
+        if os.path.exists(DISABLE_SENTINEL):
+            self.had_remove = False
+            return
+        self.pending = True
+        GLib.timeout_add(HOTPLUG_DEBOUNCE_MS, self._fire)
+
+    def _fire(self):
+        self.pending = False
+        self.had_remove = False
+        # Re-read accent in case theme changed since startup
+        self.accent = read_accent()
+        try:
+            show_popup(self.accent)
+        except Exception as exc:  # noqa: BLE001
+            sys.stderr.write(f"[gp-hdmi-greeter] popup failed: {exc}\n")
+        # Fire-and-forget waybar restart. HDMI hotplug occasionally leaves
+        # waybar with a stale double-rendered surface (witnessed 2026-05-09);
+        # gp-waybar-restart kills + relaunches with a fresh effective config.
+        try:
+            subprocess.Popen(  # noqa: S607
+                ["/home/ghostport-admin/.local/bin/gp-waybar-restart"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+        except OSError as exc:
+            sys.stderr.write(f"[gp-hdmi-greeter] waybar restart failed: {exc}\n")
+        return False
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help", "help"):
+        print(__doc__ or "")
+        sys.exit(0)
+
+    if args and args[0] == "--test":
+        # One-shot: show a popup, exit when it dismisses.
+        accent = read_accent()
+        show_popup(accent)
+        GLib.timeout_add(POPUP_LIFETIME_MS + 500, Gtk.main_quit)
+        Gtk.main()
+        return
+
+    # Daemon
+    signal.signal(signal.SIGINT, lambda *_: Gtk.main_quit())
+    signal.signal(signal.SIGTERM, lambda *_: Gtk.main_quit())
+    Greeter()
+    Gtk.main()
+
+
+if __name__ == "__main__":
+    main()
