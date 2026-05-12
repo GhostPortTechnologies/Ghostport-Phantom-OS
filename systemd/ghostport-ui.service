@@ -1,9 +1,0 @@
-[Unit]
-Description=GhostPort Web UI
-After=network.target
-[Service]
-ExecStart=/usr/bin/python3 /usr/local/bin/ghostport-ui.py
-Restart=always
-User=ghostport-admin
-[Install]
-WantedBy=multi-user.target
