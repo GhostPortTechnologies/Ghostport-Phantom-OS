@@ -3152,7 +3152,9 @@ app.get("/api/arsenal/status", async (req, res) => {
       killSwitch: arsenal.killSwitch,
       killSwitchTripped,
       killSwitchAuto: arsenal.killSwitchAuto !== false, // default true
-      killSwitchApplicable: inTunnel,           // monitor only runs in tunnel modes (doublehop/zhop)
+      // Kill switch fires on DNS leak in zerotrust too (checkDnsLeak includes it);
+      // wg0-down auto-trip only meaningful in tunnel modes but the toggle/UI is.
+      killSwitchApplicable: inTunnel || activeMode === "zerotrust",
       dnsLeakDetected,
       encryptedDns: (dnsStatus === "doh" || dnsStatus === "tunnel"),
       dnsStatus,
@@ -3253,11 +3255,12 @@ app.post("/api/arsenal/dnstest", async (req, res) => {
     if (!dnsResolverIp) {
       passed = false;
       reason = "Could not determine DNS resolver — check Pi-hole/cloudflared";
-    } else if ((dnsResolverIp === ispIp || dnsResolverIp === publicIp) && isVpn) {
-      // DNS resolver is your ISP — that's a leak
+    } else if (isVpn && dnsResolverIp === ispIp) {
+      // DNS exiting via eth0 (ISP), bypassing the tunnel — real leak
       passed = false;
-      reason = "DNS leaking through ISP — resolver matches your public IP";
+      reason = "DNS leaking through ISP — resolver matches your eth0 IP";
     } else if (isVpn) {
+      // dnsResolverIp matching publicIp is expected: both ride the tunnel
       passed = true;
       reason = "DNS exits through encrypted tunnel, not your ISP";
     } else if (encrypted) {
