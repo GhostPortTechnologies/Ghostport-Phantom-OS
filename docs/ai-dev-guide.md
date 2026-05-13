@@ -409,7 +409,7 @@ done
 
 **Fix pattern** for Cairo: add module-level `_accent_rgb()` returning an `(r,g,b)` float tuple from theme.json, replace `cr.set_source_rgba(0.224, 1.0, 0.56, α)` with `cr.set_source_rgba(*_accent_rgb(), α)` (see `gp-widget-library.py` for reference).
 
-**Fix pattern** for API-based theme fetches that fall back to default on failure: read theme.json directly BEFORE the API call (see `ghostport-widget.py::get_theme()` for reference). theme.json is the source of truth anyway.
+**Fix pattern** for API-based theme fetches that fall back to default on failure: read theme.json directly BEFORE the API call — theme.json is the source of truth anyway.
 
 ### Event-bus dedup: producer-local, consumer-windowed (DECISION RECORD 2026-04-29 — T-0044)
 

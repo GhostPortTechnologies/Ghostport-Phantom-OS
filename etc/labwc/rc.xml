@@ -15,13 +15,6 @@
     </titlebar>
   </theme>
 
-  <!-- Window Rules -->
-  <windowRules>
-    <windowRule identifier="ghostport-deck">
-      <action name="Maximize"/>
-    </windowRule>
-  </windowRules>
-
   <!-- Mouse bindings -->
   <mouse>
     <default />
